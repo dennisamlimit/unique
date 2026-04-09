@@ -1,0 +1,16 @@
+.vs/
+bin/
+obj/
+.codex-build/
+.codex-obj/
+
+**/bin/
+**/obj/
+**/.vs/
+
+Unique/ClientFrontend/node_modules/
+Unique/ClientFrontend/dist/
+
+*.user
+*.suo
+*.log

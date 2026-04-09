@@ -1,0 +1,4 @@
+<meta>
+  <info author="Dennis" type="script" name="Unique" description="Unique Roleplay" version="1.0" />
+  <script src="Unique.dll" type="server" lang="clr" />
+</meta>
