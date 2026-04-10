@@ -1,5 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
+using System.Threading;
+using System.Threading.Tasks;
 using GTANetworkAPI;
 using Unique.Accounts;
 using Unique.Admin.Services;
@@ -12,6 +15,14 @@ namespace Unique.Admin.Commands
     public class AdminCommands : Script
     {
         private static readonly VehicleSpawnService VehicleSpawnService = new VehicleSpawnService();
+        private static readonly Dictionary<int, CancellationTokenSource> JailTimers = new Dictionary<int, CancellationTokenSource>();
+        private static readonly object JailTimersSync = new object();
+
+        private static readonly Vector3 AdminJailPosition = new Vector3(1691.14f, 2565.66f, 45.56f);
+        private static readonly Vector3 AdminJailRotation = new Vector3(0f, 0f, 180f);
+        private static readonly Vector3 AdminJailReleasePosition = new Vector3(1846.64f, 2585.86f, 45.67f);
+        private static readonly Vector3 AdminJailReleaseRotation = new Vector3(0f, 0f, 90f);
+        private const uint AdminJailDimension = 1;
 
         private static readonly string[] AdminOnlyCommands =
         {
@@ -29,13 +40,16 @@ namespace Unique.Admin.Commands
             "setserverspawn",
             "serverspawn",
             "gotospawn",
+            "dl",
             "setmoney",
             "addmoney",
             "setbank",
             "addbank",
             "kick",
             "ban",
-            "unban"
+            "unban",
+            "jail",
+            "unjail"
         };
 
         public static bool TryHandleChatCommand(Player player, string command, string[] parts, string args)
@@ -101,6 +115,10 @@ namespace Unique.Admin.Commands
                     CmdGotoSpawn(player);
                     return true;
 
+                case "dl":
+                    CmdDl(player);
+                    return true;
+
                 case "setmoney":
                     CmdSetMoney(player, parts, false);
                     return true;
@@ -127,6 +145,14 @@ namespace Unique.Admin.Commands
 
                 case "unban":
                     CmdUnban(player, parts);
+                    return true;
+
+                case "jail":
+                    CmdJail(player, parts, args);
+                    return true;
+
+                case "unjail":
+                    CmdUnjail(player, parts);
                     return true;
 
                 default:
@@ -187,6 +213,14 @@ namespace Unique.Admin.Commands
             int adminLevel = AdminAuthorizationService.GetPlayerAdminLevel(player);
             bool adminMode = AdminAuthorizationService.IsAdminMode(player);
             ChatOutput.SendSystem(player, $"Admin-Level: {adminLevel} | Modus: {(adminMode ? "aktiv" : "inaktiv")}");
+        }
+
+        private static void CmdDl(Player player)
+        {
+            if (!AdminAuthorizationService.EnsureLevel(player, 2))
+                return;
+
+            player.TriggerEvent("client:dl:toggle");
         }
 
         private static void CmdSetAdmin(Player player, string[] parts)
@@ -455,7 +489,7 @@ namespace Unique.Admin.Commands
             if (!AdminAuthorizationService.EnsureLevel(player, 4))
                 return;
 
-            Player target = GetTargetPlayer(player, parts, "/ban [spielerId] [grund]");
+            Player target = GetTargetPlayer(player, parts, "/ban [spielerId] [dauer optional: 30m/2h/7d] [grund]");
             if (target == null)
                 return;
 
@@ -465,27 +499,46 @@ namespace Unique.Admin.Commands
                 return;
             }
 
-            string reason = GetReason(args, parts.Length > 1 ? parts[1] : string.Empty);
-            if (!AccountManager.SetBanState(accountId, true, reason))
+            string reason = GetBanReason(args, parts, out DateTime? expiresAtUtc);
+            string adminName = GetPlayerName(player);
+            int adminAccountId = TryGetAccountId(player, out int sourceAccountId) ? sourceAccountId : 0;
+            if (!AccountManager.SetBanState(accountId, true, reason, adminName, adminAccountId, expiresAtUtc))
             {
                 ChatOutput.SendSystem(player, "Ban konnte nicht gespeichert werden.");
                 return;
             }
 
-            ChatOutput.SendSystem(player, $"Account gebannt: {GetPlayerName(target)} | {reason}");
-            target.Kick($"Account gesperrt: {reason}");
+            Account bannedAccount = AccountManager.GetById(accountId);
+            BroadcastBanMessages(player, target, bannedAccount, reason, expiresAtUtc);
+            target.SetData("BANNED_SCREEN_ACTIVE", true);
+            target.TriggerEvent("client:auth:banned", BuildBanPayload(bannedAccount));
         }
 
         private static void CmdUnban(Player player, string[] parts)
         {
-            if (!AdminAuthorizationService.EnsureLevel(player, 4))
-                return;
-
             if (parts.Length < 2 || !int.TryParse(parts[1], out int accountId))
             {
                 ChatOutput.SendSystem(player, "Nutze: /unban [accountId]");
                 return;
             }
+
+            Account account = AccountManager.GetById(accountId);
+            if (account == null)
+            {
+                ChatOutput.SendSystem(player, "Account nicht gefunden.");
+                return;
+            }
+
+            if (!account.IsBanned)
+            {
+                ChatOutput.SendSystem(player, "Dieser Account ist nicht gebannt.");
+                return;
+            }
+
+            bool permanentBan = string.IsNullOrWhiteSpace(account.BanExpiresAt);
+            int requiredLevel = permanentBan ? 7 : 4;
+            if (!AdminAuthorizationService.EnsureLevel(player, requiredLevel))
+                return;
 
             if (!AccountManager.SetBanState(accountId, false, null))
             {
@@ -493,12 +546,79 @@ namespace Unique.Admin.Commands
                 return;
             }
 
-            ChatOutput.SendSystem(player, $"Account entbannt: {accountId}");
+            BroadcastUnbanMessage(player, account, permanentBan);
+        }
+
+        private static void CmdJail(Player player, string[] parts, string args)
+        {
+            if (!AdminAuthorizationService.EnsureLevel(player, 2))
+                return;
+
+            Player target = GetTargetPlayer(player, parts, "/jail [spielerId] [dauer: 30s/10m/1h] [grund]");
+            if (target == null)
+                return;
+
+            if (parts.Length < 3 || !TryParseDuration(parts[2], out TimeSpan duration))
+            {
+                ChatOutput.SendSystem(player, "Nutze: /jail [spielerId] [dauer: 30s/10m/1h] [grund]");
+                return;
+            }
+
+            if (!TryGetAccountId(target, out int accountId))
+            {
+                ChatOutput.SendSystem(player, "Zielspieler ist nicht eingeloggt.");
+                return;
+            }
+
+            string reason = GetTimedReason(args, parts);
+            string adminName = GetPlayerName(player);
+            DateTime releaseAtUtc = DateTime.UtcNow.Add(duration);
+
+            target.SetData("ADMIN_JAILED", true);
+            target.SetData("ADMIN_JAIL_RELEASE_AT", releaseAtUtc.ToString("o"));
+            target.Dimension = AdminJailDimension;
+            target.Position = AdminJailPosition;
+            target.Rotation = AdminJailRotation;
+            target.TriggerEvent("client:adminJail:show", BuildJailPayload(adminName, reason, releaseAtUtc));
+
+            StartJailTimer(accountId, duration);
+
+            string targetName = GetPlayerName(target);
+            foreach (Player onlinePlayer in NAPI.Pools.GetAllPlayers())
+            {
+                if (onlinePlayer == null)
+                    continue;
+
+                if (AdminAuthorizationService.HasAnyAdminLevel(onlinePlayer))
+                    ChatOutput.SendAdmin(onlinePlayer, "Admin", $"{adminName} hat {targetName} fuer {FormatDuration(duration)} ins Admin-Jail gesetzt. Grund: {reason}");
+                else
+                    ChatOutput.SendSystem(onlinePlayer, $"Administrator {adminName} hat {targetName} ins Admin-Jail gesetzt. Grund: {reason}");
+            }
+        }
+
+        private static void CmdUnjail(Player player, string[] parts)
+        {
+            if (!AdminAuthorizationService.EnsureLevel(player, 2))
+                return;
+
+            Player target = GetTargetPlayer(player, parts, "/unjail [spielerId]");
+            if (target == null)
+                return;
+
+            if (!TryGetAccountId(target, out int accountId))
+            {
+                ChatOutput.SendSystem(player, "Zielspieler ist nicht eingeloggt.");
+                return;
+            }
+
+            CancelJailTimer(accountId);
+            ReleaseJailedPlayer(target, "Du wurdest aus dem Admin-Jail entlassen.");
+            ChatOutput.SendSystem(player, $"Spieler aus Admin-Jail entlassen: {GetPlayerName(target)}");
         }
 
         private static Player GetTargetPlayer(Player player, string[] parts, string usage)
         {
-            if (parts.Length < 2 || !int.TryParse(parts[1], out int playerId))
+            if (parts.Length < 2 || !int.TryParse(parts[1], out int targetId))
             {
                 ChatOutput.SendSystem(player, $"Nutze: {usage}");
                 return null;
@@ -506,7 +626,23 @@ namespace Unique.Admin.Commands
 
             foreach (Player target in NAPI.Pools.GetAllPlayers())
             {
-                if (target != null && target.Id == playerId)
+                if (target != null && target.Id == targetId)
+                    return target;
+            }
+
+            foreach (Player target in NAPI.Pools.GetAllPlayers())
+            {
+                if (target != null && target.Id + 1 == targetId)
+                    return target;
+            }
+
+            foreach (Player target in NAPI.Pools.GetAllPlayers())
+            {
+                if (target == null)
+                    continue;
+
+                object accountIdValue = NAPI.Data.GetEntityData(target, "ACCOUNT_ID");
+                if (accountIdValue is int accountId && accountId == targetId)
                     return target;
             }
 
@@ -571,6 +707,281 @@ namespace Unique.Admin.Commands
                 reason = reason.Substring(firstArgument.Length).Trim();
 
             return string.IsNullOrWhiteSpace(reason) ? "Kein Grund angegeben." : reason;
+        }
+
+        private static string GetBanReason(string args, string[] parts, out DateTime? expiresAtUtc)
+        {
+            expiresAtUtc = null;
+            string reason = GetReason(args, parts.Length > 1 ? parts[1] : string.Empty);
+
+            if (parts.Length < 3)
+                return reason;
+
+            if (!TryParseBanDuration(parts[2], out TimeSpan duration))
+                return reason;
+
+            expiresAtUtc = DateTime.UtcNow.Add(duration);
+            if (reason.StartsWith(parts[2], StringComparison.OrdinalIgnoreCase))
+                reason = reason.Substring(parts[2].Length).Trim();
+
+            return string.IsNullOrWhiteSpace(reason) ? "Kein Grund angegeben." : reason;
+        }
+
+        private static bool TryParseBanDuration(string input, out TimeSpan duration)
+        {
+            duration = TimeSpan.Zero;
+            if (string.IsNullOrWhiteSpace(input) || input.Length < 2)
+                return false;
+
+            char unit = char.ToLowerInvariant(input[input.Length - 1]);
+            string numberText = input.Substring(0, input.Length - 1);
+            if (!int.TryParse(numberText, out int amount) || amount <= 0)
+                return false;
+
+            switch (unit)
+            {
+                case 'm':
+                    duration = TimeSpan.FromMinutes(amount);
+                    return true;
+
+                case 'h':
+                    duration = TimeSpan.FromHours(amount);
+                    return true;
+
+                case 'd':
+                    duration = TimeSpan.FromDays(amount);
+                    return true;
+
+                default:
+                    return false;
+            }
+        }
+
+        private static bool TryParseDuration(string input, out TimeSpan duration)
+        {
+            duration = TimeSpan.Zero;
+            if (string.IsNullOrWhiteSpace(input) || input.Length < 2)
+                return false;
+
+            char unit = char.ToLowerInvariant(input[input.Length - 1]);
+            string numberText = input.Substring(0, input.Length - 1);
+            if (!int.TryParse(numberText, out int amount) || amount <= 0)
+                return false;
+
+            switch (unit)
+            {
+                case 's':
+                    duration = TimeSpan.FromSeconds(amount);
+                    return true;
+
+                case 'm':
+                    duration = TimeSpan.FromMinutes(amount);
+                    return true;
+
+                case 'h':
+                    duration = TimeSpan.FromHours(amount);
+                    return true;
+
+                case 'd':
+                    duration = TimeSpan.FromDays(amount);
+                    return true;
+
+                default:
+                    return false;
+            }
+        }
+
+        private static string GetTimedReason(string args, string[] parts)
+        {
+            string reason = GetReason(args, parts.Length > 1 ? parts[1] : string.Empty);
+            if (parts.Length > 2 && reason.StartsWith(parts[2], StringComparison.OrdinalIgnoreCase))
+                reason = reason.Substring(parts[2].Length).Trim();
+
+            return string.IsNullOrWhiteSpace(reason) ? "Kein Grund angegeben." : reason;
+        }
+
+        private static string FormatDuration(TimeSpan duration)
+        {
+            if (duration.TotalDays >= 1)
+                return $"{Math.Ceiling(duration.TotalDays)} Tag(e)";
+
+            if (duration.TotalHours >= 1)
+                return $"{Math.Ceiling(duration.TotalHours)} Stunde(n)";
+
+            if (duration.TotalMinutes >= 1)
+                return $"{Math.Ceiling(duration.TotalMinutes)} Minute(n)";
+
+            return $"{Math.Max(1, Math.Ceiling(duration.TotalSeconds))} Sekunde(n)";
+        }
+
+        private static void StartJailTimer(int accountId, TimeSpan duration)
+        {
+            CancellationTokenSource cancellation = new CancellationTokenSource();
+            lock (JailTimersSync)
+            {
+                if (JailTimers.TryGetValue(accountId, out CancellationTokenSource existing))
+                    existing.Cancel();
+
+                JailTimers[accountId] = cancellation;
+            }
+
+            Task.Run(async () =>
+            {
+                try
+                {
+                    await Task.Delay(duration, cancellation.Token);
+                }
+                catch (TaskCanceledException)
+                {
+                    return;
+                }
+
+                NAPI.Task.Run(() =>
+                {
+                    Player target = FindPlayerByAccountId(accountId);
+                    if (target != null)
+                        ReleaseJailedPlayer(target, "Deine Admin-Jail-Zeit ist abgelaufen.");
+
+                    CancelJailTimer(accountId);
+                });
+            });
+        }
+
+        private static void CancelJailTimer(int accountId)
+        {
+            lock (JailTimersSync)
+            {
+                if (!JailTimers.TryGetValue(accountId, out CancellationTokenSource cancellation))
+                    return;
+
+                cancellation.Cancel();
+                cancellation.Dispose();
+                JailTimers.Remove(accountId);
+            }
+        }
+
+        private static Player FindPlayerByAccountId(int accountId)
+        {
+            foreach (Player target in NAPI.Pools.GetAllPlayers())
+            {
+                if (target == null)
+                    continue;
+
+                object accountIdValue = NAPI.Data.GetEntityData(target, "ACCOUNT_ID");
+                if (accountIdValue is int onlineAccountId && onlineAccountId == accountId)
+                    return target;
+            }
+
+            return null;
+        }
+
+        private static void ReleaseJailedPlayer(Player target, string message)
+        {
+            target.SetData("ADMIN_JAILED", false);
+            target.SetData("ADMIN_JAIL_RELEASE_AT", string.Empty);
+            target.Dimension = 0;
+            target.Position = AdminJailReleasePosition;
+            target.Rotation = AdminJailReleaseRotation;
+            target.TriggerEvent("client:adminJail:hide", message);
+            ChatOutput.SendSystem(target, message);
+        }
+
+        private static string BuildJailPayload(string adminName, string reason, DateTime releaseAtUtc)
+        {
+            return "{" +
+                $"\"admin\":\"{EscapeJson(adminName)}\"," +
+                $"\"reason\":\"{EscapeJson(reason)}\"," +
+                $"\"releaseAt\":\"{EscapeJson(releaseAtUtc.ToString("o"))}\"" +
+                "}";
+        }
+
+        private static void BroadcastBanMessages(Player admin, Player target, Account bannedAccount, string reason, DateTime? expiresAtUtc)
+        {
+            string adminName = GetPlayerName(admin);
+            string targetName = bannedAccount?.DisplayName ?? GetPlayerName(target);
+            string publicMessage = expiresAtUtc.HasValue
+                ? $"Administrator {adminName} hat {targetName} gebannt. Grund: {reason}"
+                : $"Administrator {adminName} hat {targetName} permanent gebannt. Grund: {reason}";
+
+            string adminMessage = expiresAtUtc.HasValue
+                ? $"{adminName} hat {targetName} gebannt. Dauer: {FormatDurationUntil(expiresAtUtc.Value)} | Ablauf: {FormatDateTime(expiresAtUtc.Value)} | Grund: {reason}"
+                : $"{adminName} hat {targetName} permanent gebannt. Grund: {reason}";
+
+            foreach (Player onlinePlayer in NAPI.Pools.GetAllPlayers())
+            {
+                if (onlinePlayer == null)
+                    continue;
+
+                if (AdminAuthorizationService.HasAnyAdminLevel(onlinePlayer))
+                    ChatOutput.SendAdmin(onlinePlayer, "Admin", adminMessage);
+                else
+                    ChatOutput.SendSystem(onlinePlayer, publicMessage);
+            }
+        }
+
+        private static void BroadcastUnbanMessage(Player admin, Account account, bool wasPermanentBan)
+        {
+            string adminName = GetPlayerName(admin);
+            string banType = wasPermanentBan ? "permanenten Ban" : "temporaeren Ban";
+            string message = $"{adminName} hat den {banType} von {account.DisplayName} (Account {account.AccountId}) aufgehoben.";
+
+            foreach (Player onlinePlayer in NAPI.Pools.GetAllPlayers())
+            {
+                if (onlinePlayer != null && AdminAuthorizationService.HasAnyAdminLevel(onlinePlayer))
+                    ChatOutput.SendAdmin(onlinePlayer, "Admin", message);
+            }
+        }
+
+        private static string FormatDurationUntil(DateTime expiresAtUtc)
+        {
+            TimeSpan duration = expiresAtUtc - DateTime.UtcNow;
+            if (duration.TotalSeconds < 0)
+                duration = TimeSpan.Zero;
+
+            if (duration.TotalDays >= 1)
+                return $"{Math.Ceiling(duration.TotalDays)} Tag(e)";
+
+            if (duration.TotalHours >= 1)
+                return $"{Math.Ceiling(duration.TotalHours)} Stunde(n)";
+
+            return $"{Math.Max(1, Math.Ceiling(duration.TotalMinutes))} Minute(n)";
+        }
+
+        private static string FormatDateTime(DateTime utcDateTime)
+        {
+            return utcDateTime.ToLocalTime().ToString("dd.MM.yyyy HH:mm", CultureInfo.InvariantCulture);
+        }
+
+        private static string BuildBanPayload(Account account)
+        {
+            if (account == null)
+                return "{}";
+
+            string accountName = account.DisplayName;
+            string reason = account.BanReason ?? "Kein Grund angegeben.";
+            string banDate = account.BanDate ?? DateTime.UtcNow.ToString("o");
+            string expiresAt = account.BanExpiresAt ?? string.Empty;
+            string adminName = account.BanAdminName ?? "Unbekannt";
+            string payload =
+                "{" +
+                $"\"reason\":\"{EscapeJson(reason)}\"," +
+                $"\"banDate\":\"{EscapeJson(banDate)}\"," +
+                $"\"expiresAt\":\"{EscapeJson(expiresAt)}\"," +
+                $"\"admin\":\"{EscapeJson(adminName)}\"," +
+                $"\"accountName\":\"{EscapeJson(accountName)}\"," +
+                $"\"accountId\":{account.AccountId}" +
+                "}";
+
+            return payload;
+        }
+
+        private static string EscapeJson(string value)
+        {
+            return (value ?? string.Empty)
+                .Replace("\\", "\\\\")
+                .Replace("\"", "\\\"")
+                .Replace("\r", "\\r")
+                .Replace("\n", "\\n");
         }
 
         private static bool IsAdminOnlyCommand(string command)

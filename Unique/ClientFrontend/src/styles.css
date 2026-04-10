@@ -31,3 +31,34 @@ input {
 * {
   box-sizing: border-box;
 }
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(217, 70, 239, 0.72) rgba(12, 8, 18, 0.62);
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-track {
+  background: linear-gradient(180deg, rgba(12, 8, 18, 0.78), rgba(28, 12, 42, 0.52));
+  border-radius: 999px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, rgba(244, 114, 182, 0.95), rgba(168, 85, 247, 0.88));
+  border: 2px solid rgba(8, 6, 12, 0.86);
+  border-radius: 999px;
+  box-shadow: 0 0 14px rgba(217, 70, 239, 0.42);
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, rgba(251, 207, 232, 0.98), rgba(217, 70, 239, 0.95));
+}
+
+.unique-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(217, 70, 239, 0.82) rgba(12, 8, 18, 0.66);
+}

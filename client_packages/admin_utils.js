@@ -7,6 +7,8 @@ const KEY_X = 0x58;
 const KEY_SPACE = 0x20;
 const KEY_SHIFT = 0x10;
 const KEY_CTRL = 0x11;
+const KEY_ARROW_UP = 0x26;
+const WAYPOINT_BLIP_ID = 8;
 
 function hasRequiredAdminLevel() {
     try {
@@ -77,6 +79,73 @@ function resolveGroundPosition(position) {
     return new mp.Vector3(position.x, position.y, bestZ);
 }
 
+function sendSystemMessage(message) {
+    mp.events.call("client:chat:addMessage", "system", "System", message);
+}
+
+function getWaypointPosition() {
+    try {
+        if (mp.game.ui && typeof mp.game.ui.getFirstBlipInfoId === "function") {
+            const blip = mp.game.ui.getFirstBlipInfoId(WAYPOINT_BLIP_ID);
+            if (blip && (!mp.game.ui.doesBlipExist || mp.game.ui.doesBlipExist(blip))) {
+                const coord = mp.game.ui.getBlipInfoIdCoord(blip);
+                if (coord) {
+                    return new mp.Vector3(coord.x, coord.y, coord.z || 0.0);
+                }
+            }
+        }
+
+        const blip = mp.game.invoke("0x1BEDE233E6CD2A1F", WAYPOINT_BLIP_ID);
+        if (blip && mp.game.invoke("0xA6DB27D19ECBB7DA", blip)) {
+            const coord = mp.game.invoke("0xFA7C7F0AADF25D09", blip);
+            return new mp.Vector3(coord.x, coord.y, coord.z || 0.0);
+        }
+    } catch (error) {
+        return null;
+    }
+
+    return null;
+}
+
+function resolveWaypointGround(position) {
+    for (let z = 1000.0; z >= -80.0; z -= 25.0) {
+        try {
+            mp.game.streaming.requestCollisionAtCoord(position.x, position.y, z);
+            const result = mp.game.gameplay.getGroundZFor3dCoord(position.x, position.y, z, 0.0, false);
+
+            if (Array.isArray(result) && result[0]) {
+                return new mp.Vector3(position.x, position.y, result[1] + 1.0);
+            }
+
+            if (typeof result === "number" && Number.isFinite(result) && result !== 0) {
+                return new mp.Vector3(position.x, position.y, result + 1.0);
+            }
+        } catch (error) {
+            break;
+        }
+    }
+
+    return new mp.Vector3(position.x, position.y, 80.0);
+}
+
+function teleportToWaypoint() {
+    if (!hasRequiredAdminLevel() || !isAdminModeEnabled() || !isGameplayInputAllowed() || state.active) {
+        return;
+    }
+
+    const waypoint = getWaypointPosition();
+    if (!waypoint) {
+        sendSystemMessage("Kein Wegpunkt auf der Karte gesetzt.");
+        return;
+    }
+
+    const target = resolveWaypointGround(waypoint);
+    const player = mp.players.local;
+    player.position = target;
+    player.dimension = 0;
+    sendSystemMessage("Zum Wegpunkt teleportiert.");
+}
+
 function startNoclip() {
     const localPlayer = mp.players.local;
     const position = localPlayer.position;
@@ -134,6 +203,10 @@ function toggleNoclip() {
 
 mp.keys.bind(KEY_X, true, () => {
     toggleNoclip();
+});
+
+mp.keys.bind(KEY_ARROW_UP, true, () => {
+    teleportToWaypoint();
 });
 
 mp.events.add("render", () => {

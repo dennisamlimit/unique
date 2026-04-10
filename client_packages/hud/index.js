@@ -149,7 +149,7 @@ function startHudTick() {
         return;
     }
 
-    state.tickInterval = setInterval(updateHud, 350);
+    state.tickInterval = setInterval(updateHud, 700);
 }
 
 function stopHudTick() {
@@ -191,4 +191,19 @@ mp.events.add("client:hud:authState", (authState) => {
     } else {
         stopHudTick();
     }
+});
+
+mp.events.add("client:adminJail:show", (rawData) => {
+    let data = {};
+    try {
+        data = JSON.parse(rawData || "{}");
+    } catch (error) {
+        data = {};
+    }
+
+    executeHud(`window.hudApp && window.hudApp.showJail(${JSON.stringify(data)});`);
+});
+
+mp.events.add("client:adminJail:hide", (message) => {
+    executeHud("window.hudApp && window.hudApp.hideJail();");
 });

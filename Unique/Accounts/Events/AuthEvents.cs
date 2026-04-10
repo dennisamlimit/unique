@@ -30,6 +30,7 @@ namespace Unique.Accounts.Events
             player.SetData("ACCOUNT_ID", 0);
             player.SetData("ADMIN_LEVEL", 0);
             player.SetData("ADMIN_MODE", false);
+            player.SetData("PENDING_SPAWN_SELECTION", false);
         }
 
         [RemoteEvent("server:auth:ready")]
@@ -129,7 +130,22 @@ namespace Unique.Accounts.Events
 
             if (account.IsBanned)
             {
-                player.TriggerEvent("client:auth:result", false, $"Account gesperrt: {account.BanReason ?? "Kein Grund angegeben."}");
+                if (IsBanExpired(account))
+                {
+                    AccountManager.SetBanState(account.AccountId, false, null);
+                    account = AccountManager.GetById(account.AccountId);
+                }
+                else
+                {
+                    player.SetData("BANNED_SCREEN_ACTIVE", true);
+                    player.TriggerEvent("client:auth:banned", BuildBanPayload(account));
+                    return;
+                }
+            }
+
+            if (account == null)
+            {
+                player.TriggerEvent("client:auth:result", false, "Account wurde nicht gefunden.");
                 return;
             }
 
@@ -200,6 +216,64 @@ namespace Unique.Accounts.Events
             FinishLogin(player, account, true);
         }
 
+        [RemoteEvent("server:spawn:select")]
+        public void OnSpawnSelect(Player player, string spawnType)
+        {
+            if (player == null)
+                return;
+
+            object pendingSpawnValue = NAPI.Data.GetEntityData(player, "PENDING_SPAWN_SELECTION");
+            if (!(pendingSpawnValue is bool pendingSpawn) || !pendingSpawn)
+                return;
+
+            object accountIdValue = NAPI.Data.GetEntityData(player, "ACCOUNT_ID");
+            if (!(accountIdValue is int accountId) || accountId <= 0)
+                return;
+
+            Account account = AccountManager.GetById(accountId);
+            if (account == null)
+            {
+                player.TriggerEvent("client:spawn:result", false, "Account wurde nicht gefunden.");
+                return;
+            }
+
+            if (string.Equals(spawnType, "hotel", System.StringComparison.OrdinalIgnoreCase))
+            {
+                ServerSpawnService.Apply(player);
+            }
+            else
+            {
+                player.Dimension = account.Dimension;
+                player.Position = new Vector3(account.PosX, account.PosY, account.PosZ);
+                player.Rotation = new Vector3(0, 0, account.RotZ);
+            }
+
+            player.Health = account.Health <= 0 ? 100 : account.Health;
+            player.Armor = account.Armor;
+            player.Transparency = 255;
+            player.SetData("PENDING_SPAWN_SELECTION", false);
+
+            player.TriggerEvent("client:spawn:hide");
+            player.TriggerEvent("client:spawn:resolveGround");
+            player.TriggerEvent("client:chat:authState", true);
+            player.TriggerEvent("client:hud:authState", true);
+
+            ChatOutput.SendSystem(player, string.Equals(spawnType, "hotel", System.StringComparison.OrdinalIgnoreCase)
+                ? "Du bist am Hotel gespawnt."
+                : "Du bist an deinem letzten Standort gespawnt.");
+        }
+
+        [RemoteEvent("server:auth:banDisconnect")]
+        public void OnBanDisconnect(Player player)
+        {
+            if (player == null)
+                return;
+
+            object bannedValue = NAPI.Data.GetEntityData(player, "BANNED_SCREEN_ACTIVE");
+            if (bannedValue is bool banned && banned)
+                player.Kick("Account gesperrt.");
+        }
+
         private void BeginCharacterCreation(Player player, Account account)
         {
             player.SetData("ACCOUNT_ID", account.AccountId);
@@ -235,19 +309,17 @@ namespace Unique.Accounts.Events
             player.SetData("CASH", account.Cash);
             player.SetData("BANK_CASH", account.BankCash);
             player.SetData("PENDING_CHARACTER_CREATION", false);
+            player.SetData("PENDING_SPAWN_SELECTION", true);
 
-            player.Dimension = account.Dimension;
-            player.Position = new Vector3(account.PosX, account.PosY, account.PosZ);
-            player.Rotation = new Vector3(0, 0, account.RotZ);
+            player.Dimension = 3000u + (uint)player.Id;
+            player.Position = HiddenLoginPos;
+            player.Rotation = HiddenLoginRot;
             player.Health = account.Health <= 0 ? 100 : account.Health;
             player.Armor = account.Armor;
-            player.Transparency = 255;
+            player.Transparency = 0;
 
-            player.TriggerEvent("client:auth:hide");
             if (!string.IsNullOrWhiteSpace(account.CustomizationJson))
                 player.TriggerEvent("client:creator:apply", account.CustomizationJson);
-
-            player.TriggerEvent("client:chat:authState", true);
 
             string socialClubInfo = string.IsNullOrWhiteSpace(account.SocialClubName)
                 ? "Kein Social Club gespeichert."
@@ -257,7 +329,7 @@ namespace Unique.Accounts.Events
                 ? $"Account erstellt. Deine Account-ID ist {account.AccountId}. {socialClubInfo}"
                 : $"Erfolgreich eingeloggt. Deine Account-ID ist {account.AccountId}. {socialClubInfo}";
 
-            ChatOutput.SendSystem(player, msg);
+            player.TriggerEvent("client:spawn:show", msg);
             AdminAuthorizationService.RefreshPlayerAdminData(player, account);
         }
 
@@ -268,6 +340,14 @@ namespace Unique.Accounts.Events
 
             object loggedInValue = NAPI.Data.GetEntityData(player, "LOGGED_IN");
             if (!(loggedInValue is bool loggedIn) || !loggedIn)
+                return;
+
+            object pendingSpawnValue = NAPI.Data.GetEntityData(player, "PENDING_SPAWN_SELECTION");
+            if (pendingSpawnValue is bool pendingSpawn && pendingSpawn)
+                return;
+
+            object adminJailedValue = NAPI.Data.GetEntityData(player, "ADMIN_JAILED");
+            if (adminJailedValue is bool adminJailed && adminJailed)
                 return;
 
             object accountIdValue = NAPI.Data.GetEntityData(player, "ACCOUNT_ID");
@@ -285,6 +365,44 @@ namespace Unique.Accounts.Events
         {
             object value = NAPI.Data.GetEntityData(player, key);
             return value is int number ? number : 0;
+        }
+
+        private static bool IsBanExpired(Account account)
+        {
+            if (account == null || string.IsNullOrWhiteSpace(account.BanExpiresAt))
+                return false;
+
+            if (!System.DateTime.TryParse(account.BanExpiresAt, null, System.Globalization.DateTimeStyles.RoundtripKind, out System.DateTime expiresAt))
+                return false;
+
+            return expiresAt <= System.DateTime.UtcNow;
+        }
+
+        private static string BuildBanPayload(Account account)
+        {
+            if (account == null)
+                return "{}";
+
+            string payload =
+                "{" +
+                $"\"reason\":\"{EscapeJson(account.BanReason ?? "Kein Grund angegeben.")}\"," +
+                $"\"banDate\":\"{EscapeJson(account.BanDate ?? System.DateTime.UtcNow.ToString("o"))}\"," +
+                $"\"expiresAt\":\"{EscapeJson(account.BanExpiresAt ?? string.Empty)}\"," +
+                $"\"admin\":\"{EscapeJson(account.BanAdminName ?? "Unbekannt")}\"," +
+                $"\"accountName\":\"{EscapeJson(account.DisplayName)}\"," +
+                $"\"accountId\":{account.AccountId}" +
+                "}";
+
+            return payload;
+        }
+
+        private static string EscapeJson(string value)
+        {
+            return (value ?? string.Empty)
+                .Replace("\\", "\\\\")
+                .Replace("\"", "\\\"")
+                .Replace("\r", "\\r")
+                .Replace("\n", "\\n");
         }
     }
 }

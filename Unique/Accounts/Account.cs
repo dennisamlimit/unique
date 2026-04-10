@@ -26,6 +26,10 @@
         public float RotZ { get; set; } = 160.0f;
         public bool IsBanned { get; set; }
         public string BanReason { get; set; }
+        public string BanDate { get; set; }
+        public string BanExpiresAt { get; set; }
+        public string BanAdminName { get; set; }
+        public int BanAdminAccountId { get; set; }
 
         public string CharacterNameUnderscore => $"{FirstName}_{LastName}";
         public string DisplayName => $"{FirstName} {LastName}";

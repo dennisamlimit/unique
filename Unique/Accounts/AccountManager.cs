@@ -38,7 +38,8 @@ namespace Unique.Accounts
 
         public static bool SetBankCash(int accountId, int bankCash) => Service.SetBankCash(accountId, bankCash);
 
-        public static bool SetBanState(int accountId, bool isBanned, string reason) => Service.SetBanState(accountId, isBanned, reason);
+        public static bool SetBanState(int accountId, bool isBanned, string reason, string adminName = null, int adminAccountId = 0, System.DateTime? expiresAtUtc = null)
+            => Service.SetBanState(accountId, isBanned, reason, adminName, adminAccountId, expiresAtUtc);
 
         public static bool CompleteCharacter(int accountId, string firstName, string lastName, string birthDate, string origin, string customizationJson)
             => Service.CompleteCharacter(accountId, firstName, lastName, birthDate, origin, customizationJson);

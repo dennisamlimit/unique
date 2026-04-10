@@ -1,10 +1,28 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { logoSrc } from "../lib/brand.js";
 import { trigger } from "../lib/rage.js";
 
 function formatMoney(value) {
   return `$${Number(value || 0).toLocaleString("en-US")}`;
+}
+
+function formatMoneyDelta(value) {
+  const amount = Math.abs(Number(value || 0)).toLocaleString("de-DE");
+  return `${value > 0 ? "+" : "-"}${amount}`;
+}
+
+function formatCountdown(seconds) {
+  const safeSeconds = Math.max(0, Number(seconds || 0));
+  const hours = Math.floor(safeSeconds / 3600);
+  const minutes = Math.floor((safeSeconds % 3600) / 60);
+  const rest = safeSeconds % 60;
+
+  if (hours > 0) {
+    return `${hours}:${String(minutes).padStart(2, "0")}:${String(rest).padStart(2, "0")}`;
+  }
+
+  return `${minutes}:${String(rest).padStart(2, "0")}`;
 }
 
 function useClock(active) {
@@ -75,6 +93,10 @@ function HudApp() {
   const [visible, setVisible] = useState(false);
   const [location, setLocation] = useState({ zone: "San Andreas", street: "Unbekannt", crossing: "", direction: "N" });
   const [stats, setStats] = useState({ id: 1, online: 1, cash: 0, bank: 0 });
+  const [moneyDeltas, setMoneyDeltas] = useState([]);
+  const [jail, setJail] = useState({ active: false, notice: false, admin: "", reason: "", releaseAt: "", remaining: 0 });
+  const previousMoneyRef = useRef(null);
+  const jailNoticeTimer = useRef(null);
   const clock = useClock(visible);
 
   const updateLocation = useCallback((zone, street, crossing, direction) => {
@@ -87,19 +109,94 @@ function HudApp() {
   }, []);
 
   const updateStats = useCallback((id, online, cash, bank) => {
+    const nextCash = cash ?? 0;
+    const nextBank = bank ?? 0;
+
+    if (previousMoneyRef.current) {
+      const deltas = [];
+      const cashDelta = nextCash - previousMoneyRef.current.cash;
+      const bankDelta = nextBank - previousMoneyRef.current.bank;
+
+      if (cashDelta !== 0) {
+        deltas.push({ id: `cash-${Date.now()}-${Math.random()}`, type: "cash", amount: cashDelta });
+      }
+
+      if (bankDelta !== 0) {
+        deltas.push({ id: `bank-${Date.now()}-${Math.random()}`, type: "bank", amount: bankDelta });
+      }
+
+      if (deltas.length > 0) {
+        setMoneyDeltas((current) => [...current, ...deltas].slice(-6));
+        setTimeout(() => {
+          setMoneyDeltas((current) => current.filter((delta) => !deltas.some((created) => created.id === delta.id)));
+        }, 1900);
+      }
+    }
+
+    previousMoneyRef.current = { cash: nextCash, bank: nextBank };
+
     setStats({
       id: id ?? 1,
       online: online ?? 1,
-      cash: cash ?? 0,
-      bank: bank ?? 0
+      cash: nextCash,
+      bank: nextBank
     });
   }, []);
+
+  const showJail = useCallback((data) => {
+    const releaseAt = data?.releaseAt || "";
+    const releaseTime = new Date(releaseAt).getTime();
+    const remaining = Number.isNaN(releaseTime) ? 0 : Math.max(0, Math.ceil((releaseTime - Date.now()) / 1000));
+
+    if (jailNoticeTimer.current) {
+      clearTimeout(jailNoticeTimer.current);
+    }
+
+    setJail({
+      active: true,
+      notice: true,
+      admin: data?.admin || "Unbekannt",
+      reason: data?.reason || "Kein Grund angegeben.",
+      releaseAt,
+      remaining
+    });
+
+    jailNoticeTimer.current = setTimeout(() => {
+      setJail((current) => ({ ...current, notice: false }));
+      jailNoticeTimer.current = null;
+    }, 3000);
+  }, []);
+
+  const hideJail = useCallback(() => {
+    if (jailNoticeTimer.current) {
+      clearTimeout(jailNoticeTimer.current);
+      jailNoticeTimer.current = null;
+    }
+
+    setJail({ active: false, notice: false, admin: "", reason: "", releaseAt: "", remaining: 0 });
+  }, []);
+
+  useEffect(() => {
+    if (!jail.active || !jail.releaseAt) {
+      return undefined;
+    }
+
+    const timer = setInterval(() => {
+      const releaseTime = new Date(jail.releaseAt).getTime();
+      const remaining = Number.isNaN(releaseTime) ? 0 : Math.max(0, Math.ceil((releaseTime - Date.now()) / 1000));
+      setJail((current) => ({ ...current, remaining }));
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [jail.active, jail.releaseAt]);
 
   useEffect(() => {
     window.hudApp = {
       setVisible: (state) => setVisible(!!state),
       updateLocation,
-      updateStats
+      updateStats,
+      showJail,
+      hideJail
     };
 
     trigger("cef:hud:ready");
@@ -107,14 +204,79 @@ function HudApp() {
     return () => {
       delete window.hudApp;
     };
-  }, [updateLocation, updateStats]);
+  }, [hideJail, showJail, updateLocation, updateStats]);
 
   if (!visible) {
     return null;
   }
 
+  const cashDeltas = moneyDeltas.filter((delta) => delta.type === "cash");
+  const bankDeltas = moneyDeltas.filter((delta) => delta.type === "bank");
+
   return (
     <main className="fixed inset-0 pointer-events-none text-white">
+      <style>{`
+        @keyframes uniqueMoneyDelta {
+          0% { opacity: 0; transform: translateY(-4px) scale(0.96); }
+          16% { opacity: 1; transform: translateY(0) scale(1); }
+          72% { opacity: 1; transform: translateY(0) scale(1); }
+          100% { opacity: 0; transform: translateY(10px) scale(0.98); }
+        }
+        @keyframes uniqueJailNotice {
+          0% { opacity: 0; transform: translateY(18px) scale(0.98); }
+          14% { opacity: 1; transform: translateY(0) scale(1); }
+          78% { opacity: 1; transform: translateY(0) scale(1); }
+          100% { opacity: 0; transform: translateY(-14px) scale(0.99); }
+        }
+      `}</style>
+      {jail.active && (
+        <section className="absolute left-1/2 top-5 w-[min(620px,80vw)] -translate-x-1/2 overflow-hidden rounded-md border border-violet-200/[0.18] bg-[linear-gradient(115deg,rgba(4,4,8,0.9),rgba(22,8,34,0.82)_48%,rgba(70,18,100,0.54)_78%,rgba(5,5,8,0.9))] px-4 py-3 text-center shadow-[0_10px_34px_rgba(0,0,0,0.5)]">
+          <div className="pointer-events-none absolute inset-x-8 top-0 h-px bg-gradient-to-r from-transparent via-fuchsia-200 to-transparent" />
+          <div className="mx-auto mb-2 h-1 w-20 rounded bg-fuchsia-400 shadow-[0_0_18px_rgba(217,70,239,0.62)]" />
+          <div className="flex items-center justify-center gap-3">
+            <span className="rounded bg-fuchsia-500/[0.18] px-2 py-1 text-[10px] font-black uppercase tracking-normal text-fuchsia-100">Admin Jail</span>
+            <span className="text-2xl font-black leading-none text-white">{formatCountdown(jail.remaining)}</span>
+          </div>
+          <div className="mt-2 truncate text-xs font-bold text-zinc-300">
+            Administrator {jail.admin} | {jail.reason}
+          </div>
+        </section>
+      )}
+
+      {jail.active && jail.notice && (
+        <div className="absolute inset-0 grid place-items-center bg-[linear-gradient(90deg,rgba(0,0,0,0.76),rgba(0,0,0,0.28),rgba(0,0,0,0.82))]" style={{ animation: "uniqueJailNotice 3s ease-out forwards" }}>
+          <section className="relative grid w-[min(860px,88vw)] gap-5 overflow-hidden rounded-md border border-violet-200/[0.16] bg-black/[0.42] p-7 text-center shadow-[0_18px_60px_rgba(0,0,0,0.52)]">
+            <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(115deg,rgba(4,4,8,0.98),rgba(16,8,24,0.94)_42%,rgba(57,18,82,0.62)_74%,rgba(8,8,12,0.96))]" />
+            <div className="pointer-events-none absolute inset-x-[8%] top-[18%] h-[48%] -skew-x-12 border-y border-violet-300/[0.08] bg-violet-400/[0.04]" />
+            <div className="relative mx-auto grid h-16 w-16 place-items-center rounded-md border border-violet-200/[0.18] bg-fuchsia-500/[0.14] text-fuchsia-100 shadow-[0_0_28px_rgba(217,70,239,0.24)]">
+              <svg viewBox="0 0 48 48" className="h-9 w-9 fill-none stroke-current stroke-[2]">
+                <path d="M15 21V14c0-5 4-9 9-9s9 4 9 9v7" />
+                <path d="M12 21h24v19H12z" />
+                <path d="M24 28v6" />
+              </svg>
+            </div>
+            <div className="relative">
+              <div className="font-display text-7xl leading-none text-white">ADMIN JAIL</div>
+              <div className="mt-2 text-sm font-black uppercase tracking-normal text-fuchsia-200">Du wurdest inhaftiert</div>
+            </div>
+            <div className="relative grid gap-3 text-left sm:grid-cols-2">
+              <div className="rounded-md border border-violet-200/[0.12] bg-black/[0.28] p-4 sm:col-span-2">
+                <div className="text-[10px] font-black uppercase text-fuchsia-200">Grund</div>
+                <div className="mt-1 text-lg font-black text-white">{jail.reason}</div>
+              </div>
+              <div className="rounded-md border border-violet-200/[0.1] bg-black/[0.24] p-4">
+                <div className="text-[10px] font-black uppercase text-zinc-500">Administrator</div>
+                <div className="mt-1 text-sm font-bold text-zinc-100">{jail.admin}</div>
+              </div>
+              <div className="rounded-md border border-violet-200/[0.1] bg-black/[0.24] p-4">
+                <div className="text-[10px] font-black uppercase text-zinc-500">Restzeit</div>
+                <div className="mt-1 text-sm font-bold text-zinc-100">{formatCountdown(jail.remaining)}</div>
+              </div>
+            </div>
+          </section>
+        </div>
+      )}
+
       <section className="absolute right-[clamp(18px,2vw,34px)] top-[clamp(16px,2.2vh,28px)] grid justify-items-end gap-1.5 text-right drop-shadow-[0_2px_4px_rgba(0,0,0,0.75)]">
         <div className="flex items-center justify-end gap-2">
           <div className="font-display text-[clamp(28px,2.4vw,42px)] leading-none text-white">Unique<span className="text-fuchsia-300"> RP</span></div>
@@ -130,13 +292,39 @@ function HudApp() {
         </div>
 
         <div className="mt-6 grid justify-items-end gap-1.5">
-          <div className="flex items-center justify-end gap-2">
-            <WalletIcon />
-            <span className="text-[clamp(22px,2vw,34px)] font-black leading-none text-fuchsia-200">{formatMoney(stats.cash)}</span>
+          <div className="grid justify-items-end gap-0.5">
+            <div className="flex items-center justify-end gap-2">
+              <WalletIcon />
+              <span className="text-[clamp(22px,2vw,34px)] font-black leading-none text-fuchsia-200">{formatMoney(stats.cash)}</span>
+            </div>
+            <div className="grid min-h-[18px] justify-items-end gap-0.5">
+              {cashDeltas.map((delta) => (
+                <span
+                  key={delta.id}
+                  className={`text-[13px] font-black leading-none ${delta.amount > 0 ? "text-emerald-300" : "text-rose-300"}`}
+                  style={{ animation: "uniqueMoneyDelta 1.9s ease-out forwards" }}
+                >
+                  {formatMoneyDelta(delta.amount)}
+                </span>
+              ))}
+            </div>
           </div>
-          <div className="flex items-center justify-end gap-2">
-            <BankIcon />
-            <span className="text-[clamp(14px,1.15vw,19px)] font-black leading-none text-violet-100">{formatMoney(stats.bank)}</span>
+          <div className="grid justify-items-end gap-0.5">
+            <div className="flex items-center justify-end gap-2">
+              <BankIcon />
+              <span className="text-[clamp(14px,1.15vw,19px)] font-black leading-none text-violet-100">{formatMoney(stats.bank)}</span>
+            </div>
+            <div className="grid min-h-[16px] justify-items-end gap-0.5">
+              {bankDeltas.map((delta) => (
+                <span
+                  key={delta.id}
+                  className={`text-[12px] font-black leading-none ${delta.amount > 0 ? "text-emerald-300" : "text-rose-300"}`}
+                  style={{ animation: "uniqueMoneyDelta 1.9s ease-out forwards" }}
+                >
+                  {formatMoneyDelta(delta.amount)}
+                </span>
+              ))}
+            </div>
           </div>
         </div>
       </section>

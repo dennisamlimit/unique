@@ -157,7 +157,7 @@ namespace Unique.Accounts.Services
             return true;
         }
 
-        public bool SetBanState(int accountId, bool isBanned, string reason)
+        public bool SetBanState(int accountId, bool isBanned, string reason, string adminName = null, int adminAccountId = 0, System.DateTime? expiresAtUtc = null)
         {
             Account account = repository.GetById(accountId);
             if (account == null)
@@ -165,6 +165,10 @@ namespace Unique.Accounts.Services
 
             account.IsBanned = isBanned;
             account.BanReason = isBanned ? NormalizeOptional(reason) ?? "Kein Grund angegeben." : null;
+            account.BanDate = isBanned ? System.DateTime.UtcNow.ToString("o") : null;
+            account.BanExpiresAt = isBanned && expiresAtUtc.HasValue ? expiresAtUtc.Value.ToString("o") : null;
+            account.BanAdminName = isBanned ? NormalizeOptional(adminName) ?? "Unbekannt" : null;
+            account.BanAdminAccountId = isBanned ? adminAccountId : 0;
             repository.SaveChanges(account);
             return true;
         }

@@ -95,9 +95,9 @@ namespace Unique.Accounts.Repositories
             using var command = connection.CreateCommand();
             command.CommandText =
                 @"INSERT INTO accounts
-                    (first_name, last_name, email, social_club_name, social_club_id, password_hash, password_salt, character_created, birth_date, origin, customization_json, admin_level, cash, bank_cash, health, armor, dimension, pos_x, pos_y, pos_z, rot_z, is_banned, ban_reason)
+                    (first_name, last_name, email, social_club_name, social_club_id, password_hash, password_salt, character_created, birth_date, origin, customization_json, admin_level, cash, bank_cash, health, armor, dimension, pos_x, pos_y, pos_z, rot_z, is_banned, ban_reason, ban_date, ban_expires_at, ban_admin_name, ban_admin_account_id)
                   VALUES
-                    ($firstName, $lastName, $email, $socialClubName, $socialClubId, $passwordHash, $passwordSalt, $characterCreated, $birthDate, $origin, $customizationJson, $adminLevel, $cash, $bankCash, $health, $armor, $dimension, $posX, $posY, $posZ, $rotZ, $isBanned, $banReason);
+                    ($firstName, $lastName, $email, $socialClubName, $socialClubId, $passwordHash, $passwordSalt, $characterCreated, $birthDate, $origin, $customizationJson, $adminLevel, $cash, $bankCash, $health, $armor, $dimension, $posX, $posY, $posZ, $rotZ, $isBanned, $banReason, $banDate, $banExpiresAt, $banAdminName, $banAdminAccountId);
                   SELECT last_insert_rowid();";
 
             BindAccountParameters(command, account, includeId: false);
@@ -135,7 +135,11 @@ namespace Unique.Accounts.Repositories
                     pos_z = $posZ,
                     rot_z = $rotZ,
                     is_banned = $isBanned,
-                    ban_reason = $banReason
+                    ban_reason = $banReason,
+                    ban_date = $banDate,
+                    ban_expires_at = $banExpiresAt,
+                    ban_admin_name = $banAdminName,
+                    ban_admin_account_id = $banAdminAccountId
                   WHERE account_id = $accountId;";
 
             BindAccountParameters(command, account, includeId: true);
@@ -170,6 +174,10 @@ namespace Unique.Accounts.Repositories
             command.Parameters.AddWithValue("$rotZ", account.RotZ);
             command.Parameters.AddWithValue("$isBanned", account.IsBanned ? 1 : 0);
             command.Parameters.AddWithValue("$banReason", (object)account.BanReason ?? DBNull.Value);
+            command.Parameters.AddWithValue("$banDate", (object)account.BanDate ?? DBNull.Value);
+            command.Parameters.AddWithValue("$banExpiresAt", (object)account.BanExpiresAt ?? DBNull.Value);
+            command.Parameters.AddWithValue("$banAdminName", (object)account.BanAdminName ?? DBNull.Value);
+            command.Parameters.AddWithValue("$banAdminAccountId", account.BanAdminAccountId);
         }
 
         private static Account MapAccount(SqliteDataReader reader)
@@ -199,7 +207,11 @@ namespace Unique.Accounts.Repositories
                 PosZ = reader.GetFloat(reader.GetOrdinal("pos_z")),
                 RotZ = reader.GetFloat(reader.GetOrdinal("rot_z")),
                 IsBanned = reader.GetInt32(reader.GetOrdinal("is_banned")) == 1,
-                BanReason = GetNullableString(reader, "ban_reason")
+                BanReason = GetNullableString(reader, "ban_reason"),
+                BanDate = GetNullableString(reader, "ban_date"),
+                BanExpiresAt = GetNullableString(reader, "ban_expires_at"),
+                BanAdminName = GetNullableString(reader, "ban_admin_name"),
+                BanAdminAccountId = reader.GetInt32(reader.GetOrdinal("ban_admin_account_id"))
             };
         }
 
@@ -246,7 +258,11 @@ namespace Unique.Accounts.Repositories
                     pos_z REAL NOT NULL DEFAULT 326.18,
                     rot_z REAL NOT NULL DEFAULT 160.0,
                     is_banned INTEGER NOT NULL DEFAULT 0,
-                    ban_reason TEXT NULL
+                    ban_reason TEXT NULL,
+                    ban_date TEXT NULL,
+                    ban_expires_at TEXT NULL,
+                    ban_admin_name TEXT NULL,
+                    ban_admin_account_id INTEGER NOT NULL DEFAULT 0
                 );";
             command.ExecuteNonQuery();
 
@@ -255,6 +271,10 @@ namespace Unique.Accounts.Repositories
             EnsureColumn(connection, "dimension", "INTEGER NOT NULL DEFAULT 0");
             EnsureColumn(connection, "is_banned", "INTEGER NOT NULL DEFAULT 0");
             EnsureColumn(connection, "ban_reason", "TEXT NULL");
+            EnsureColumn(connection, "ban_date", "TEXT NULL");
+            EnsureColumn(connection, "ban_expires_at", "TEXT NULL");
+            EnsureColumn(connection, "ban_admin_name", "TEXT NULL");
+            EnsureColumn(connection, "ban_admin_account_id", "INTEGER NOT NULL DEFAULT 0");
             EnsureColumn(connection, "character_created", "INTEGER NOT NULL DEFAULT 1");
             EnsureColumn(connection, "birth_date", "TEXT NULL");
             EnsureColumn(connection, "origin", "TEXT NULL");
@@ -306,9 +326,9 @@ namespace Unique.Accounts.Repositories
                 insert.Transaction = transaction;
                 insert.CommandText =
                     @"INSERT INTO accounts
-                        (account_id, first_name, last_name, email, social_club_name, social_club_id, password_hash, password_salt, character_created, birth_date, origin, customization_json, admin_level, cash, bank_cash, health, armor, dimension, pos_x, pos_y, pos_z, rot_z, is_banned, ban_reason)
+                        (account_id, first_name, last_name, email, social_club_name, social_club_id, password_hash, password_salt, character_created, birth_date, origin, customization_json, admin_level, cash, bank_cash, health, armor, dimension, pos_x, pos_y, pos_z, rot_z, is_banned, ban_reason, ban_date, ban_expires_at, ban_admin_name, ban_admin_account_id)
                       VALUES
-                        ($accountId, $firstName, $lastName, $email, $socialClubName, $socialClubId, $passwordHash, $passwordSalt, $characterCreated, $birthDate, $origin, $customizationJson, $adminLevel, $cash, $bankCash, $health, $armor, $dimension, $posX, $posY, $posZ, $rotZ, $isBanned, $banReason);";
+                        ($accountId, $firstName, $lastName, $email, $socialClubName, $socialClubId, $passwordHash, $passwordSalt, $characterCreated, $birthDate, $origin, $customizationJson, $adminLevel, $cash, $bankCash, $health, $armor, $dimension, $posX, $posY, $posZ, $rotZ, $isBanned, $banReason, $banDate, $banExpiresAt, $banAdminName, $banAdminAccountId);";
 
                 BindAccountParameters(insert, account, includeId: true);
                 insert.ExecuteNonQuery();

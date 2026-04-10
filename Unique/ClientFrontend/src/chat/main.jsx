@@ -39,6 +39,8 @@ function ChatApp() {
   const inputRef = useRef(null);
   const scrollRef = useRef(null);
   const fadeTimer = useRef(null);
+  const historyRef = useRef([]);
+  const historyIndexRef = useRef(-1);
 
   const clearFade = useCallback(() => {
     if (fadeTimer.current) {
@@ -73,6 +75,7 @@ function ChatApp() {
     clearFade();
     setCurrentMode(mode);
     setInput("");
+    historyIndexRef.current = -1;
     setOpen(true);
     setTimeout(() => inputRef.current?.focus(), 0);
     scrollToBottom();
@@ -93,6 +96,10 @@ function ChatApp() {
       return;
     }
 
+    if (historyRef.current[historyRef.current.length - 1] !== text) {
+      historyRef.current = [...historyRef.current, text].slice(-40);
+    }
+    historyIndexRef.current = -1;
     trigger("cef:chat:submit", currentMode, text);
   }, [currentMode, input]);
 
@@ -122,12 +129,12 @@ function ChatApp() {
   }
 
   return (
-    <main className="pointer-events-none fixed left-[clamp(34px,3vw,58px)] top-[clamp(8px,1.2vh,14px)] w-[min(560px,45vw)] text-white max-[760px]:left-3 max-[760px]:top-3 max-[760px]:w-[calc(100vw-24px)]">
-      <section className="pointer-events-auto grid h-[clamp(230px,28vh,305px)] grid-rows-[1fr_auto] gap-2">
+    <main className="pointer-events-none fixed left-[clamp(10px,1.2vw,22px)] top-[clamp(8px,1.2vh,14px)] w-[min(560px,45vw)] text-white max-[760px]:left-2 max-[760px]:top-3 max-[760px]:w-[calc(100vw-16px)]">
+      <section className="pointer-events-auto grid gap-2">
         <div
           ref={scrollRef}
           onWheel={clearFade}
-          className="h-full overflow-y-auto overflow-x-hidden rounded-md border border-violet-200/[0.1] bg-black/[0.48] px-3 py-2 shadow-[0_12px_34px_rgba(0,0,0,0.44)] backdrop-blur-[2px] [scrollbar-width:thin]"
+          className="h-[clamp(230px,28vh,305px)] overflow-y-auto overflow-x-hidden rounded-md border border-violet-200/[0.1] bg-black/[0.48] px-3 py-2 shadow-[0_12px_34px_rgba(0,0,0,0.44)] [scrollbar-width:thin]"
         >
           <div className="grid gap-1">
             {messages.map((line) => (
@@ -137,7 +144,7 @@ function ChatApp() {
         </div>
 
         {open && (
-          <div className="grid gap-2 rounded-md border border-violet-200/[0.14] bg-zinc-950/[0.9] p-2 shadow-[0_16px_42px_rgba(0,0,0,0.56)] backdrop-blur-md">
+          <div className="grid gap-2 rounded-md border border-violet-200/[0.14] bg-zinc-950/[0.9] p-2 shadow-[0_12px_34px_rgba(0,0,0,0.5)]">
             <div className="grid grid-cols-5 gap-1">
               {modes.map((mode) => (
                 <button
@@ -172,6 +179,34 @@ function ChatApp() {
 
                 if (event.key === "Escape") {
                   trigger("cef:chat:close");
+                  event.preventDefault();
+                }
+
+                if (event.key === "ArrowUp") {
+                  if (historyRef.current.length > 0) {
+                    const nextIndex = historyIndexRef.current < 0
+                      ? historyRef.current.length - 1
+                      : Math.max(0, historyIndexRef.current - 1);
+
+                    historyIndexRef.current = nextIndex;
+                    setInput(historyRef.current[nextIndex]);
+                  }
+
+                  event.preventDefault();
+                }
+
+                if (event.key === "ArrowDown") {
+                  if (historyRef.current.length > 0 && historyIndexRef.current >= 0) {
+                    const nextIndex = historyIndexRef.current + 1;
+                    if (nextIndex >= historyRef.current.length) {
+                      historyIndexRef.current = -1;
+                      setInput("");
+                    } else {
+                      historyIndexRef.current = nextIndex;
+                      setInput(historyRef.current[nextIndex]);
+                    }
+                  }
+
                   event.preventDefault();
                 }
               }}

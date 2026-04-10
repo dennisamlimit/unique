@@ -20,6 +20,10 @@ namespace Unique.Chat.Events
             if (!(loggedInValue is bool loggedIn) || !loggedIn)
                 return;
 
+            object pendingSpawnValue = NAPI.Data.GetEntityData(player, "PENDING_SPAWN_SELECTION");
+            if (pendingSpawnValue is bool pendingSpawn && pendingSpawn)
+                return;
+
             text = text.Trim();
             mode = mode?.Trim().ToLower() ?? "ic";
 
@@ -80,6 +84,7 @@ namespace Unique.Chat.Events
                 case "setserverspawn":
                 case "serverspawn":
                 case "gotospawn":
+                case "dl":
                 case "setmoney":
                 case "addmoney":
                 case "setbank":
@@ -87,6 +92,8 @@ namespace Unique.Chat.Events
                 case "kick":
                 case "ban":
                 case "unban":
+                case "jail":
+                case "unjail":
                     if (AdminCommands.TryHandleChatCommand(player, cmd, parts, args))
                         return;
                     break;
@@ -132,7 +139,9 @@ namespace Unique.Chat.Events
                     return;
 
                 case "id":
-                    SendSystem(player, $"Deine ID ist {player.Id}.");
+                    object accountIdValue = NAPI.Data.GetEntityData(player, "ACCOUNT_ID");
+                    int accountId = accountIdValue is int id && id > 0 ? id : 0;
+                    SendSystem(player, $"Deine Spieler-ID ist {player.Id + 1}. Server-ID: {player.Id}. Account-ID: {accountId}.");
                     return;
 
                 default:

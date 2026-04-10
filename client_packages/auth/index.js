@@ -220,6 +220,29 @@ function stopCreatorCamera() {
     mp.game.cam.renderScriptCams(false, false, 700, true, false);
 }
 
+function resolveGroundForLocalPlayer() {
+    const player = mp.players.local;
+    const position = player.position;
+
+    for (let probe = position.z + 80.0; probe >= position.z - 120.0; probe -= 10.0) {
+        try {
+            const result = mp.game.gameplay.getGroundZFor3dCoord(position.x, position.y, probe, 0.0, false);
+
+            if (Array.isArray(result) && result[0]) {
+                player.position = new mp.Vector3(position.x, position.y, result[1] + 1.0);
+                return;
+            }
+
+            if (typeof result === "number" && Number.isFinite(result) && result !== 0) {
+                player.position = new mp.Vector3(position.x, position.y, result + 1.0);
+                return;
+            }
+        } catch (error) {
+            return;
+        }
+    }
+}
+
 function previewCreator(type, rawData) {
     let data;
     try {
@@ -422,4 +445,82 @@ mp.events.add("client:creator:result", (success, message) => {
 
 mp.events.add("client:creator:apply", (characterJson) => {
     applyCreatorData(characterJson);
+});
+
+mp.events.add("client:auth:banned", (rawBanData) => {
+    ensureBrowser();
+    state.authVisible = true;
+    state.authBrowser.active = true;
+
+    stopCinematicCam();
+    stopCreatorCamera();
+
+    mp.players.local.freezePosition(true);
+    mp.players.local.setAlpha(0);
+    mp.game.ui.displayHud(false);
+    mp.game.ui.displayRadar(false);
+    mp.gui.chat.activate(false);
+    mp.events.call("client:chat:authState", false);
+    mp.events.call("client:hud:authState", false);
+
+    let banData = {};
+    try {
+        banData = JSON.parse(rawBanData || "{}");
+    } catch (error) {
+        banData = { reason: "Kein Grund angegeben." };
+    }
+
+    executeAuth(`window.authApp && window.authApp.showBanned(${JSON.stringify(banData)});`);
+    ensureAuthCursor();
+
+    setTimeout(() => {
+        mp.events.callRemote("server:auth:banDisconnect");
+    }, 3000);
+});
+
+mp.events.add("client:spawn:show", (message) => {
+    ensureBrowser();
+    state.authVisible = true;
+    state.authBrowser.active = true;
+
+    stopCinematicCam();
+    stopCreatorCamera();
+
+    mp.players.local.freezePosition(true);
+    mp.players.local.setAlpha(0);
+    mp.game.ui.displayHud(false);
+    mp.game.ui.displayRadar(false);
+    mp.gui.chat.activate(false);
+
+    executeAuth(`window.authApp && window.authApp.showSpawn(${JSON.stringify(message || "")});`);
+    mp.events.call("client:chat:authState", false);
+    mp.events.call("client:hud:authState", false);
+    ensureAuthCursor();
+});
+
+mp.events.add("client:spawn:hide", () => {
+    state.authVisible = false;
+
+    mp.players.local.freezePosition(false);
+    mp.players.local.setAlpha(255);
+    mp.game.ui.displayHud(true);
+    mp.game.ui.displayRadar(true);
+
+    executeAuth("window.authApp && window.authApp.hide();");
+    hideAuthCursor();
+});
+
+mp.events.add("client:spawn:resolveGround", () => {
+    setTimeout(resolveGroundForLocalPlayer, 250);
+    setTimeout(resolveGroundForLocalPlayer, 900);
+});
+
+mp.events.add("client:spawn:result", (success, message) => {
+    executeAuth(`window.authApp && window.authApp.setResult(${JSON.stringify(success)}, ${JSON.stringify(message)});`);
+    ensureAuthCursor();
+});
+
+mp.events.add("cef:spawn:select", (spawnType) => {
+    ensureAuthCursor();
+    mp.events.callRemote("server:spawn:select", spawnType);
 });

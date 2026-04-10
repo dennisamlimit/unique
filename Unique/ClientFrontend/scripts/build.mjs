@@ -9,8 +9,10 @@ const dist = resolve(root, "dist");
 
 const entries = [
   { name: "auth", entry: resolve(root, "src/auth/main.jsx"), title: "Unique Auth" },
+  { name: "admin", entry: resolve(root, "src/admin/main.jsx"), title: "Unique Admin" },
   { name: "chat", entry: resolve(root, "src/chat/main.jsx"), title: "Unique Chat" },
-  { name: "hud", entry: resolve(root, "src/hud/main.jsx"), title: "Unique HUD" }
+  { name: "hud", entry: resolve(root, "src/hud/main.jsx"), title: "Unique HUD" },
+  { name: "interaction", entry: resolve(root, "src/interaction/main.jsx"), title: "Unique Interaction" }
 ];
 
 function run(command, args) {
