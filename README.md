@@ -1,24 +1,58 @@
 # Unique Roleplay
 
-RAGE:MP Roleplay-Projekt mit C# Server-Resource und React/Tailwind CEF-Frontend.
+TypeScript-basierte RAGE:MP-Resource mit Postgres-Persistenz und React/Tailwind-CEF fuer `client_packages`.
 
-## Features
+## Stack
 
-- Account-System mit Registrierung, Login, Social-Club-Bindung und SQLite-Persistenz
-- Character-Creator nach neuer Registrierung mit Vorschau, Kamera, Customization-Speicherung und Reapply beim Login
-- Persistente Spielerwerte: Position, Rotation, Dimension, Health, Armor, Bargeld und Bankgeld
-- Globaler Server-Spawn mit Admin-Level-10 Command `/setserverspawn`
-- Admin-System mit Admin-Modus, Level-Pruefung und Commands fuer Teleport, Fahrzeuge, Geld, Bankgeld, Kick, Ban, Unban, Heal und Revive
-- React/Tailwind UI fuer Login, Character-Creator, Chat und HUD im Unique-RP Theme
-- Custom Chat mit IC/OOC/ME/DO/TRY, lokaler Reichweite und Admin-Nachrichten
-- HUD mit Account-ID, Onlinezahl, Bargeld, Bankgeld, Uhrzeit und Strassennamen/Zone
+- Server: TypeScript, gebuendelt nach `packages/unique-server`
+- Datenbank: PostgreSQL
+- Frontend: React + Tailwind, gebaut direkt nach `client_packages/auth`, `client_packages/chat`, `client_packages/hud`
+- Laufzeit: RAGE:MP Linux Server in Docker
 
-## Baustellen
+## Projektpfade
 
-- Character-Creator ingame weiter feinjustieren: Wertebereiche, Kleidungsauswahl, Overlay-Farben und Female/Male Defaults
-- Mehr Charakter-Slots statt aktuell einem Charakter pro Account
-- Spawn-Auswahl nach Login, z.B. letzter Standort, Server-Spawn, Fraktionsspawn oder Apartment
-- Inventar, Shops, Banking und Fahrzeug-/Garagen-System
-- Fraktionen, Jobs und Rechteverwaltung ausbauen
-- Admin-Logs und Ban-History in der Datenbank speichern
-- Frontend-Build/Deploy automatisieren, damit `client_packages` nicht manuell kopiert werden muessen
+- Server-Source: `server/src`
+- Frontend-Source: `Unique/ClientFrontend`
+- RAGE:MP Runtime-Output: `packages/` und `client_packages/`
+
+## Build lokal
+
+1. Server-Abhaengigkeiten installieren:
+   `npm install --prefix server`
+2. Frontend-Abhaengigkeiten installieren:
+   `npm install --prefix Unique/ClientFrontend`
+3. Gesamten Build ausfuehren:
+   `npm run build`
+
+## Docker
+
+Die Compose-Umgebung startet:
+
+- `postgres` auf Basis von `postgres:16-alpine`
+- `ragemp` mit den offiziellen Linux-Serverfiles von RAGE:MP
+
+Start:
+
+1. `docker compose build`
+2. `docker compose up -d`
+
+Offene Ports:
+
+- `22005/tcp`
+- `22005/udp`
+- `22006/tcp`
+
+## Datenbank
+
+Die Resource liest `DATABASE_URL`.
+
+Docker Compose setzt standardmaessig:
+
+`postgres://unique:unique@postgres:5432/unique`
+
+Beim Start werden die Tabellen `accounts` und `server_spawn` automatisch angelegt.
+
+## Hinweise
+
+- Die alte C#-Resource liegt noch im Repo, ist aber nicht mehr der gebaute Laufzeitpfad.
+- Die Docker-Instanz verwendet `docker/conf.json.example` als Fallback, solange kein eigenes `conf.json` in den Container gelegt wird.

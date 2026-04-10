@@ -1,0 +1,51 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: unique-postgres
+    environment:
+      POSTGRES_DB: unique
+      POSTGRES_USER: unique
+      POSTGRES_PASSWORD: unique
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U unique -d unique"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: unique-pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@unique.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"
+    ports:
+      - "5050:80"
+    volumes:
+      - pgadmin-data:/var/lib/pgadmin
+      - ./docker/pgadmin-servers.json:/pgadmin4/servers.json:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  ragemp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: unique-ragemp
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://unique:unique@postgres:5432/unique
+    ports:
+      - "22005:22005/tcp"
+      - "22005:22005/udp"
+      - "22006:22006/tcp"
+
+volumes:
+  postgres-data:
+  pgadmin-data:

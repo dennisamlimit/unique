@@ -1,12 +1,21 @@
+.agents/
+.claude/
 .vs/
 bin/
 obj/
 .codex-build/
 .codex-obj/
+node_modules/
+dist/
+build/
+packages/unique-server/
+docker/conf.json
 
 **/bin/
 **/obj/
 **/.vs/
+**/node_modules/
+**/dist/
 
 Unique/ClientFrontend/node_modules/
 Unique/ClientFrontend/dist/

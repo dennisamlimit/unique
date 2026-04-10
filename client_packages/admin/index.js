@@ -1,149 +1,125 @@
-const state = {
+(() => {
+  const state = {
     browser: null,
     isReady: false,
     isOpen: false,
     pendingActions: [],
     readyProbe: null
-};
-
-const KEY_F3 = 0x72;
-
-function getAdminLevel() {
+  };
+  const KEY_F3 = 114;
+  function getAdminLevel() {
     try {
-        const level = mp.players.local.getVariable("ADMIN_LEVEL");
-        return Number.isFinite(level) ? level : 0;
+      const level = mp.players.local.getVariable("ADMIN_LEVEL");
+      return Number.isFinite(level) ? level : 0;
     } catch (error) {
-        return 0;
+      return 0;
     }
-}
-
-function isAdminModeEnabled() {
+  }
+  function isAdminModeEnabled() {
     try {
-        return !!mp.players.local.getVariable("ADMIN_MODE");
+      return !!mp.players.local.getVariable("ADMIN_MODE");
     } catch (error) {
-        return false;
+      return false;
     }
-}
-
-function readPlayerVariable(player, key, fallback) {
+  }
+  function readPlayerVariable(player, key, fallback) {
     try {
-        const value = player.getVariable(key);
-        return value === undefined || value === null ? fallback : value;
+      const value = player.getVariable(key);
+      return value === void 0 || value === null ? fallback : value;
     } catch (error) {
-        return fallback;
+      return fallback;
     }
-}
-
-function collectPlayers() {
+  }
+  function collectPlayers() {
     const players = [];
-
     try {
-        if (typeof mp.players.forEach === "function") {
-            mp.players.forEach((player) => {
-                players.push(player);
-            });
-        }
+      if (typeof mp.players.forEach === "function") {
+        mp.players.forEach((player) => {
+          players.push(player);
+        });
+      }
     } catch (error) {
-        // Fallback below covers clients where collection iteration is unavailable.
     }
-
     if (players.length === 0) {
-        players.push(mp.players.local);
+      players.push(mp.players.local);
     }
-
     return players.map((player) => {
-        const serverId = Number.isFinite(player.remoteId) ? player.remoteId : (Number.isFinite(player.id) ? player.id : 0);
-        const accountId = Number(readPlayerVariable(player, "ACCOUNT_ID", 0)) || 0;
-        const adminLevel = Number(readPlayerVariable(player, "ADMIN_LEVEL", 0)) || 0;
-
-        return {
-            name: player.name || readPlayerVariable(player, "DISPLAY_NAME", "Unbekannt"),
-            serverId,
-            playerId: serverId + 1,
-            accountId,
-            adminLevel,
-            adminMode: !!readPlayerVariable(player, "ADMIN_MODE", false)
-        };
+      const serverId = Number.isFinite(player.remoteId) ? player.remoteId : Number.isFinite(player.id) ? player.id : 0;
+      const accountId = Number(readPlayerVariable(player, "ACCOUNT_ID", 0)) || 0;
+      const adminLevel = Number(readPlayerVariable(player, "ADMIN_LEVEL", 0)) || 0;
+      return {
+        name: player.name || String(readPlayerVariable(player, "DISPLAY_NAME", "Unbekannt")),
+        serverId,
+        playerId: serverId + 1,
+        accountId,
+        adminLevel,
+        adminMode: !!readPlayerVariable(player, "ADMIN_MODE", false)
+      };
     });
-}
-
-function flushPending() {
+  }
+  function flushPending() {
     if (!state.browser || !state.isReady) {
-        return;
+      return;
     }
-
     while (state.pendingActions.length > 0) {
-        state.browser.execute(state.pendingActions.shift());
+      state.browser.execute(state.pendingActions.shift());
     }
-}
-
-function executeAdmin(js) {
+  }
+  function executeAdmin(js) {
     if (!state.browser || !state.isReady) {
-        state.pendingActions.push(js);
-        return;
+      state.pendingActions.push(js);
+      return;
     }
-
     state.browser.execute(js);
-}
-
-function stopReadyProbe() {
+  }
+  function stopReadyProbe() {
     if (!state.readyProbe) {
-        return;
+      return;
     }
-
     clearInterval(state.readyProbe);
     state.readyProbe = null;
-}
-
-function startReadyProbe() {
+  }
+  function startReadyProbe() {
     stopReadyProbe();
-
     state.readyProbe = setInterval(() => {
-        if (!state.browser || state.isReady) {
-            stopReadyProbe();
-            return;
-        }
-
-        state.browser.execute(`
-            if (window.adminApp && !window.__adminReadyNotified) {
-                window.__adminReadyNotified = true;
-                if (typeof mp !== "undefined") {
-                    mp.trigger("cef:admin:ready");
-                }
-            }
-        `);
-    }, 300);
-}
-
-function ensureBrowser() {
-    if (state.browser) {
+      if (!state.browser || state.isReady) {
+        stopReadyProbe();
         return;
+      }
+      state.browser.execute(`
+      if (window.adminApp && !window.__adminReadyNotified) {
+        window.__adminReadyNotified = true;
+        if (typeof mp !== "undefined") {
+          mp.trigger("cef:admin:ready");
+        }
+      }
+    `);
+    }, 300);
+  }
+  function ensureBrowser() {
+    if (state.browser) {
+      return;
     }
-
     state.browser = mp.browsers.new("package://admin/admin.html");
     state.browser.active = false;
     startReadyProbe();
-}
-
-function closeAdminMenu() {
+  }
+  function closeAdminMenu() {
     if (!state.browser) {
-        return;
+      return;
     }
-
     state.isOpen = false;
     state.browser.active = false;
     mp.gui.cursor.show(false, false);
     mp.events.call("client:chat:authState", true);
     mp.events.call("client:hud:authState", true);
     executeAdmin("window.adminApp && window.adminApp.close();");
-}
-
-function openAdminMenu() {
+  }
+  function openAdminMenu() {
     const level = getAdminLevel();
     if (level <= 0 || !isAdminModeEnabled()) {
-        return;
+      return;
     }
-
     ensureBrowser();
     state.isOpen = true;
     state.browser.active = true;
@@ -151,41 +127,34 @@ function openAdminMenu() {
     mp.events.call("client:hud:authState", false);
     mp.gui.cursor.show(true, true);
     executeAdmin(`window.adminApp && window.adminApp.open(${JSON.stringify(level)}, ${JSON.stringify(collectPlayers())});`);
-}
-
-function toggleAdminMenu() {
+  }
+  function toggleAdminMenu() {
     if (state.isOpen) {
-        closeAdminMenu();
-        return;
+      closeAdminMenu();
+      return;
     }
-
     openAdminMenu();
-}
-
-mp.events.add("playerReady", () => {
+  }
+  mp.events.add("playerReady", () => {
     ensureBrowser();
-});
-
-mp.events.add("cef:admin:ready", () => {
+  });
+  mp.events.add("cef:admin:ready", () => {
     if (state.isReady) {
-        return;
+      return;
     }
-
     state.isReady = true;
     stopReadyProbe();
     flushPending();
-});
-
-mp.keys.bind(KEY_F3, true, () => {
+  });
+  mp.keys.bind(KEY_F3, true, () => {
     toggleAdminMenu();
-});
-
-mp.events.add("cef:admin:close", () => {
+  });
+  mp.events.add("cef:admin:close", () => {
     closeAdminMenu();
-});
-
-mp.events.add("render", () => {
+  });
+  mp.events.add("render", () => {
     if (state.isOpen && (!isAdminModeEnabled() || getAdminLevel() <= 0)) {
-        closeAdminMenu();
+      closeAdminMenu();
     }
-});
+  });
+})();

@@ -1,0 +1,13 @@
+{
+  "name": "unique-ragemp",
+  "private": true,
+  "scripts": {
+    "build": "npm run build:server && npm run build:client && npm run build:frontend",
+    "build:server": "npm --prefix server run build",
+    "build:client": "node client_src/build.mjs",
+    "build:frontend": "npm --prefix Unique/ClientFrontend run build",
+    "typecheck": "npm run typecheck:server && npm run typecheck:client",
+    "typecheck:server": "npm --prefix server run typecheck",
+    "typecheck:client": "node server/node_modules/typescript/bin/tsc -p client_src/tsconfig.json --noEmit"
+  }
+}

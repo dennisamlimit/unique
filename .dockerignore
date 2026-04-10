@@ -1,0 +1,8 @@
+.git
+.agents
+.codex-vendor
+node_modules
+**/node_modules
+build
+dist
+docker/conf.json

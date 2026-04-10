@@ -1,11 +1,15 @@
 import { build } from "esbuild";
-import { copyFile, mkdir, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const dist = resolve(root, "dist");
+const dist = resolve(root, "..", "..", "client_packages");
+const assets = {
+  logo: resolve(root, "assets", "Unique_logo.png"),
+  font: resolve(root, "assets", "ChaletComprime-CologneSixty.woff2")
+};
 
 const entries = [
   { name: "auth", entry: resolve(root, "src/auth/main.jsx"), title: "Unique Auth" },
@@ -46,7 +50,6 @@ function htmlFor(app) {
 `;
 }
 
-await rm(dist, { recursive: true, force: true });
 await mkdir(resolve(dist, "shared"), { recursive: true });
 
 await run(process.execPath, [
@@ -56,13 +59,15 @@ await run(process.execPath, [
   "-i",
   "src/styles.css",
   "-o",
-  "dist/shared/ui.css",
+  resolve(dist, "shared", "ui.css"),
   "--minify"
 ]);
 
 for (const app of entries) {
   await mkdir(resolve(dist, app.name), { recursive: true });
   await copyFile(resolve(dist, "shared", "ui.css"), resolve(dist, app.name, "ui.css"));
+  await copyFile(assets.logo, resolve(dist, app.name, "Unique_logo.png"));
+  await copyFile(assets.font, resolve(dist, app.name, "ChaletComprime-CologneSixty.woff2"));
 
   await build({
     entryPoints: [app.entry],
@@ -85,3 +90,5 @@ for (const app of entries) {
 
   await writeFile(resolve(dist, app.name, `${app.name}.html`), htmlFor(app), "utf8");
 }
+
+await copyFile(assets.logo, resolve(dist, "shared", "Unique_logo.png"));

@@ -1,0 +1,15 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "Unique Postgres",
+      "Group": "Servers",
+      "Host": "postgres",
+      "Port": 5432,
+      "MaintenanceDB": "unique",
+      "Username": "unique",
+      "Password": "unique",
+      "SSLMode": "prefer",
+      "SavePassword": true
+    }
+  }
+}

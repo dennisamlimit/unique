@@ -1,0 +1,11 @@
+{
+  "announce": false,
+  "bind": "0.0.0.0",
+  "gamemode": "roleplay",
+  "name": "Unique Roleplay",
+  "maxplayers": 100,
+  "port": 22005,
+  "stream-distance": 500.0,
+  "language": "de",
+  "sync-rate": 40
+}
