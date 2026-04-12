@@ -3,31 +3,8 @@ import { createRoot } from "react-dom/client";
 import { logoSrc } from "../lib/brand.js";
 import { trigger } from "../lib/rage.js";
 
-const commands = [
-  { level: 1, name: "myadmin", usage: "/myadmin", description: "Eigenes Admin-Level und Modus anzeigen." },
-  { level: 1, name: "veh", usage: "/veh [modell] [farbe1] [farbe2] [kennzeichen]", description: "Admin-Fahrzeug spawnen." },
-  { level: 1, name: "aheal", usage: "/aheal [spielerId]", description: "Dich oder einen Spieler heilen." },
-  { level: 1, name: "revive", usage: "/revive [spielerId]", description: "Dich oder einen Spieler wiederbeleben." },
-  { level: 1, name: "apos", usage: "/apos oder /apos x y z rot", description: "Position anzeigen oder setzen." },
-  { level: 1, name: "serverspawn", usage: "/serverspawn", description: "Aktuellen Server-Spawn anzeigen." },
-  { level: 2, name: "msg", usage: "/msg [nachricht]", description: "Admin-Nachricht an alle senden." },
-  { level: 2, name: "findaccountsc", usage: "/findaccountsc [socialClubId]", description: "Account per Social-Club-ID finden." },
-  { level: 2, name: "goto", usage: "/goto [spielerId]", description: "Zu einem Spieler teleportieren." },
-  { level: 2, name: "gethere", usage: "/gethere [spielerId]", description: "Spieler zu dir teleportieren." },
-  { level: 2, name: "gotospawn", usage: "/gotospawn", description: "Zum Server-Spawn teleportieren." },
-  { level: 2, name: "dl", usage: "/dl", description: "Fahrzeug-Debug-Label in Unique-Lila ein- oder ausschalten." },
-  { level: 2, name: "kick", usage: "/kick [spielerId] [grund]", description: "Spieler vom Server kicken." },
-  { level: 2, name: "jail", usage: "/jail [spielerId] [dauer: 30s/10m/1h] [grund]", description: "Spieler ins Admin-Jail in Dimension 1 setzen." },
-  { level: 2, name: "unjail", usage: "/unjail [spielerId]", description: "Spieler manuell aus dem Admin-Jail entlassen." },
-  { level: 3, name: "setmoney", usage: "/setmoney [spielerId] [betrag]", description: "Bargeld setzen." },
-  { level: 3, name: "addmoney", usage: "/addmoney [spielerId] [betrag]", description: "Bargeld aendern." },
-  { level: 3, name: "setbank", usage: "/setbank [spielerId] [betrag]", description: "Bankgeld setzen." },
-  { level: 3, name: "addbank", usage: "/addbank [spielerId] [betrag]", description: "Bankgeld aendern." },
-  { level: 4, name: "ban", usage: "/ban [spielerId] [dauer optional: 30m/2h/7d] [grund]", description: "Account permanent oder temporaer bannen." },
-  { level: 4, name: "unban", usage: "/unban [accountId]", description: "Temporaere Bans aufheben. Permanente Bans erst ab Level 7." },
-  { level: 10, name: "setadmin", usage: "/setadmin [accountId] [level]", description: "Admin-Level setzen." },
-  { level: 10, name: "setserverspawn", usage: "/setserverspawn", description: "Server-Spawn auf deine Position setzen." }
-];
+// Commands are now fetched dynamically from the server.
+const commandsPlaceHolder = [];
 
 function CommandIcon() {
   return (
@@ -48,6 +25,7 @@ function ShieldIcon() {
 }
 
 function CommandRow({ command }) {
+  const level = command.requiredLevel || command.level || 0;
   return (
     <article className="grid gap-3 rounded-md border border-violet-200/[0.12] bg-black/[0.26] p-3 transition hover:border-violet-200/[0.28] hover:bg-white/[0.05]">
       <div className="flex items-start justify-between gap-3">
@@ -62,7 +40,7 @@ function CommandRow({ command }) {
             </div>
           </div>
         </div>
-        <span className="rounded bg-violet-400/[0.12] px-2 py-1 text-[10px] font-black uppercase text-violet-100">Lv. {command.level}</span>
+        <span className="rounded bg-violet-400/[0.12] px-2 py-1 text-[10px] font-black uppercase text-violet-100">Lv. {level}</span>
       </div>
     </article>
   );
@@ -91,7 +69,7 @@ function PanelIcon({ type }) {
     );
   }
 
-  if (type === "commands") {
+  if (type === "commands" || type === "perms") {
     return <CommandIcon />;
   }
 
@@ -125,13 +103,24 @@ function AdminApp() {
   const [adminLevel, setAdminLevel] = useState(0);
   const [activePanel, setActivePanel] = useState("home");
   const [players, setPlayers] = useState([]);
+  const [factions, setFactions] = useState([]);
+  const [commands, setCommands] = useState([]);
+  const [logs, setLogs] = useState([]);
   const [notice, setNotice] = useState("");
+  const [factionForm, setFactionForm] = useState({ type: "state", shortName: "", name: "", colorHex: "#33AA88", mapIconId: "" });
+  const [leaderForm, setLeaderForm] = useState({ accountId: "", factionId: "" });
+  const [spawnFactionId, setSpawnFactionId] = useState("");
+  const [wardrobeForm, setWardrobeForm] = useState({ factionId: "", label: "" });
+  const [vehicleForm, setVehicleForm] = useState({ factionId: "", minRankLevel: "1", modelName: "", displayName: "" });
+  const [defaultTarget, setDefaultTarget] = useState("all");
+  const [localCommandLevels, setLocalCommandLevels] = useState({});
 
-  const allowedCommands = useMemo(() => commands.filter((command) => command.level <= adminLevel), [adminLevel]);
+  const allowedCommands = useMemo(() => commands.filter((command) => (command.requiredLevel || command.level || 0) <= adminLevel), [adminLevel, commands]);
   const grouped = useMemo(() => {
     return allowedCommands.reduce((groups, command) => {
-      groups[command.level] = groups[command.level] || [];
-      groups[command.level].push(command);
+      const lvl = command.requiredLevel || command.level || 0;
+      groups[lvl] = groups[lvl] || [];
+      groups[lvl].push(command);
       return groups;
     }, {});
   }, [allowedCommands]);
@@ -158,7 +147,36 @@ function AdminApp() {
     window.adminApp = {
       open,
       close,
-      setNotice: (message) => setNotice(message || "")
+      setNotice: (message) => setNotice(message || ""),
+      setCommands: (raw) => {
+          try {
+              const parsed = JSON.parse(raw || "[]");
+              setCommands(parsed);
+              // Clear local overrides that match the server state
+              setLocalCommandLevels(prev => {
+                const next = { ...prev };
+                for (const cmd of parsed) {
+                    if (next[cmd.commandId] === cmd.requiredLevel) {
+                        delete next[cmd.commandId];
+                    }
+                }
+                return next;
+              });
+          } catch(e) { setCommands([]); }
+      },
+      setLogs: (raw) => {
+          try {
+              setLogs(JSON.parse(raw || "[]"));
+          } catch(e) { setLogs([]); }
+      },
+      setFactions: (rawPayload) => {
+        try {
+          const parsed = JSON.parse(rawPayload || "[]");
+          setFactions(Array.isArray(parsed) ? parsed : []);
+        } catch (error) {
+          setFactions([]);
+        }
+      }
     };
 
     trigger("cef:admin:ready");
@@ -175,8 +193,10 @@ function AdminApp() {
   const navItems = [
     { id: "home", label: "Home", icon: "home" },
     { id: "players", label: "Spieler", icon: "players" },
+    { id: "factions", label: "Fraktionen", icon: "home" },
     { id: "logs", label: "Logs", icon: "logs" },
-    { id: "commands", label: "Befehle", icon: "commands" }
+    { id: "commands", label: "Befehle", icon: "commands" },
+    ...(adminLevel === 10 ? [{ id: "perms", label: "Berechtigungen", icon: "perms" }] : [])
   ];
 
   return (
@@ -189,7 +209,7 @@ function AdminApp() {
           <div className="flex items-center gap-3">
             <img className="h-10 w-10 rounded object-contain" src={logoSrc} alt="Unique Roleplay" />
             <div>
-              <div className="font-display text-5xl leading-none">Admin Menu</div>
+              <div className="font-display text-5xl leading-none">Admin Center</div>
               <div className="flex items-center gap-2 text-xs font-black uppercase text-fuchsia-200">
                 <ShieldIcon />
                 Level {adminLevel} aktiv
@@ -258,29 +278,172 @@ function AdminApp() {
               </section>
             )}
 
+            {activePanel === "factions" && (
+              <section className="grid gap-5">
+                <div className="grid gap-5 xl:grid-cols-2">
+                  <div className="grid gap-3 rounded-md border border-violet-200/[0.12] bg-black/[0.24] p-5">
+                    <h2 className="text-xs font-black uppercase tracking-normal text-violet-100">Fraktion erstellen</h2>
+                    <div className="grid gap-3">
+                      <input value={factionForm.type} onChange={(e) => setFactionForm((current) => ({ ...current, type: e.target.value }))} className="h-10 rounded-md border border-violet-300/[0.18] bg-black/[0.48] px-3 text-sm font-semibold text-white" placeholder="Typ" />
+                      <input value={factionForm.shortName} onChange={(e) => setFactionForm((current) => ({ ...current, shortName: e.target.value }))} className="h-10 rounded-md border border-violet-300/[0.18] bg-black/[0.48] px-3 text-sm font-semibold text-white" placeholder="Kuerzel" />
+                      <input value={factionForm.mapIconId} onChange={(e) => setFactionForm((current) => ({ ...current, mapIconId: e.target.value.replace(/[^0-9]/g, "") }))} className="h-10 rounded-md border border-violet-300/[0.18] bg-black/[0.48] px-3 text-sm font-semibold text-white" placeholder="GTA Icon-ID optional" />
+                      <input value={factionForm.name} onChange={(e) => setFactionForm((current) => ({ ...current, name: e.target.value }))} className="h-10 rounded-md border border-violet-300/[0.18] bg-black/[0.48] px-3 text-sm font-semibold text-white" placeholder="Name" />
+                      <input value={factionForm.colorHex} onChange={(e) => setFactionForm((current) => ({ ...current, colorHex: e.target.value }))} className="h-10 rounded-md border border-violet-300/[0.18] bg-black/[0.48] px-3 text-sm font-semibold text-white" placeholder="#RRGGBB" />
+                      <button type="button" onClick={() => trigger("cef:admin:createFaction", factionForm.type, factionForm.shortName, factionForm.name, factionForm.colorHex, factionForm.mapIconId || "0")} className="h-10 rounded-md bg-fuchsia-500 text-xs font-black uppercase text-white">
+                        Fraktion erstellen
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="grid gap-3 rounded-md border border-violet-200/[0.12] bg-black/[0.24] p-5">
+                    <h2 className="text-xs font-black uppercase tracking-normal text-violet-100">Leader setzen</h2>
+                    <div className="grid gap-3">
+                      <input value={leaderForm.accountId} onChange={(e) => setLeaderForm((current) => ({ ...current, accountId: e.target.value }))} className="h-10 rounded-md border border-violet-300/[0.18] bg-black/[0.48] px-3 text-sm font-semibold text-white" placeholder="Account-ID" />
+                      <input value={leaderForm.factionId} onChange={(e) => setLeaderForm((current) => ({ ...current, factionId: e.target.value }))} className="h-10 rounded-md border border-violet-300/[0.18] bg-black/[0.48] px-3 text-sm font-semibold text-white" placeholder="Fraktion-ID" />
+                      <button type="button" onClick={() => trigger("cef:admin:setFactionLeader", leaderForm.accountId, leaderForm.factionId)} className="h-10 rounded-md bg-fuchsia-500 text-xs font-black uppercase text-white">
+                        Leader setzen
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="grid gap-3 rounded-md border border-violet-200/[0.12] bg-black/[0.24] p-5">
+                    <h2 className="text-xs font-black uppercase tracking-normal text-violet-100">Spawn und Kammer</h2>
+                    <div className="grid gap-3">
+                      <input value={spawnFactionId} onChange={(e) => setSpawnFactionId(e.target.value)} className="h-10 rounded-md border border-violet-300/[0.18] bg-black/[0.48] px-3 text-sm font-semibold text-white" placeholder="Fraktion-ID fuer Spawn" />
+                      <button type="button" onClick={() => trigger("cef:admin:setFactionSpawn", spawnFactionId)} className="h-10 rounded-md bg-fuchsia-500 text-xs font-black uppercase text-white">
+                        Spawn auf Position setzen
+                      </button>
+                      <input value={wardrobeForm.factionId} onChange={(e) => setWardrobeForm((current) => ({ ...current, factionId: e.target.value }))} className="h-10 rounded-md border border-violet-300/[0.18] bg-black/[0.48] px-3 text-sm font-semibold text-white" placeholder="Fraktion-ID fuer Kammer" />
+                      <input value={wardrobeForm.label} onChange={(e) => setWardrobeForm((current) => ({ ...current, label: e.target.value }))} className="h-10 rounded-md border border-violet-300/[0.18] bg-black/[0.48] px-3 text-sm font-semibold text-white" placeholder="Kammername" />
+                      <button type="button" onClick={() => trigger("cef:admin:addFactionWardrobe", wardrobeForm.factionId, wardrobeForm.label)} className="h-10 rounded-md bg-fuchsia-500 text-xs font-black uppercase text-white">
+                        Kleidungskammer erstellen
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="grid gap-3 rounded-md border border-violet-200/[0.12] bg-black/[0.24] p-5">
+                    <h2 className="text-xs font-black uppercase tracking-normal text-violet-100">Fraktionsfahrzeug erstellen</h2>
+                    <div className="grid gap-3">
+                      <input value={vehicleForm.factionId} onChange={(e) => setVehicleForm((current) => ({ ...current, factionId: e.target.value }))} className="h-10 rounded-md border border-violet-300/[0.18] bg-black/[0.48] px-3 text-sm font-semibold text-white" placeholder="Fraktion-ID" />
+                      <input value={vehicleForm.minRankLevel} onChange={(e) => setVehicleForm((current) => ({ ...current, minRankLevel: e.target.value }))} className="h-10 rounded-md border border-violet-300/[0.18] bg-black/[0.48] px-3 text-sm font-semibold text-white" placeholder="Mindestrang" />
+                      <input value={vehicleForm.modelName} onChange={(e) => setVehicleForm((current) => ({ ...current, modelName: e.target.value }))} className="h-10 rounded-md border border-violet-300/[0.18] bg-black/[0.48] px-3 text-sm font-semibold text-white" placeholder="Fahrzeugmodell" />
+                      <input value={vehicleForm.displayName} onChange={(e) => setVehicleForm((current) => ({ ...current, displayName: e.target.value }))} className="h-10 rounded-md border border-violet-300/[0.18] bg-black/[0.48] px-3 text-sm font-semibold text-white" placeholder="Anzeigename" />
+                      <button type="button" onClick={() => trigger("cef:admin:createFactionVehicle", vehicleForm.factionId, vehicleForm.minRankLevel, vehicleForm.modelName, vehicleForm.displayName)} className="h-10 rounded-md bg-fuchsia-500 text-xs font-black uppercase text-white">
+                        Fahrzeug erstellen
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="rounded-md border border-violet-200/[0.12] bg-black/[0.24] p-5">
+                  <div className="flex items-center justify-between gap-3">
+                    <h2 className="text-xs font-black uppercase tracking-normal text-violet-100">Bestehende Fraktionen</h2>
+                    <div className="flex items-center gap-2">
+                      <input value={defaultTarget} onChange={(e) => setDefaultTarget(e.target.value)} className="h-9 rounded-md border border-violet-300/[0.18] bg-black/[0.48] px-3 text-xs font-semibold text-white" placeholder="all oder ID" />
+                      <button type="button" onClick={() => trigger("cef:admin:syncFactionDefaults", defaultTarget)} className="h-9 rounded-md bg-fuchsia-500 px-3 text-[10px] font-black uppercase text-white">
+                        Defaults syncen
+                      </button>
+                    </div>
+                  </div>
+                  <div className="mt-4 grid gap-3 lg:grid-cols-2">
+                    {factions.map((faction) => (
+                      <article key={faction.factionId} className="rounded-md border border-violet-200/[0.1] bg-black/[0.24] p-3">
+                        <div className="text-sm font-black uppercase text-white">[{faction.shortName}] {faction.name}</div>
+                        <div className="text-xs font-semibold text-zinc-400">ID {faction.factionId} | {faction.type} | {faction.colorHex} | Icon {faction.mapIconId}</div>
+                      </article>
+                    ))}
+                  </div>
+                </div>
+              </section>
+            )}
+
             {activePanel === "logs" && (
-              <section className="grid place-items-center rounded-md border border-violet-200/[0.12] bg-black/[0.24] p-12 text-center">
-                <div className="font-display text-5xl leading-none text-white">Logs</div>
-                <p className="mt-3 max-w-[48ch] text-sm font-semibold leading-6 text-zinc-400">
-                  Noch keine Admin-Logs vorhanden. Das Panel ist vorbereitet, damit wir spaeter Kick/Ban/Geld/Teleport-Aktionen sauber anzeigen koennen.
-                </p>
+              <section className="grid gap-3">
+                <div className="flex items-center gap-3">
+                    <div className="h-1 w-10 rounded bg-fuchsia-400 shadow-[0_0_18px_rgba(217,70,239,0.7)]" />
+                    <h2 className="text-xs font-black uppercase tracking-normal text-violet-100">Admin Logs (Letzte 50)</h2>
+                    <button onClick={() => trigger("cef:admin:requestLogs")} className="ml-auto text-[10px] font-black uppercase text-fuchsia-400 hover:text-fuchsia-300">Aktualisieren</button>
+                </div>
+                <div className="grid gap-2">
+                    {logs.map((log) => (
+                        <article key={log.log_id} className="flex items-center justify-between gap-4 rounded-md border border-violet-200/[0.1] bg-black/20 p-3">
+                            <div className="min-w-0">
+                                <div className="text-[10px] font-black uppercase text-fuchsia-300">{log.action_type} | {new Date(log.created_at).toLocaleString()}</div>
+                                <div className="truncate text-xs font-semibold text-white">{log.details}</div>
+                            </div>
+                            <div className="text-right shrink-0">
+                                <div className="text-[10px] font-black uppercase text-zinc-500">Admin</div>
+                                <div className="text-xs font-bold text-white">{log.first_name} {log.last_name}</div>
+                            </div>
+                        </article>
+                    ))}
+                </div>
               </section>
             )}
 
             {activePanel === "commands" && (
               <div className="grid gap-5">
-                {Object.keys(grouped).map((level) => (
+                {Object.keys(grouped).sort((a, b) => Number(a) - Number(b)).map((level) => (
                   <section key={level} className="grid gap-3">
                     <div className="flex items-center gap-3">
                       <div className="h-1 w-10 rounded bg-fuchsia-400 shadow-[0_0_18px_rgba(217,70,239,0.7)]" />
                       <h2 className="text-xs font-black uppercase tracking-normal text-violet-100">Admin-Level {level}</h2>
                     </div>
                     <div className="grid gap-3 lg:grid-cols-2">
-                      {grouped[level].map((command) => <CommandRow key={command.name} command={command} />)}
+                      {grouped[level].map((command) => <CommandRow key={command.commandId || command.name} command={command} />)}
                     </div>
                   </section>
                 ))}
               </div>
+            )}
+
+            {activePanel === "perms" && (
+                <section className="grid gap-5">
+                    <div className="flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-3">
+                            <div className="h-1 w-10 rounded bg-fuchsia-400 shadow-[0_0_18px_rgba(217,70,239,0.7)]" />
+                            <h2 className="text-xs font-black uppercase tracking-normal text-violet-100">Berechtigungs-Verwaltung</h2>
+                        </div>
+                        <div className="text-[10px] font-bold text-zinc-500 italic">Andere Admins sehen Änderungen erst nach dem Speichern.</div>
+                    </div>
+                    <div className="grid gap-1.5">
+                        {commands.map((cmd) => {
+                            const isChanged = localCommandLevels[cmd.commandId] !== undefined && localCommandLevels[cmd.commandId] !== cmd.requiredLevel;
+                            const currentLevel = localCommandLevels[cmd.commandId] ?? cmd.requiredLevel;
+
+                            return (
+                                <article key={cmd.commandId} className="flex items-center justify-between gap-4 rounded-md border border-violet-200/[0.1] bg-black/20 p-3 hover:bg-black/40 transition-colors">
+                                    <div className="min-w-0 flex-1">
+                                        <div className="flex items-center gap-2">
+                                            <div className="text-sm font-black uppercase text-white">{cmd.usage}</div>
+                                            {isChanged && <span className="rounded-full bg-fuchsia-500 w-1.5 h-1.5 animate-pulse shadow-[0_0_8px_#d946ef]" title="Ungespeicherte Änderung" />}
+                                        </div>
+                                        <div className="truncate text-xs font-semibold text-zinc-500">{cmd.description}</div>
+                                    </div>
+                                    <div className="flex items-center gap-4">
+                                        <div className="flex items-center gap-2">
+                                            <span className="text-[10px] font-black uppercase text-zinc-500">Level</span>
+                                            <select 
+                                                value={currentLevel} 
+                                                onChange={(e) => setLocalCommandLevels(prev => ({ ...prev, [cmd.commandId]: Number(e.target.value) }))}
+                                                className={`h-8 w-16 rounded border transition-colors bg-black/40 px-2 text-xs font-bold text-white outline-none ${isChanged ? 'border-fuchsia-500/50 text-fuchsia-100' : 'border-white/10'}`}
+                                            >
+                                                {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(l => <option key={l} value={l}>{l}</option>)}
+                                            </select>
+                                        </div>
+                                        <button 
+                                            disabled={!isChanged}
+                                            onClick={() => trigger("cef:admin:updateCommandLevel", cmd.commandId, currentLevel)}
+                                            className={`h-8 rounded px-3 text-[10px] font-black uppercase transition-all ${isChanged ? 'bg-fuchsia-500 text-white shadow-[0_0_12px_rgba(217,70,239,0.3)] hover:scale-105 active:scale-95' : 'bg-white/5 text-zinc-600 grayscale blur-[0.2px]'}`}
+                                        >
+                                            Speichern
+                                        </button>
+                                    </div>
+                                </article>
+                            );
+                        })}
+                    </div>
+                </section>
             )}
           </div>
         </div>

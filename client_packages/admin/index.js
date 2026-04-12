@@ -1,12 +1,13 @@
 (() => {
-  const state = {
+  // client_src/admin/index.ts
+  var state = {
     browser: null,
     isReady: false,
     isOpen: false,
     pendingActions: [],
     readyProbe: null
   };
-  const KEY_F3 = 114;
+  var KEY_F3 = 114;
   function getAdminLevel() {
     try {
       const level = mp.players.local.getVariable("ADMIN_LEVEL");
@@ -127,6 +128,11 @@
     mp.events.call("client:hud:authState", false);
     mp.gui.cursor.show(true, true);
     executeAdmin(`window.adminApp && window.adminApp.open(${JSON.stringify(level)}, ${JSON.stringify(collectPlayers())});`);
+    mp.events.callRemote("server:admin:requestFactionData");
+    mp.events.callRemote("server:admin:getCommandList");
+    if (level >= 5) {
+      mp.events.callRemote("server:admin:requestLogs");
+    }
   }
   function toggleAdminMenu() {
     if (state.isOpen) {
@@ -156,5 +162,45 @@
     if (state.isOpen && (!isAdminModeEnabled() || getAdminLevel() <= 0)) {
       closeAdminMenu();
     }
+  });
+  mp.events.add("client:admin:setFactions", (...args) => {
+    const [payload] = args;
+    executeAdmin(`window.adminApp && window.adminApp.setFactions(${JSON.stringify(payload || "[]")});`);
+  });
+  mp.events.add("client:admin:receiveCommands", (payload) => {
+    executeAdmin(`window.adminApp && window.adminApp.setCommands(${JSON.stringify(payload)});`);
+  });
+  mp.events.add("client:admin:receiveLogs", (payload) => {
+    executeAdmin(`window.adminApp && window.adminApp.setLogs(${JSON.stringify(payload)});`);
+  });
+  mp.events.add("cef:admin:createFaction", (...args) => {
+    const [type, shortName, name, colorHex, mapIconId] = args;
+    mp.events.callRemote("server:admin:createFaction", type, shortName, name, colorHex, mapIconId);
+  });
+  mp.events.add("cef:admin:setFactionLeader", (...args) => {
+    const [accountId, factionId] = args;
+    mp.events.callRemote("server:admin:setFactionLeader", accountId, factionId);
+  });
+  mp.events.add("cef:admin:setFactionSpawn", (...args) => {
+    const [factionId] = args;
+    mp.events.callRemote("server:admin:setFactionSpawn", factionId);
+  });
+  mp.events.add("cef:admin:addFactionWardrobe", (...args) => {
+    const [factionId, label] = args;
+    mp.events.callRemote("server:admin:addFactionWardrobe", factionId, label);
+  });
+  mp.events.add("cef:admin:createFactionVehicle", (...args) => {
+    const [factionId, minRankLevel, modelName, displayName] = args;
+    mp.events.callRemote("server:admin:createFactionVehicle", factionId, minRankLevel, modelName, displayName);
+  });
+  mp.events.add("cef:admin:syncFactionDefaults", (...args) => {
+    const [target] = args;
+    mp.events.callRemote("server:admin:syncFactionDefaults", target);
+  });
+  mp.events.add("cef:admin:updateCommandLevel", (commandId, level) => {
+    mp.events.callRemote("server:admin:updateCommandLevel", commandId, level);
+  });
+  mp.events.add("cef:admin:requestLogs", () => {
+    mp.events.callRemote("server:admin:requestLogs");
   });
 })();

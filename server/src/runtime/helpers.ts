@@ -47,7 +47,7 @@ export function getSocialClubName(player: PlayerMp) {
 }
 
 export function getPlayerName(player: PlayerMp) {
-  return String(player.name ?? `Spieler_${player.id ?? 0}`).replaceAll("_", " ");
+  return String(player.name ?? `Spieler_${player.id ?? 0}`).replace(/_/g, " ");
 }
 
 export function getHeading(player: PlayerMp) {

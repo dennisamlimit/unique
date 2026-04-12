@@ -7,6 +7,7 @@ interface HudState {
   pendingActions: string[];
   readyProbe: ReturnType<typeof setInterval> | null;
   tickInterval: ReturnType<typeof setInterval> | null;
+  speedoInterval: ReturnType<typeof setInterval> | null;
 }
 
 const state: HudState = {
@@ -15,7 +16,8 @@ const state: HudState = {
   isReady: false,
   pendingActions: [],
   readyProbe: null,
-  tickInterval: null
+  tickInterval: null,
+  speedoInterval: null
 };
 
 function flushPending(): void {
@@ -123,7 +125,19 @@ function hideNativeHudParts(): void {
     return;
   }
 
-  mp.game.controls.disableControlAction(0, 37, true);
+  // Radio Disable (Safe invocation to prevent "Audio Error" crashes)
+  try {
+      if (mp.game.audio) {
+          mp.game.audio.setRadioToStationName("OFF");
+          mp.game.audio.setUserRadioControlEnabled(false);
+          mp.game.audio.setMobileRadioEnabledDuringExitedVehicles(false);
+      }
+      
+      mp.game.invoke("0x4CA036C0F08B9364", "OFF");
+      mp.game.invoke("0x19F21E63AE6EBB4D", false);
+  } catch (e) { /* silent suppress audio error */ }
+
+  mp.game.controls.disableControlAction(0, 37, true); // Hud Wheel
   mp.game.ui.hideHudComponentThisFrame(6);
   mp.game.ui.hideHudComponentThisFrame(7);
   mp.game.ui.hideHudComponentThisFrame(8);
@@ -160,21 +174,77 @@ function updateHud(): void {
   }
 }
 
+function updateSpeedometer(): void {
+  if (!state.isAuthenticated || !state.browser || !state.isReady) {
+    return;
+  }
+
+  const player = mp.players.local;
+  const vehicle = player.vehicle;
+
+  if (!vehicle) {
+    executeHud("window.hudApp && window.hudApp.updateSpeedometer(null);");
+    return;
+  }
+
+  try {
+    const speed = Math.floor(vehicle.getSpeed() * 3.6); // km/h
+    const rpm = vehicle.rpm || 0;
+    const gear = vehicle.gear || 0;
+    const engineOn = typeof vehicle.getIsEngineRunning === "function" ? !!vehicle.getIsEngineRunning() : !!vehicle.engine;
+    const locked = !!vehicle.getVariable("IS_LOCKED");
+    
+    // Fuel & Health from variables (synced by server)
+    const fuel = Number(vehicle.getVariable("FUEL") ?? 100);
+    const maxFuel = Number(vehicle.getVariable("MAX_FUEL") ?? 100);
+    const fuelType = String(vehicle.getVariable("FUEL_TYPE") ?? "petrol");
+    const healthPercent = Number(vehicle.getVariable("HEALTH_PERCENT") ?? 100);
+
+    // Light states
+    let headlightsOn = false;
+    try {
+        const lights = mp.game.vehicle.getLightsState(vehicle.handle);
+        headlightsOn = !!(lights && (lights.lightsOn || lights.highbeamsOn));
+    } catch (e) { /* ignore lights error */ }
+
+    const data = {
+      speed,
+      rpm,
+      gear,
+      engineOn,
+      locked,
+      fuel,
+      maxFuel,
+      fuelType,
+      healthPercent,
+      headlightsOn
+    };
+
+    executeHud(`window.hudApp && window.hudApp.updateSpeedometer(${JSON.stringify(data)});`);
+  } catch (error) {
+    // Log once or occasionally to CEF console to avoid flood but still alert developers
+    executeHud(`console.error("HUD Speedo Update Error: ${error instanceof Error ? error.message : String(error)}");`);
+  }
+}
+
 function startHudTick(): void {
   if (state.tickInterval) {
     return;
   }
 
   state.tickInterval = setInterval(updateHud, 700);
+  state.speedoInterval = setInterval(updateSpeedometer, 100);
 }
 
 function stopHudTick(): void {
-  if (!state.tickInterval) {
-    return;
+  if (state.tickInterval) {
+    clearInterval(state.tickInterval);
+    state.tickInterval = null;
   }
-
-  clearInterval(state.tickInterval);
-  state.tickInterval = null;
+  if (state.speedoInterval) {
+    clearInterval(state.speedoInterval);
+    state.speedoInterval = null;
+  }
 }
 
 mp.events.add("playerReady", () => {
@@ -210,6 +280,11 @@ mp.events.add("client:hud:authState", (...args: unknown[]) => {
   }
 });
 
+mp.events.add("client:hud:notify", (...args: unknown[]) => {
+  const [type, title, message] = args as [string, string, string];
+  executeHud(`window.hudApp && window.hudApp.addNotification(${JSON.stringify(type)}, ${JSON.stringify(title)}, ${JSON.stringify(message)});`);
+});
+
 mp.events.add("client:adminJail:show", (...args: unknown[]) => {
   const [rawData] = args as [string];
   let data: Record<string, unknown> = {};
@@ -224,6 +299,21 @@ mp.events.add("client:adminJail:show", (...args: unknown[]) => {
 
 mp.events.add("client:adminJail:hide", () => {
   executeHud("window.hudApp && window.hudApp.hideJail();");
+});
+
+// Keybinds for Vehicle
+mp.keys.bind(0x11, true, () => {
+    // CTRL
+    if (!mp.gui.cursor.visible && mp.players.local.vehicle) {
+        mp.events.callRemote("server:vehicle:toggleEngine");
+    }
+});
+
+mp.keys.bind(0x4C, true, () => {
+    // L
+    if (!mp.gui.cursor.visible) {
+        mp.events.callRemote("server:vehicle:toggleLock");
+    }
 });
 
 export {};

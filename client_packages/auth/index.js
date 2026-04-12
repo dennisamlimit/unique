@@ -1,5 +1,6 @@
 (() => {
-  const state = {
+  // client_src/auth/index.ts
+  var state = {
     authBrowser: null,
     currentCam: null,
     nextCam: null,
@@ -10,26 +11,59 @@
     pendingActions: [],
     readyProbe: null
   };
-  const creatorState = {
+  var creatorState = {
     opened: false,
     cam: null,
     camStart: null
   };
-  const cinematicCams = [
+  var cinematicCams = [
+    // Downtown LS skyline from the east
+    {
+      pos: new mp.Vector3(431.5, -833, 85),
+      look: new mp.Vector3(-75, -818, 40),
+      fov: 55
+    },
+    // Vinewood Hills overview
+    {
+      pos: new mp.Vector3(-378, 335, 175),
+      look: new mp.Vector3(-250, 160, 70),
+      fov: 48
+    },
+    // Del Perro Pier / Beach low angle
+    {
+      pos: new mp.Vector3(-1637, -953, 18),
+      look: new mp.Vector3(-1420, -1080, 13),
+      fov: 60
+    },
+    // Port of LS crane shot
+    {
+      pos: new mp.Vector3(534, -2850, 90),
+      look: new mp.Vector3(260, -2650, 10),
+      fov: 50
+    },
+    // Mirror Park lake reflection
+    {
+      pos: new mp.Vector3(1221, -1397, 42),
+      look: new mp.Vector3(1100, -1260, 35),
+      fov: 44
+    },
+    // LS City from north hills (epic cityscape)
     {
       pos: new mp.Vector3(-534, -1880, 125),
       look: new mp.Vector3(-188, -1020, 85),
       fov: 46
     },
+    // Freeway traffic overhead
     {
-      pos: new mp.Vector3(-1660, -1090, 210),
-      look: new mp.Vector3(-730, -700, 110),
-      fov: 48
+      pos: new mp.Vector3(-183, -1250, 55),
+      look: new mp.Vector3(-190, -1150, 30),
+      fov: 65
     },
+    // Rockford Hills low cruising shot
     {
-      pos: new mp.Vector3(215, -925, 260),
-      look: new mp.Vector3(-75, -818, 326),
-      fov: 42
+      pos: new mp.Vector3(-670, -5, 58),
+      look: new mp.Vector3(-500, -80, 42),
+      fov: 52
     }
   ];
   function ensureBrowser() {
@@ -100,14 +134,60 @@
     destroyCam(state.nextCam);
     state.currentCam = null;
     state.nextCam = null;
+    cleanupIntroNpcs();
     mp.game.cam.renderScriptCams(false, true, 1500, true, false);
+  }
+  var NPC_MODELS = [
+    "a_m_y_business_01",
+    "a_f_y_business_02",
+    "a_m_m_business_01",
+    "a_m_y_cyclist_01",
+    "a_m_y_skater_01",
+    "a_f_y_tourist_01",
+    "a_m_y_hipster_01",
+    "a_f_m_fatbath_01"
+  ];
+  var introNpcs = [];
+  function cleanupIntroNpcs() {
+    for (const ped of introNpcs) {
+      try {
+        ped.destroy();
+      } catch (_) {
+      }
+    }
+    introNpcs = [];
+  }
+  function spawnIntroNpcs(cam) {
+    cleanupIntroNpcs();
+    const count = 4 + Math.floor(Math.random() * 3);
+    for (let i = 0; i < count; i++) {
+      const model = NPC_MODELS[Math.floor(Math.random() * NPC_MODELS.length)];
+      const ox = (Math.random() - 0.5) * 10;
+      const oy = (Math.random() - 0.5) * 10;
+      try {
+        const pos = new mp.Vector3(cam.look.x + ox, cam.look.y + oy, cam.look.z);
+        const ped = mp.peds.new(mp.game.joaat(model), pos, Math.random() * 360, 0);
+        try {
+          ped.taskWanderStandard(10, 10);
+        } catch (_) {
+        }
+        introNpcs.push(ped);
+      } catch (_) {
+      }
+    }
   }
   function startCinematicCam() {
     stopCinematicCam();
-    state.camState = 0;
+    try {
+      mp.game.misc.setWeatherTypePersist("EXTRASUNNY");
+      mp.game.clock.setDateTime(2024, 1, 1, 18, 30, 0);
+    } catch (_) {
+    }
+    state.camState = Math.floor(Math.random() * cinematicCams.length);
     state.currentCam = createCam("authCam0", cinematicCams[state.camState]);
     state.currentCam.setActive(true);
     mp.game.cam.renderScriptCams(true, true, 2500, true, false);
+    spawnIntroNpcs(cinematicCams[state.camState]);
     state.switchTimer = setInterval(() => {
       if (!state.authVisible || !state.currentCam) {
         return;
@@ -120,8 +200,9 @@
       state.nextCam = null;
       state.camState = nextIndex;
       setTimeout(() => {
+        spawnIntroNpcs(cinematicCams[nextIndex]);
         destroyCam(previousCam);
-      }, 7e3);
+      }, 3500);
     }, 11e3);
   }
   function ensureAuthCursor() {

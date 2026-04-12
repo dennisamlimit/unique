@@ -1,14 +1,15 @@
 (() => {
-  const state = {
+  // client_src/admin_utils.ts
+  var state = {
     active: false,
     camera: null
   };
-  const KEY_X = 88;
-  const KEY_SPACE = 32;
-  const KEY_SHIFT = 16;
-  const KEY_CTRL = 17;
-  const KEY_ARROW_UP = 38;
-  const WAYPOINT_BLIP_ID = 8;
+  var KEY_X = 88;
+  var KEY_SPACE = 32;
+  var KEY_SHIFT = 16;
+  var KEY_CTRL = 17;
+  var KEY_ARROW_UP = 38;
+  var WAYPOINT_BLIP_ID = 8;
   function hasRequiredAdminLevel() {
     try {
       const level = mp.players.local.getVariable("ADMIN_LEVEL");

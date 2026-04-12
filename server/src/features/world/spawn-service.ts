@@ -1,6 +1,6 @@
 import { getPool } from "../../infrastructure/database.js";
 import { DEFAULT_SPAWN, PlayerMp, setHeading, vector3 } from "../../runtime/helpers.js";
-import type { SpawnPointDto } from "./spawn-dtos.js";
+import type { SpawnPointDto } from "./api/spawn-dtos.js";
 
 export class SpawnService {
   async getSpawn(): Promise<SpawnPointDto> {

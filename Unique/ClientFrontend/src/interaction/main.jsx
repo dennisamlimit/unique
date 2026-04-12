@@ -15,6 +15,7 @@ function InteractionApp() {
   const [visible, setVisible] = useState(false);
   const [position, setPosition] = useState({ x: 960, y: 540 });
   const [title, setTitle] = useState("Fahrzeug");
+  const [items, setItems] = useState(actions);
 
   const close = useCallback(() => {
     setVisible(false);
@@ -23,12 +24,16 @@ function InteractionApp() {
 
   useEffect(() => {
     window.interactionApp = {
-      open: (x, y, label) => {
+      open: (x, y, label, nextActions) => {
         setPosition({ x: Number(x) || window.innerWidth / 2, y: Number(y) || window.innerHeight / 2 });
         setTitle(label || "Fahrzeug");
+        setItems(Array.isArray(nextActions) && nextActions.length > 0 ? nextActions : actions);
         setVisible(true);
       },
-      close: () => setVisible(false)
+      close: () => {
+        setItems(actions);
+        setVisible(false);
+      }
     };
 
     trigger("cef:interaction:ready");
@@ -62,8 +67,8 @@ function InteractionApp() {
             <div className="max-w-[58px] truncate text-[9px] font-black uppercase text-fuchsia-200">{title}</div>
           </div>
         </div>
-        {actions.map((action, index) => {
-          const angle = (-90 + index * (360 / actions.length)) * Math.PI / 180;
+        {items.map((action, index) => {
+          const angle = (-90 + index * (360 / Math.max(items.length, 1))) * Math.PI / 180;
           const x = Math.cos(angle) * radius;
           const y = Math.sin(angle) * radius;
 

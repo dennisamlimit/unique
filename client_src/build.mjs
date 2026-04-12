@@ -18,7 +18,10 @@ const modules = [
   "admin/index",
   "chat/index",
   "hud/index",
+  "faction_map/index",
   "interaction/index",
+  "orga/index",
+  "usermenu/index",
   "dl/index",
   "fingerpointing/index",
   "admin_utils"
@@ -30,13 +33,19 @@ for (const mod of modules) {
 
   await build({
     entryPoints: [resolve(srcDir, `${mod}.ts`)],
-    bundle: false,
+    bundle: true,
     platform: "browser",
     format: "iife",
     target: ["chrome80"],
     outfile: outFile,
     sourcemap: false,
-    legalComments: "none"
+    legalComments: "none",
+    alias: {
+      "@shared": resolve(root, "shared")
+    },
+    loader: {
+      ".json": "json"
+    }
   });
 }
 

@@ -1,11 +1,13 @@
 (() => {
-  const state = {
+  // client_src/hud/index.ts
+  var state = {
     browser: null,
     isAuthenticated: false,
     isReady: false,
     pendingActions: [],
     readyProbe: null,
-    tickInterval: null
+    tickInterval: null,
+    speedoInterval: null
   };
   function flushPending() {
     if (!state.browser || !state.isReady) {
@@ -95,6 +97,16 @@
     if (!state.isAuthenticated) {
       return;
     }
+    try {
+      if (mp.game.audio) {
+        mp.game.audio.setRadioToStationName("OFF");
+        mp.game.audio.setUserRadioControlEnabled(false);
+        mp.game.audio.setMobileRadioEnabledDuringExitedVehicles(false);
+      }
+      mp.game.invoke("0x4CA036C0F08B9364", "OFF");
+      mp.game.invoke("0x19F21E63AE6EBB4D", false);
+    } catch (e) {
+    }
     mp.game.controls.disableControlAction(0, 37, true);
     mp.game.ui.hideHudComponentThisFrame(6);
     mp.game.ui.hideHudComponentThisFrame(7);
@@ -124,18 +136,65 @@
     } catch (error) {
     }
   }
+  function updateSpeedometer() {
+    if (!state.isAuthenticated || !state.browser || !state.isReady) {
+      return;
+    }
+    const player = mp.players.local;
+    const vehicle = player.vehicle;
+    if (!vehicle) {
+      executeHud("window.hudApp && window.hudApp.updateSpeedometer(null);");
+      return;
+    }
+    try {
+      const speed = Math.floor(vehicle.getSpeed() * 3.6);
+      const rpm = vehicle.rpm || 0;
+      const gear = vehicle.gear || 0;
+      const engineOn = typeof vehicle.getIsEngineRunning === "function" ? !!vehicle.getIsEngineRunning() : !!vehicle.engine;
+      const locked = !!vehicle.getVariable("IS_LOCKED");
+      const fuel = Number(vehicle.getVariable("FUEL") ?? 100);
+      const maxFuel = Number(vehicle.getVariable("MAX_FUEL") ?? 100);
+      const fuelType = String(vehicle.getVariable("FUEL_TYPE") ?? "petrol");
+      const healthPercent = Number(vehicle.getVariable("HEALTH_PERCENT") ?? 100);
+      let headlightsOn = false;
+      try {
+        const lights = mp.game.vehicle.getLightsState(vehicle.handle);
+        headlightsOn = !!(lights && (lights.lightsOn || lights.highbeamsOn));
+      } catch (e) {
+      }
+      const data = {
+        speed,
+        rpm,
+        gear,
+        engineOn,
+        locked,
+        fuel,
+        maxFuel,
+        fuelType,
+        healthPercent,
+        headlightsOn
+      };
+      executeHud(`window.hudApp && window.hudApp.updateSpeedometer(${JSON.stringify(data)});`);
+    } catch (error) {
+      executeHud(`console.error("HUD Speedo Update Error: ${error instanceof Error ? error.message : String(error)}");`);
+    }
+  }
   function startHudTick() {
     if (state.tickInterval) {
       return;
     }
     state.tickInterval = setInterval(updateHud, 700);
+    state.speedoInterval = setInterval(updateSpeedometer, 100);
   }
   function stopHudTick() {
-    if (!state.tickInterval) {
-      return;
+    if (state.tickInterval) {
+      clearInterval(state.tickInterval);
+      state.tickInterval = null;
     }
-    clearInterval(state.tickInterval);
-    state.tickInterval = null;
+    if (state.speedoInterval) {
+      clearInterval(state.speedoInterval);
+      state.speedoInterval = null;
+    }
   }
   mp.events.add("playerReady", () => {
     createHudBrowser();
@@ -164,6 +223,10 @@
       stopHudTick();
     }
   });
+  mp.events.add("client:hud:notify", (...args) => {
+    const [type, title, message] = args;
+    executeHud(`window.hudApp && window.hudApp.addNotification(${JSON.stringify(type)}, ${JSON.stringify(title)}, ${JSON.stringify(message)});`);
+  });
   mp.events.add("client:adminJail:show", (...args) => {
     const [rawData] = args;
     let data = {};
@@ -176,5 +239,15 @@
   });
   mp.events.add("client:adminJail:hide", () => {
     executeHud("window.hudApp && window.hudApp.hideJail();");
+  });
+  mp.keys.bind(17, true, () => {
+    if (!mp.gui.cursor.visible && mp.players.local.vehicle) {
+      mp.events.callRemote("server:vehicle:toggleEngine");
+    }
+  });
+  mp.keys.bind(76, true, () => {
+    if (!mp.gui.cursor.visible) {
+      mp.events.callRemote("server:vehicle:toggleLock");
+    }
   });
 })();

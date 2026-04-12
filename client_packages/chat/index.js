@@ -1,5 +1,6 @@
 (() => {
-  const state = {
+  // client_src/chat/index.ts
+  var state = {
     browser: null,
     chatOpen: false,
     currentMode: "ic",
@@ -63,15 +64,20 @@
     state.chatOpen = true;
     state.browser.active = true;
     mp.gui.cursor.show(true, true);
+    mp.events.call("client:chat:inputOpen", true);
     executeChat(`window.chatApp && window.chatApp.openInput(${JSON.stringify(state.currentMode)});`);
   }
   function closeChat() {
     if (!state.browser) {
       return;
     }
+    const wasOpen = state.chatOpen;
     state.chatOpen = false;
     state.browser.active = true;
-    mp.gui.cursor.show(false, false);
+    if (wasOpen) {
+      mp.gui.cursor.show(false, false);
+    }
+    mp.events.call("client:chat:inputOpen", false);
     executeChat("window.chatApp && window.chatApp.closeInput();");
   }
   mp.events.add("playerReady", () => {

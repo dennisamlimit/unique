@@ -89,12 +89,171 @@ function LocationIcon() {
   );
 }
 
+function Speedometer({ data }) {
+  if (!data) return null;
+
+  const { speed = 0, fuel = 100, maxFuel = 100, healthPercent = 100, engineOn = false, locked = false, headlightsOn = false } = data || {};
+  const safeMaxFuel = Math.max(1, maxFuel || 0);
+  const fuelPercent = Math.min(100, Math.max(0, (fuel / safeMaxFuel) * 100)) || 0;
+  const safeHealthPercent = Math.min(100, Math.max(0, healthPercent || 0)) || 0;
+  
+  // SVG Arc helper
+  const describeArc = (x, y, radius, startAngle, endAngle) => {
+    if (isNaN(startAngle) || isNaN(endAngle)) return "";
+    const polarToCartesian = (centerX, centerY, radius, angleInDegrees) => {
+      const angleInRadians = ((angleInDegrees || 0) - 90) * Math.PI / 180.0;
+      return {
+        x: centerX + (radius * Math.cos(angleInRadians)),
+        y: centerY + (radius * Math.sin(angleInRadians))
+      };
+    };
+    const start = polarToCartesian(x, y, radius, endAngle);
+    const end = polarToCartesian(x, y, radius, startAngle);
+    const largeArcFlag = endAngle - startAngle <= 180 ? "0" : "1";
+    return ["M", start.x || 0, start.y || 0, "A", radius, radius, 0, largeArcFlag, 0, end.x || 0, end.y || 0].join(" ");
+  };
+
+  return (
+    <div className="absolute bottom-[4vh] right-[clamp(180px,10vw,240px)] flex flex-col items-center select-none">
+      <div className="relative h-48 w-48">
+        {/* Glow backdrop */}
+        <div className="absolute inset-0 bg-cyan-500/5 blur-[40px] rounded-full" />
+        
+        <svg viewBox="0 0 100 100" className="h-full w-full -rotate-90 drop-shadow-[0_0_12px_rgba(0,0,0,0.4)]">
+          {/* Background Arcs (Minimal) */}
+          <path d={describeArc(50, 50, 44, -120, 120)} fill="none" stroke="white" strokeWidth="0.5" strokeOpacity="0.05" />
+          
+          {/* Fuel Arc (Left) - Cyan Glow */}
+          <path d={describeArc(50, 50, 44, -120, -120 + (fuelPercent * 1.1))} fill="none" stroke="#22d3ee" strokeWidth="2.5" strokeLinecap="round" className="transition-all duration-500" strokeOpacity="0.8" />
+          <path d={describeArc(50, 50, 44, -120, -120 + (fuelPercent * 1.1))} fill="none" stroke="#22d3ee" strokeWidth="4" strokeLinecap="round" className="transition-all duration-500 blur-[2px]" strokeOpacity="0.2" />
+          
+          {/* Health Arc (Right) - Amber Glow */}
+          <path d={describeArc(50, 50, 44, 120 - (safeHealthPercent * 1.1), 120)} fill="none" stroke="#fbbf24" strokeWidth="2.5" strokeLinecap="round" className="transition-all duration-500" strokeOpacity="0.8" />
+          <path d={describeArc(50, 50, 44, 120 - (safeHealthPercent * 1.1), 120)} fill="none" stroke="#fbbf24" strokeWidth="4" strokeLinecap="round" className="transition-all duration-500 blur-[2px]" strokeOpacity="0.2" />
+        </svg>
+
+        {/* Central Speed Display */}
+        <div className="absolute inset-0 flex flex-col items-center justify-center translate-y-[-2px]">
+          <div className="font-display text-6xl font-black italic tracking-tighter text-white drop-shadow-[0_4px_12px_rgba(0,0,0,0.8)] select-none">
+            {Math.floor(speed)}
+          </div>
+          <div className="text-[10px] font-black uppercase tracking-[0.25em] text-white/70 -mt-1 ml-2 drop-shadow-[0_2px_4px_rgba(0,0,0,0.5)]">KM/H</div>
+        </div>
+      </div>
+
+      {/* Elegant Floating Icons (No backdrop-blur to avoid CEF black box artifacts) */}
+      <div className="flex items-center gap-7 mt-[-15px] px-6 py-3 rounded-2xl bg-zinc-900/40 border border-white/5 shadow-lg">
+        {/* Lights */}
+        <div className={`transition-all duration-300 ${headlightsOn ? "text-blue-400 drop-shadow-[0_0_8px_rgba(96,165,250,0.6)] scale-110" : "text-white/10"}`}>
+          <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+            <path d="M12 18V6l-7 6 7 6zM15 8h4M16 12h4M15 16h4" />
+          </svg>
+        </div>
+        
+        {/* Engine */}
+        <div className={`transition-all duration-300 ${engineOn ? "text-amber-400 drop-shadow-[0_0_8px_rgba(251,191,36,0.6)] scale-110" : "text-white/10"}`}>
+          <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+            <path d="M14 8V4h-4v4l-4 3v6h12v-6l-4-3zM7 14h10M12 4v2" />
+          </svg>
+        </div>
+
+        {/* Lock */}
+        <div className={`transition-all duration-300 ${locked ? "text-rose-500 drop-shadow-[0_0_8px_rgba(244,63,94,0.6)] scale-110" : "text-emerald-400 drop-shadow-[0_0_8px_rgba(52,211,153,0.6)]"}`}>
+          {locked ? (
+            <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+              <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+            </svg>
+          ) : (
+            <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+              <path d="M7 11V7a5 5 0 0 1 9.9-1" />
+            </svg>
+          )}
+        </div>
+
+        {/* Fuel Indicator (Subtle blinking if low) */}
+        <div className={`transition-all duration-300 ${fuelPercent < 15 ? "text-rose-500 animate-pulse drop-shadow-[0_0_8px_rgba(244,63,94,0.6)]" : "text-white/20"}`}>
+          <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+            <path d="M3 18V6c0-1.1.9-2 2-2h9l3 3h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2zM14 4h3M14 18h3M18 7v10M9 9h0M9 13h0" />
+          </svg>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Notification({ id, type, title, message, onRemove }) {
+  const [isExiting, setIsExiting] = useState(false);
+  const timer = useRef(null);
+
+  const colors = {
+    success: {
+      bg: "border-emerald-500/30 bg-emerald-500/[0.05]",
+      icon: "text-emerald-400",
+      accent: "bg-emerald-500 shadow-[0_0_15px_rgba(16,185,129,0.5)]",
+      svg: <path d="M20 6L9 17l-5-5" />
+    },
+    error: {
+      bg: "border-rose-500/30 bg-rose-500/[0.05]",
+      icon: "text-rose-400",
+      accent: "bg-rose-500 shadow-[0_0_15px_rgba(244,63,94,0.5)]",
+      svg: <path d="M18 6L6 18M6 6l12 12" />
+    },
+    warning: {
+      bg: "border-amber-500/30 bg-amber-500/[0.05]",
+      icon: "text-amber-400",
+      accent: "bg-amber-500 shadow-[0_0_15px_rgba(245,158,11,0.5)]",
+      svg: <path d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+    }
+  };
+
+  const style = colors[type] || colors.success;
+
+  const handleRemove = useCallback(() => {
+    setIsExiting(true);
+    setTimeout(() => onRemove(id), 400);
+  }, [id, onRemove]);
+
+  useEffect(() => {
+    timer.current = setTimeout(handleRemove, 5000);
+    return () => clearTimeout(timer.current);
+  }, [handleRemove]);
+
+  return (
+    <div 
+      className={`relative w-80 overflow-hidden rounded-xl border backdrop-blur-md transition-all duration-400 ${style.bg} ${isExiting ? "translate-x-full opacity-0 scale-95" : "translate-x-0 opacity-100 scale-100"}`}
+      style={{ animation: isExiting ? "none" : "uniqueNotifyIn 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards" }}
+    >
+      <div className={`absolute left-0 top-0 h-full w-1 ${style.accent}`} />
+      <div className="flex items-start gap-4 p-4">
+        <div className={`mt-0.5 rounded-lg p-1.5 bg-black/20 ${style.icon}`}>
+          <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            {style.svg}
+          </svg>
+        </div>
+        <div className="flex-1 min-w-0">
+          {title && <div className="mb-0.5 text-sm font-black text-white/90">{title}</div>}
+          <div className="text-xs font-bold leading-relaxed text-white/60">{message}</div>
+        </div>
+        <button onClick={handleRemove} className="text-white/20 hover:text-white/40 transition-colors">
+          <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+            <path d="M18 6L6 18M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function HudApp() {
   const [visible, setVisible] = useState(false);
   const [location, setLocation] = useState({ zone: "San Andreas", street: "Unbekannt", crossing: "", direction: "N" });
   const [stats, setStats] = useState({ id: 1, online: 1, cash: 0, bank: 0 });
   const [moneyDeltas, setMoneyDeltas] = useState([]);
   const [jail, setJail] = useState({ active: false, notice: false, admin: "", reason: "", releaseAt: "", remaining: 0 });
+  const [vehicleStats, setVehicleStats] = useState(null);
+  const [notifications, setNotifications] = useState([]);
   const previousMoneyRef = useRef(null);
   const jailNoticeTimer = useRef(null);
   const clock = useClock(visible);
@@ -106,6 +265,15 @@ function HudApp() {
       crossing: crossing || "",
       direction: direction || "N"
     });
+  }, []);
+
+  const addNotification = useCallback((type, title, message) => {
+    const id = Date.now() + Math.random();
+    setNotifications((prev) => [...prev, { id, type, title, message }]);
+  }, []);
+
+  const removeNotification = useCallback((id) => {
+    setNotifications((prev) => prev.filter((n) => n.id !== id));
   }, []);
 
   const updateStats = useCallback((id, online, cash, bank) => {
@@ -138,7 +306,7 @@ function HudApp() {
     setStats({
       id: id ?? 1,
       online: online ?? 1,
-      cash: nextCash,
+       cash: nextCash,
       bank: nextBank
     });
   }, []);
@@ -196,7 +364,9 @@ function HudApp() {
       updateLocation,
       updateStats,
       showJail,
-      hideJail
+      hideJail,
+      addNotification,
+      updateSpeedometer: (data) => setVehicleStats(data)
     };
 
     trigger("cef:hud:ready");
@@ -204,7 +374,7 @@ function HudApp() {
     return () => {
       delete window.hudApp;
     };
-  }, [hideJail, showJail, updateLocation, updateStats]);
+  }, [hideJail, showJail, updateLocation, updateStats, addNotification]);
 
   if (!visible) {
     return null;
@@ -215,6 +385,31 @@ function HudApp() {
 
   return (
     <main className="fixed inset-0 pointer-events-none text-white">
+      <style>{`
+        @keyframes uniqueMoneyDelta {
+          0% { opacity: 0; transform: translateY(-4px) scale(0.96); }
+          16% { opacity: 1; transform: translateY(0) scale(1); }
+          72% { opacity: 1; transform: translateY(0) scale(1); }
+          100% { opacity: 0; transform: translateY(10px) scale(0.98); }
+        }
+        @keyframes uniqueJailNotice {
+          0% { opacity: 0; transform: translateY(18px) scale(0.98); }
+          14% { opacity: 1; transform: translateY(0) scale(1); }
+          78% { opacity: 1; transform: translateY(0) scale(1); }
+          100% { opacity: 0; transform: translateY(-14px) scale(0.99); }
+        }
+        @keyframes uniqueNotifyIn {
+          from { opacity: 0; transform: translateX(30px) scale(0.95); }
+          to { opacity: 1; transform: translateX(0) scale(1); }
+        }
+      `}</style>
+      
+      {/* Dynamic Notifications */}
+      <div className="absolute top-[clamp(16px,2vh,32px)] right-[clamp(16px,2vw,32px)] flex flex-col gap-3 z-[9999]">
+        {notifications.map((n) => (
+          <Notification key={n.id} {...n} onRemove={removeNotification} />
+        ))}
+      </div>
       <style>{`
         @keyframes uniqueMoneyDelta {
           0% { opacity: 0; transform: translateY(-4px) scale(0.96); }
@@ -328,6 +523,8 @@ function HudApp() {
           </div>
         </div>
       </section>
+
+      <Speedometer data={vehicleStats} />
 
       <section className="absolute bottom-[clamp(20px,3.2vh,36px)] left-[clamp(220px,17.8vw,360px)] flex w-[min(420px,48vw)] items-center gap-3 drop-shadow-[0_2px_5px_rgba(0,0,0,0.86)] max-[760px]:left-[132px] max-[760px]:w-[calc(100vw-150px)]">
         <div className="grid h-8 w-8 shrink-0 place-items-center rounded-md bg-fuchsia-500 text-sm font-black shadow-[0_0_18px_rgba(217,70,239,0.48)]">{location.direction}</div>

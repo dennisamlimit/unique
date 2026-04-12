@@ -3,7 +3,7 @@ import { clamp, clampMoney } from "../../runtime/helpers.js";
 import type { Account } from "./account.js";
 import { AccountRepository } from "./account-repository.js";
 import { SpawnService } from "../world/spawn-service.js";
-import type { CompleteCharacterDto, CreateAccountDto, SavePlayerStateDto } from "./account-dtos.js";
+import type { CompleteCharacterDto, CreateAccountDto, SavePlayerStateDto } from "./api/account-dtos.js";
 
 function normalizeName(input: string) {
   const value = input.trim().toLowerCase();
@@ -16,6 +16,19 @@ function normalizeOptional(input?: string | null) {
 
 function hashPassword(password: string, salt: string) {
   return createHash("sha256").update(`${salt}:${password}`).digest("hex");
+}
+
+function parseCustomizationJson(raw: string | null) {
+  if (!raw) {
+    return {};
+  }
+
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch (error) {
+    return {};
+  }
 }
 
 export class AccountService {
@@ -48,6 +61,25 @@ export class AccountService {
 
   async getBySocialClubId(socialClubId: string) {
     return this.repository.getBySocialClubId(socialClubId);
+  }
+
+  async getPersonalOutfits(accountId: number) {
+    return this.repository.getPersonalOutfits(accountId);
+  }
+
+  async getPersonalOutfitById(outfitId: number, accountId: number) {
+    return this.repository.getPersonalOutfitById(outfitId, accountId);
+  }
+
+  async createPersonalOutfit(accountId: number, name: string, clothingJson: string) {
+    const count = await this.repository.countPersonalOutfits(accountId);
+    if (count >= 20) return { ok: false as const, message: "Outfit-Limit (20) erreicht." };
+    const outfit = await this.repository.createPersonalOutfit(accountId, name, clothingJson);
+    return { ok: true as const, outfit };
+  }
+
+  async deletePersonalOutfit(outfitId: number, accountId: number) {
+    return this.repository.deletePersonalOutfit(outfitId, accountId);
   }
 
   async create(dto: CreateAccountDto) {
@@ -195,6 +227,21 @@ export class AccountService {
     account.armor = clamp(dto.armor, 0, 100);
     account.cash = clampMoney(dto.cash);
     account.bankCash = clampMoney(dto.bankCash);
+    return this.repository.save(account);
+  }
+
+  async setClothing(accountId: number, clothing: number[][]) {
+    const account = await this.repository.getById(accountId);
+    if (!account) {
+      return null;
+    }
+
+    const customization = parseCustomizationJson(account.customizationJson);
+    account.customizationJson = JSON.stringify({
+      ...customization,
+      clothing
+    });
+
     return this.repository.save(account);
   }
 }

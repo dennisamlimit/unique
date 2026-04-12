@@ -128,13 +128,20 @@ function ChatApp() {
     return null;
   }
 
+  const hasMessages = messages.length > 0;
+  const showPassiveBackground = open || (!faded && hasMessages);
+
   return (
     <main className="pointer-events-none fixed left-[clamp(10px,1.2vw,22px)] top-[clamp(8px,1.2vh,14px)] w-[min(560px,45vw)] text-white max-[760px]:left-2 max-[760px]:top-3 max-[760px]:w-[calc(100vw-16px)]">
       <section className="pointer-events-auto grid gap-2">
         <div
           ref={scrollRef}
           onWheel={clearFade}
-          className="h-[clamp(230px,28vh,305px)] overflow-y-auto overflow-x-hidden rounded-md border border-violet-200/[0.1] bg-black/[0.48] px-3 py-2 shadow-[0_12px_34px_rgba(0,0,0,0.44)] [scrollbar-width:thin]"
+          className={`h-[clamp(230px,28vh,305px)] overflow-y-auto overflow-x-hidden rounded-md px-3 py-2 [scrollbar-width:thin] transition-all duration-300 ${
+            showPassiveBackground
+              ? "border border-violet-200/[0.1] bg-black/[0.48] shadow-[0_12px_34px_rgba(0,0,0,0.44)]"
+              : "border border-transparent bg-transparent shadow-none"
+          }`}
         >
           <div className="grid gap-1">
             {messages.map((line) => (
