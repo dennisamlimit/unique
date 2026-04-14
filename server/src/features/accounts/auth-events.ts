@@ -1,18 +1,91 @@
 import { SpawnService } from "../world/spawn-service.js";
-import { parseCompleteCharacterDto, parseLoginAccountDto, parseRegisterAccountDto } from "./account-dto-parsers.js";
+import { parseCompleteCharacterDto, parseLoginAccountDto, parseRegisterAccountDto } from "./api/account-dto-parsers.js";
 import { validateCompleteCharacterDto, validateLoginAccountDto, validateRegisterAccountDto } from "./account-validators.js";
 import { AccountService } from "./account-service.js";
 import { HIDDEN_LOGIN_POSITION, emitClient, getSocialClubId, getSocialClubName, setArmour, setHeading, setVar, vector3 } from "../../runtime/helpers.js";
 import type { Account } from "./account.js";
+import { FactionService } from "../factions/faction-service.js";
 
 type PlayerMp = any;
 
 type AuthEventDeps = {
   accounts: AccountService;
   spawns: SpawnService;
+  factions: FactionService;
   logError: (message: string, error: unknown) => void;
   systemMessage: (player: PlayerMp, message: string) => void;
+  syncFactionMapBlips?: (player: PlayerMp) => Promise<void>;
 };
+
+function buildSpawnPayload(message: string, canUseFactionSpawn: boolean, factionName?: string | null) {
+  return JSON.stringify({
+    message,
+    options: [
+      {
+        id: "last",
+        title: "Letzter Spawn",
+        subtitle: "Dein gespeicherter Standort",
+        icon: "tab-face",
+        disabled: false
+      },
+      {
+        id: "hotel",
+        title: "Hotel",
+        subtitle: "Server-Spawn",
+        icon: "tab-identity",
+        disabled: false
+      },
+      {
+        id: "faction",
+        title: "Fraktion",
+        subtitle: canUseFactionSpawn ? `${factionName ?? "Fraktion"} Spawn` : "Nicht verfuegbar",
+        icon: "tab-style",
+        disabled: !canUseFactionSpawn
+      }
+    ]
+  });
+}
+
+function canUseWardrobeCategory(permissionKeys: string[], category: string) {
+  const normalizedCategory = String(category ?? "").trim().toLowerCase();
+  if (!permissionKeys.includes("wardrobe_access")) {
+    return false;
+  }
+
+  if (!normalizedCategory || normalizedCategory === "dienst") {
+    return true;
+  }
+
+  return permissionKeys.includes(`wardrobe_category_${normalizedCategory}`);
+}
+
+async function syncFactionState(player: PlayerMp, accountId: number, deps: AuthEventDeps) {
+  const profile = await deps.factions.getMemberProfile(accountId);
+  const permissions = await deps.factions.getAccountPermissions(accountId);
+  const permissionKeys = permissions.map((permission) => permission.permissionKey);
+
+  setVar(player, "FACTION_ID", profile?.factionId ?? 0);
+  setVar(player, "FACTION_NAME", profile?.factionName ?? "");
+  setVar(player, "FACTION_SHORT_NAME", profile?.factionShortName ?? "");
+  setVar(player, "FACTION_TYPE", profile?.factionType ?? "");
+  setVar(player, "FACTION_RANK", profile?.rankLevel ?? 0);
+  setVar(player, "FACTION_RANK_NAME", profile?.rankName ?? "");
+  setVar(player, "FACTION_PERMISSIONS", JSON.stringify(permissionKeys));
+
+  return {
+    profile,
+    permissionKeys
+  };
+}
+
+async function syncFactionWardrobeData(player: PlayerMp, accountId: number, permissionKeys: string[], deps: AuthEventDeps) {
+  const profile = await deps.factions.getMemberProfile(accountId);
+  const wardrobePoints = profile ? await deps.factions.getWardrobePoints(profile.factionId) : [];
+  const outfits = profile
+    ? (await deps.factions.getOutfits(profile.factionId)).filter((outfit) => canUseWardrobeCategory(permissionKeys, outfit.category))
+    : [];
+  emitClient(player, "client:factionWardrobe:setData", JSON.stringify({ points: wardrobePoints, outfits }));
+}
 
 function isBanExpired(account: Account) {
   if (!account.isBanned || !account.banExpiresAt) {
@@ -62,6 +135,8 @@ async function finishLogin(
   setArmour(player, account.armor);
   player.alpha = 0;
 
+  const factionState = await syncFactionState(player, account.accountId, deps);
+
   if (account.customizationJson) {
     emitClient(player, "client:creator:apply", account.customizationJson);
   }
@@ -77,7 +152,17 @@ async function finishLogin(
       : `Erfolgreich eingeloggt. Deine Account-ID ist ${account.accountId}. ${socialInfo}`
   );
 
-  emitClient(player, "client:spawn:show", created ? "Waehle deinen Spawnpunkt." : "Login erfolgreich. Waehle deinen Spawnpunkt.");
+  const factionSpawn = factionState.profile ? await deps.factions.getFactionSpawn(factionState.profile.factionId) : null;
+  emitClient(
+    player,
+    "client:spawn:show",
+    buildSpawnPayload(
+      created ? "Waehle deinen Spawnpunkt." : "Login erfolgreich. Waehle deinen Spawnpunkt.",
+      Boolean(factionState.profile && factionSpawn),
+      factionState.profile?.factionName
+    )
+  );
+  await deps.syncFactionMapBlips?.(player);
 }
 
 async function beginCharacterCreation(
@@ -267,6 +352,22 @@ export function registerAuthEvents(deps: AuthEventDeps) {
         const normalizedSpawn = String(spawnType ?? "").trim().toLowerCase();
         if (normalizedSpawn === "hotel") {
           await deps.spawns.apply(player);
+        } else if (normalizedSpawn === "faction") {
+          const factionProfile = await deps.factions.getMemberProfile(accountId);
+          if (!factionProfile) {
+            emitClient(player, "client:spawn:result", false, "Du bist in keiner Fraktion.");
+            return;
+          }
+
+          const factionSpawn = await deps.factions.getFactionSpawn(factionProfile.factionId);
+          if (!factionSpawn) {
+            emitClient(player, "client:spawn:result", false, "Deine Fraktion hat keinen Spawnpunkt gesetzt.");
+            return;
+          }
+
+          player.dimension = factionSpawn.dimension;
+          player.position = vector3(factionSpawn.x, factionSpawn.y, factionSpawn.z);
+          setHeading(player, factionSpawn.rotZ);
         } else {
           player.dimension = account.dimension;
           player.position = vector3(account.posX, account.posY, account.posZ);
@@ -279,6 +380,8 @@ export function registerAuthEvents(deps: AuthEventDeps) {
         setVar(player, "PENDING_SPAWN_SELECTION", false);
 
         emitClient(player, "client:spawn:hide");
+        const permissionKeys = (await deps.factions.getAccountPermissions(accountId)).map((permission) => permission.permissionKey);
+        await syncFactionWardrobeData(player, accountId, permissionKeys, deps);
         emitClient(player, "client:spawn:resolveGround");
         emitClient(player, "client:chat:authState", true);
         emitClient(player, "client:hud:authState", true);
@@ -286,7 +389,9 @@ export function registerAuthEvents(deps: AuthEventDeps) {
           player,
           normalizedSpawn === "hotel"
             ? "Du bist am Hotel gespawnt."
-            : "Du bist an deinem letzten Standort gespawnt."
+            : normalizedSpawn === "faction"
+              ? "Du bist bei deiner Fraktion gespawnt."
+              : "Du bist an deinem letzten Standort gespawnt."
         );
       } catch (error) {
         deps.logError("spawn select failed", error);

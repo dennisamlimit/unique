@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { trigger } from "../lib/rage.js";
+import { THEME_CSS, getStoredUiTheme, normalizeUiTheme, persistUiTheme, getThemeVars } from "../lib/theme.js";
 
 const modes = ["ic", "ooc", "me", "do", "try"];
 const labels = { ic: "IC", ooc: "OOC", me: "ME", do: "DO", try: "TRY" };
@@ -8,12 +9,12 @@ const maxMessages = 120;
 
 const typeStyles = {
   ic: "text-zinc-100",
-  ooc: "text-violet-100",
-  me: "text-fuchsia-100",
+  ooc: "theme-chat-text",
+  me: "theme-chat-text",
   do: "text-amber-100",
   try: "text-emerald-100",
-  system: "text-violet-100",
-  admin: "text-rose-100"
+  system: "theme-chat-text",
+  admin: "theme-chat-text"
 };
 
 function ChatLine({ line, faded }) {
@@ -22,7 +23,7 @@ function ChatLine({ line, faded }) {
 
   return (
     <div className={`text-[clamp(12px,1.1vw,15px)] leading-[1.42] transition-opacity duration-500 ${faded ? "opacity-25" : "opacity-100"} ${typeStyles[type] || "text-zinc-100"}`}>
-      {type !== "ic" && <span className="mr-1 font-black text-fuchsia-200">[{type === "admin" ? "ADMIN" : tag}]</span>}
+      {type !== "ic" && <span className="theme-chat-tag mr-1 font-black">[{type === "admin" ? "ADMIN" : tag}]</span>}
       {type !== "system" && line.sender ? <span className="mr-1 font-bold text-white">{line.sender}:</span> : null}
       <span className="break-words">{line.message}</span>
     </div>
@@ -31,6 +32,7 @@ function ChatLine({ line, faded }) {
 
 function ChatApp() {
   const [visible, setVisible] = useState(false);
+  const [theme, setTheme] = useState(getStoredUiTheme());
   const [open, setOpen] = useState(false);
   const [currentMode, setCurrentMode] = useState("ic");
   const [input, setInput] = useState("");
@@ -108,6 +110,13 @@ function ChatApp() {
       addMessage,
       openInput,
       closeInput,
+      setTheme: (raw) => {
+        try {
+          setTheme(persistUiTheme(normalizeUiTheme(typeof raw === "string" ? JSON.parse(raw) : raw)));
+        } catch {
+          setTheme(getStoredUiTheme());
+        }
+      },
       setVisible: (state) => {
         setVisible(!!state);
         if (!state) {
@@ -128,13 +137,22 @@ function ChatApp() {
     return null;
   }
 
+  const hasMessages = messages.length > 0;
+  const showPassiveBackground = open || (!faded && hasMessages);
+  const themeVars = getThemeVars(theme);
+
   return (
-    <main className="pointer-events-none fixed left-[clamp(10px,1.2vw,22px)] top-[clamp(8px,1.2vh,14px)] w-[min(560px,45vw)] text-white max-[760px]:left-2 max-[760px]:top-3 max-[760px]:w-[calc(100vw-16px)]">
+    <main className="unique-theme pointer-events-none fixed left-[clamp(10px,1.2vw,22px)] top-[clamp(8px,1.2vh,14px)] w-[min(560px,45vw)] text-white max-[760px]:left-2 max-[760px]:top-3 max-[760px]:w-[calc(100vw-16px)]" style={themeVars}>
+      <style>{THEME_CSS}</style>
       <section className="pointer-events-auto grid gap-2">
         <div
           ref={scrollRef}
           onWheel={clearFade}
-          className="h-[clamp(230px,28vh,305px)] overflow-y-auto overflow-x-hidden rounded-md border border-violet-200/[0.1] bg-black/[0.48] px-3 py-2 shadow-[0_12px_34px_rgba(0,0,0,0.44)] [scrollbar-width:thin]"
+          className={`h-[clamp(230px,28vh,305px)] overflow-y-auto overflow-x-hidden rounded-md px-3 py-2 [scrollbar-width:thin] transition-all duration-300 ${
+            showPassiveBackground
+              ? "border border-violet-200/[0.1] bg-black/[0.48] shadow-[0_12px_34px_rgba(0,0,0,0.44)]"
+              : "border border-transparent bg-transparent shadow-none"
+          }`}
         >
           <div className="grid gap-1">
             {messages.map((line) => (
@@ -144,7 +162,7 @@ function ChatApp() {
         </div>
 
         {open && (
-          <div className="grid gap-2 rounded-md border border-violet-200/[0.14] bg-zinc-950/[0.9] p-2 shadow-[0_12px_34px_rgba(0,0,0,0.5)]">
+          <div className="theme-popover grid gap-2 rounded-md p-2 shadow-[0_12px_34px_rgba(0,0,0,0.5)]">
             <div className="grid grid-cols-5 gap-1">
               {modes.map((mode) => (
                 <button
@@ -155,8 +173,8 @@ function ChatApp() {
                     trigger("cef:chat:setMode", mode);
                     inputRef.current?.focus();
                   }}
-                  className={`h-8 rounded text-xs font-black uppercase tracking-normal transition ${
-                    currentMode === mode ? "bg-fuchsia-400 text-white shadow-[0_0_18px_rgba(217,70,239,0.38)]" : "bg-white/[0.08] text-zinc-300 hover:bg-white/[0.14] hover:text-white"
+                  className={`theme-nav-tile h-8 rounded text-xs font-black uppercase tracking-normal transition ${
+                    currentMode === mode ? "theme-chat-soft theme-chat-text border-fuchsia-400 theme-chat-glow" : "bg-white/[0.08] text-zinc-300 hover:bg-white/[0.14] hover:text-white"
                   }`}
                 >
                   {labels[mode]}

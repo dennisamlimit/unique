@@ -1,4 +1,5 @@
 /// <reference path="../ragemp-client.d.ts" />
+import { getUiThemeJson, loadUiTheme } from "../ui-theme";
 
 interface ChatState {
   browser: Mp.Browser | null;
@@ -19,6 +20,11 @@ const state: ChatState = {
   pendingActions: [],
   readyProbe: null
 };
+loadUiTheme();
+
+function pushTheme(): void {
+  executeChat(`window.chatApp && window.chatApp.setTheme(${getUiThemeJson()});`);
+}
 
 function flushPending(): void {
   if (!state.browser || !state.isReady) {
@@ -87,6 +93,7 @@ function openChat(): void {
   state.chatOpen = true;
   state.browser.active = true;
   mp.gui.cursor.show(true, true);
+  mp.events.call("client:chat:inputOpen", true);
 
   executeChat(`window.chatApp && window.chatApp.openInput(${JSON.stringify(state.currentMode)});`);
 }
@@ -96,9 +103,13 @@ function closeChat(): void {
     return;
   }
 
+  const wasOpen = state.chatOpen;
   state.chatOpen = false;
   state.browser.active = true;
-  mp.gui.cursor.show(false, false);
+  if (wasOpen) {
+    mp.gui.cursor.show(false, false);
+  }
+  mp.events.call("client:chat:inputOpen", false);
 
   executeChat("window.chatApp && window.chatApp.closeInput();");
 }
@@ -115,7 +126,12 @@ mp.events.add("cef:chat:ready", () => {
   state.isReady = true;
   stopReadyProbe();
   flushPending();
+  pushTheme();
   executeChat(`window.chatApp && window.chatApp.setVisible(${JSON.stringify(state.isAuthenticated)});`);
+});
+
+mp.events.add("client:uiTheme:sync", () => {
+  pushTheme();
 });
 
 mp.events.add("client:chat:authState", (...args: unknown[]) => {

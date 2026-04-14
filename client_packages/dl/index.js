@@ -1,8 +1,9 @@
 (() => {
-  let dlEnabled = false;
-  const REQUIRED_ADMIN_LEVEL = 2;
-  const UNIQUE_PURPLE = [217, 70, 239, 220];
-  const TEXT_WHITE = [255, 255, 255, 190];
+  // client_src/dl/index.ts
+  var dlEnabled = false;
+  var REQUIRED_ADMIN_LEVEL = 2;
+  var UNIQUE_PURPLE = [217, 70, 239, 220];
+  var TEXT_WHITE = [255, 255, 255, 190];
   function getAdminLevel() {
     try {
       return Number(mp.players.local.getVariable("ADMIN_LEVEL")) || 0;

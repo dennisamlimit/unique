@@ -16,7 +16,10 @@ const entries = [
   { name: "admin", entry: resolve(root, "src/admin/main.jsx"), title: "Unique Admin" },
   { name: "chat", entry: resolve(root, "src/chat/main.jsx"), title: "Unique Chat" },
   { name: "hud", entry: resolve(root, "src/hud/main.jsx"), title: "Unique HUD" },
-  { name: "interaction", entry: resolve(root, "src/interaction/main.jsx"), title: "Unique Interaction" }
+  { name: "interaction", entry: resolve(root, "src/interaction/main.jsx"), title: "Unique Interaction" },
+  { name: "orga",      entry: resolve(root, "src/orga/main.jsx"),      title: "Unique Organisation" },
+  { name: "usermenu", entry: resolve(root, "src/usermenu/main.jsx"), title: "Unique Usermenu" },
+  { name: "wardrobe", entry: resolve(root, "src/wardrobe/main.jsx"), title: "Unique Wardrobe" }
 ];
 
 function run(command, args) {
@@ -41,6 +44,8 @@ function htmlFor(app) {
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>${app.title}</title>
   <link rel="stylesheet" href="ui.css" />
+  <link rel="stylesheet" href="${app.name}.css" />
+  <style>html,body{background:transparent!important;margin:0;padding:0}</style>
 </head>
 <body>
   <div id="root"></div>

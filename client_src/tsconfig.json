@@ -6,7 +6,12 @@
     "lib": ["ES2019", "DOM"],
     "strict": false,
     "skipLibCheck": true,
-    "noEmit": true
+    "resolveJsonModule": true,
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "@shared/*": ["../shared/*"]
+    }
   },
-  "include": ["**/*.ts"]
+  "include": ["**/*.ts", "../shared/**/*.ts"]
 }

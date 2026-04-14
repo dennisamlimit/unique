@@ -38,4 +38,4 @@ RUN chmod +x ./entrypoint.sh
 
 EXPOSE 22005/tcp 22005/udp 22006/tcp
 
-ENTRYPOINT ["./entrypoint.sh"]
+ENTRYPOINT ["/srv/ragemp-srv/entrypoint.sh"]

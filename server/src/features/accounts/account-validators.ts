@@ -1,4 +1,4 @@
-import type { CompleteCharacterDto, LoginAccountDto, RegisterAccountDto } from "./account-dtos.js";
+import type { CompleteCharacterDto, LoginAccountDto, RegisterAccountDto } from "./api/account-dtos.js";
 import { AccountService } from "./account-service.js";
 
 export type ValidationResult =

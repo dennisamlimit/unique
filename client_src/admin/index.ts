@@ -1,4 +1,5 @@
 /// <reference path="../ragemp-client.d.ts" />
+import { getUiThemeJson, loadUiTheme } from "../ui-theme";
 
 interface PlayerInfo {
   name: string;
@@ -26,6 +27,11 @@ const state: AdminState = {
 };
 
 const KEY_F3 = 0x72;
+loadUiTheme();
+
+function pushTheme(): void {
+  executeAdmin(`window.adminApp && window.adminApp.setTheme(${getUiThemeJson()});`);
+}
 
 function getAdminLevel(): number {
   try {
@@ -161,7 +167,15 @@ function closeAdminMenu(): void {
 
 function openAdminMenu(): void {
   const level = getAdminLevel();
+  const accountId = Number(mp.players.local.getVariable("ACCOUNT_ID") ?? 0);
   if (level <= 0 || !isAdminModeEnabled()) {
+    return;
+  }
+  openAdminMenuForced(level, accountId);
+}
+
+function openAdminMenuForced(level = getAdminLevel(), accountId = Number(mp.players.local.getVariable("ACCOUNT_ID") ?? 0)): void {
+  if (level <= 0) {
     return;
   }
 
@@ -171,7 +185,15 @@ function openAdminMenu(): void {
   mp.events.call("client:chat:authState", false);
   mp.events.call("client:hud:authState", false);
   mp.gui.cursor.show(true, true);
-  executeAdmin(`window.adminApp && window.adminApp.open(${JSON.stringify(level)}, ${JSON.stringify(collectPlayers())});`);
+  executeAdmin(`window.adminApp && window.adminApp.open(${JSON.stringify(level)}, ${JSON.stringify(accountId)}, ${JSON.stringify(collectPlayers())});`);
+  pushTheme();
+  
+  // Data requests
+  mp.events.callRemote("server:admin:requestFactionData");
+  mp.events.callRemote("server:admin:getCommandList");
+  if (level >= 5) {
+      mp.events.callRemote("server:admin:requestLogs");
+  }
 }
 
 function toggleAdminMenu(): void {
@@ -195,6 +217,11 @@ mp.events.add("cef:admin:ready", () => {
   state.isReady = true;
   stopReadyProbe();
   flushPending();
+  pushTheme();
+});
+
+mp.events.add("client:uiTheme:sync", () => {
+  pushTheme();
 });
 
 mp.keys.bind(KEY_F3, true, () => {
@@ -209,6 +236,122 @@ mp.events.add("render", () => {
   if (state.isOpen && (!isAdminModeEnabled() || getAdminLevel() <= 0)) {
     closeAdminMenu();
   }
+});
+
+mp.events.add("client:admin:setFactions", (...args: unknown[]) => {
+  const [payload] = args as [string];
+  executeAdmin(`window.adminApp && window.adminApp.setFactions(${JSON.stringify(payload || "[]")});`);
+});
+
+mp.events.add("client:admin:receiveCommands", (payload: string) => {
+    executeAdmin(`window.adminApp && window.adminApp.setCommands(${JSON.stringify(payload)});`);
+});
+
+mp.events.add("client:admin:receiveLogs", (payload: string) => {
+    executeAdmin(`window.adminApp && window.adminApp.setLogs(${JSON.stringify(payload)});`);
+});
+
+mp.events.add("client:admin:setTickets", (payload: string) => {
+  executeAdmin(`window.adminApp && window.adminApp.setTickets(${JSON.stringify(payload)});`);
+});
+
+mp.events.add("client:admin:setTicketPlayerHistory", (payload: string) => {
+  executeAdmin(`window.adminApp && window.adminApp.setTicketPlayerHistory(${JSON.stringify(payload)});`);
+});
+
+mp.events.add("client:admin:setTicketInsight", (payload: string) => {
+  executeAdmin(`window.adminApp && window.adminApp.setTicketInsight(${JSON.stringify(payload)});`);
+});
+
+mp.events.add("client:admin:showTicketHistory", (accountId: number) => {
+  openAdminMenuForced();
+  executeAdmin(`window.adminApp && window.adminApp.showTicketHistory(${JSON.stringify(Number(accountId) || 0)});`);
+});
+
+mp.events.add("cef:admin:createFaction", (...args: unknown[]) => {
+  const [type, shortName, name, colorHex, mapIconId] = args;
+  mp.events.callRemote("server:admin:createFaction", type, shortName, name, colorHex, mapIconId);
+});
+
+mp.events.add("cef:admin:setFactionLeader", (...args: unknown[]) => {
+  const [accountId, factionId] = args;
+  mp.events.callRemote("server:admin:setFactionLeader", accountId, factionId);
+});
+
+mp.events.add("cef:admin:setFactionSpawn", (...args: unknown[]) => {
+  const [factionId] = args;
+  mp.events.callRemote("server:admin:setFactionSpawn", factionId);
+});
+
+mp.events.add("cef:admin:addFactionWardrobe", (...args: unknown[]) => {
+  const [factionId, label] = args;
+  mp.events.callRemote("server:admin:addFactionWardrobe", factionId, label);
+});
+
+mp.events.add("cef:admin:createFactionVehicle", (...args: unknown[]) => {
+  const [factionId, minRankLevel, modelName, displayName] = args;
+  mp.events.callRemote("server:admin:createFactionVehicle", factionId, minRankLevel, modelName, displayName);
+});
+
+mp.events.add("cef:admin:syncFactionDefaults", (...args: unknown[]) => {
+  const [target] = args;
+  mp.events.callRemote("server:admin:syncFactionDefaults", target);
+});
+
+mp.events.add("cef:admin:updateCommandLevel", (commandId: string, level: number) => {
+    mp.events.callRemote("server:admin:updateCommandLevel", commandId, level);
+});
+
+mp.events.add("cef:admin:requestLogs", () => {
+    mp.events.callRemote("server:admin:requestLogs");
+});
+
+mp.events.add("cef:admin:requestTickets", () => {
+  mp.events.callRemote("server:admin:tickets:request");
+});
+
+mp.events.add("cef:admin:ticketClaim", (ticketId: number) => {
+  mp.events.callRemote("server:admin:tickets:claim", ticketId);
+});
+
+mp.events.add("cef:admin:ticketReply", (ticketId: number, message: string, forceReply: boolean) => {
+  mp.events.callRemote("server:admin:tickets:reply", ticketId, message, !!forceReply);
+});
+
+mp.events.add("cef:admin:ticketStatus", (ticketId: number, status: string) => {
+  mp.events.callRemote("server:admin:tickets:status", ticketId, status);
+});
+
+mp.events.add("cef:admin:ticketPriority", (ticketId: number, priority: string) => {
+  mp.events.callRemote("server:admin:tickets:priority", ticketId, priority);
+});
+
+mp.events.add("cef:admin:ticketAddParticipant", (ticketId: number, accountId: number) => {
+  mp.events.callRemote("server:admin:tickets:addParticipant", ticketId, accountId);
+});
+
+mp.events.add("cef:admin:ticketRequestAdvice", (ticketId: number) => {
+  mp.events.callRemote("server:admin:tickets:requestAdvice", ticketId);
+});
+
+mp.events.add("cef:admin:ticketGoto", (ticketId: number) => {
+  mp.events.callRemote("server:admin:tickets:goto", ticketId);
+});
+
+mp.events.add("cef:admin:ticketGetHere", (ticketId: number) => {
+  mp.events.callRemote("server:admin:tickets:gethere", ticketId);
+});
+
+mp.events.add("cef:admin:ticketCharacterInfo", (ticketId: number) => {
+  mp.events.callRemote("server:admin:tickets:characterInfo", ticketId);
+});
+
+mp.events.add("cef:admin:ticketWarnings", (ticketId: number) => {
+  mp.events.callRemote("server:admin:tickets:warnings", ticketId);
+});
+
+mp.events.add("cef:admin:ticketHistory", (accountId: number) => {
+  mp.events.callRemote("server:admin:tickets:history", accountId);
 });
 
 export {};

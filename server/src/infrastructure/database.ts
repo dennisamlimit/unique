@@ -85,17 +85,45 @@ export async function initializeDatabase() {
         short_name TEXT NOT NULL UNIQUE,
         type TEXT NOT NULL,
         color_hex TEXT NOT NULL DEFAULT '#FFFFFF',
+        map_icon_id INTEGER NOT NULL DEFAULT 0,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
     `);
+    await client.query("ALTER TABLE factions ADD COLUMN IF NOT EXISTS map_icon_id INTEGER NOT NULL DEFAULT 0;");
+    await client.query("ALTER TABLE factions ALTER COLUMN map_icon_id SET DEFAULT 0;");
+    await client.query("ALTER TABLE factions ADD COLUMN IF NOT EXISTS balance BIGINT NOT NULL DEFAULT 100000;");
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS faction_ranks (
         faction_id INTEGER NOT NULL REFERENCES factions(faction_id) ON DELETE CASCADE,
-        rank_level INTEGER NOT NULL CHECK (rank_level BETWEEN 1 AND 6),
+        rank_level INTEGER NOT NULL CHECK (rank_level BETWEEN 1 AND 20),
         rank_name TEXT NOT NULL,
         PRIMARY KEY (faction_id, rank_level)
       );
+    `);
+
+    await client.query(`
+      DO $$
+      BEGIN
+        IF EXISTS (
+          SELECT 1
+          FROM information_schema.constraint_column_usage
+          WHERE table_name = 'faction_ranks'
+            AND constraint_name = 'faction_ranks_rank_level_check'
+        ) THEN
+          ALTER TABLE faction_ranks DROP CONSTRAINT faction_ranks_rank_level_check;
+        END IF;
+      EXCEPTION
+        WHEN undefined_object THEN NULL;
+      END $$;
+    `);
+    await client.query(`
+      DO $$
+      BEGIN
+        ALTER TABLE faction_ranks ADD CONSTRAINT faction_ranks_rank_level_check CHECK (rank_level BETWEEN 1 AND 20);
+      EXCEPTION
+        WHEN duplicate_object THEN NULL;
+      END $$;
     `);
 
     await client.query(`
@@ -107,6 +135,360 @@ export async function initializeDatabase() {
         PRIMARY KEY (account_id)
       );
     `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS faction_rank_permissions (
+        faction_id INTEGER NOT NULL REFERENCES factions(faction_id) ON DELETE CASCADE,
+        rank_level INTEGER NOT NULL,
+        permission_key TEXT NOT NULL,
+        PRIMARY KEY (faction_id, rank_level, permission_key),
+        FOREIGN KEY (faction_id, rank_level) REFERENCES faction_ranks(faction_id, rank_level) ON DELETE CASCADE
+      );
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS faction_spawn_points (
+        faction_id INTEGER PRIMARY KEY REFERENCES factions(faction_id) ON DELETE CASCADE,
+        pos_x DOUBLE PRECISION NOT NULL,
+        pos_y DOUBLE PRECISION NOT NULL,
+        pos_z DOUBLE PRECISION NOT NULL,
+        rot_z DOUBLE PRECISION NOT NULL,
+        dimension INTEGER NOT NULL DEFAULT 0
+      );
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS faction_storage_points (
+        storage_point_id SERIAL PRIMARY KEY,
+        faction_id INTEGER NOT NULL REFERENCES factions(faction_id) ON DELETE CASCADE,
+        storage_type TEXT NOT NULL,
+        label TEXT NOT NULL,
+        pos_x DOUBLE PRECISION NOT NULL,
+        pos_y DOUBLE PRECISION NOT NULL,
+        pos_z DOUBLE PRECISION NOT NULL,
+        rot_z DOUBLE PRECISION NOT NULL,
+        dimension INTEGER NOT NULL DEFAULT 0
+      );
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS faction_wardrobe_points (
+        wardrobe_point_id SERIAL PRIMARY KEY,
+        faction_id INTEGER NOT NULL REFERENCES factions(faction_id) ON DELETE CASCADE,
+        label TEXT NOT NULL,
+        pos_x DOUBLE PRECISION NOT NULL,
+        pos_y DOUBLE PRECISION NOT NULL,
+        pos_z DOUBLE PRECISION NOT NULL,
+        rot_z DOUBLE PRECISION NOT NULL,
+        dimension INTEGER NOT NULL DEFAULT 0
+      );
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS faction_outfits (
+        outfit_id SERIAL PRIMARY KEY,
+        faction_id INTEGER NOT NULL REFERENCES factions(faction_id) ON DELETE CASCADE,
+        category TEXT NOT NULL DEFAULT 'dienst',
+        name TEXT NOT NULL,
+        clothing_json TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+    await client.query("ALTER TABLE faction_outfits ADD COLUMN IF NOT EXISTS category TEXT NOT NULL DEFAULT 'dienst';");
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS faction_vehicles (
+        faction_vehicle_id SERIAL PRIMARY KEY,
+        faction_id INTEGER NOT NULL REFERENCES factions(faction_id) ON DELETE CASCADE,
+        model_name TEXT NOT NULL,
+        display_name TEXT NOT NULL,
+        min_rank_level INTEGER NOT NULL DEFAULT 1,
+        pos_x DOUBLE PRECISION NOT NULL,
+        pos_y DOUBLE PRECISION NOT NULL,
+        pos_z DOUBLE PRECISION NOT NULL,
+        rot_z DOUBLE PRECISION NOT NULL,
+        dimension INTEGER NOT NULL DEFAULT 0,
+        number_plate TEXT NOT NULL DEFAULT 'ORG',
+        color_primary INTEGER NOT NULL DEFAULT 0,
+        color_secondary INTEGER NOT NULL DEFAULT 0,
+        is_spawned BOOLEAN NOT NULL DEFAULT FALSE,
+        fuel_level DOUBLE PRECISION NOT NULL DEFAULT 100.0,
+        fuel_type TEXT NOT NULL DEFAULT 'petrol',
+        health DOUBLE PRECISION NOT NULL DEFAULT 1000.0,
+        is_locked BOOLEAN NOT NULL DEFAULT FALSE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+    await client.query("ALTER TABLE faction_vehicles ADD COLUMN IF NOT EXISTS is_spawned BOOLEAN NOT NULL DEFAULT FALSE;");
+    await client.query("ALTER TABLE faction_vehicles ADD COLUMN IF NOT EXISTS fuel_level DOUBLE PRECISION NOT NULL DEFAULT 100.0;");
+    await client.query("ALTER TABLE faction_vehicles ADD COLUMN IF NOT EXISTS fuel_type TEXT NOT NULL DEFAULT 'petrol';");
+    await client.query("ALTER TABLE faction_vehicles ADD COLUMN IF NOT EXISTS health DOUBLE PRECISION NOT NULL DEFAULT 1000.0;");
+    await client.query("ALTER TABLE faction_vehicles ADD COLUMN IF NOT EXISTS is_locked BOOLEAN NOT NULL DEFAULT FALSE;");
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS vehicle_catalog (
+        catalog_id SERIAL PRIMARY KEY,
+        model_name TEXT NOT NULL,
+        display_name TEXT NOT NULL,
+        price INTEGER NOT NULL,
+        fuel_type TEXT NOT NULL DEFAULT 'petrol',
+        max_fuel DOUBLE PRECISION NOT NULL DEFAULT 100.0,
+        image_url TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+    await client.query("ALTER TABLE vehicle_catalog ADD COLUMN IF NOT EXISTS fuel_type TEXT NOT NULL DEFAULT 'petrol';");
+    await client.query("ALTER TABLE vehicle_catalog ADD COLUMN IF NOT EXISTS max_fuel DOUBLE PRECISION NOT NULL DEFAULT 100.0;");
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS command_permissions (
+        command_id TEXT PRIMARY KEY,
+        required_level INTEGER NOT NULL DEFAULT 10,
+        usage_label TEXT NOT NULL,
+        description TEXT NOT NULL,
+        category TEXT NOT NULL DEFAULT 'Allgemein'
+      );
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS command_aliases (
+        alias TEXT PRIMARY KEY,
+        command_id TEXT NOT NULL REFERENCES command_permissions(command_id) ON DELETE CASCADE
+      );
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS admin_logs (
+        log_id SERIAL PRIMARY KEY,
+        admin_account_id INTEGER NOT NULL REFERENCES accounts(account_id) ON DELETE CASCADE,
+        action_type TEXT NOT NULL,
+        target_id TEXT,
+        details TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS support_tickets (
+        ticket_id SERIAL PRIMARY KEY,
+        account_id INTEGER NOT NULL REFERENCES accounts(account_id) ON DELETE CASCADE,
+        account_name TEXT NOT NULL,
+        category TEXT NOT NULL DEFAULT 'support',
+        prefix TEXT NOT NULL,
+        subject TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'open',
+        priority TEXT NOT NULL DEFAULT 'normal',
+        claimed_by_account_id INTEGER REFERENCES accounts(account_id) ON DELETE SET NULL,
+        claimed_by_name TEXT,
+        closed_by_account_id INTEGER REFERENCES accounts(account_id) ON DELETE SET NULL,
+        closed_by_name TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        closed_at TIMESTAMPTZ
+      );
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS support_ticket_messages (
+        message_id SERIAL PRIMARY KEY,
+        ticket_id INTEGER NOT NULL REFERENCES support_tickets(ticket_id) ON DELETE CASCADE,
+        sender_type TEXT NOT NULL,
+        sender_account_id INTEGER REFERENCES accounts(account_id) ON DELETE SET NULL,
+        sender_name TEXT NOT NULL,
+        message TEXT NOT NULL,
+        internal_note BOOLEAN NOT NULL DEFAULT FALSE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS support_ticket_participants (
+        ticket_id INTEGER NOT NULL REFERENCES support_tickets(ticket_id) ON DELETE CASCADE,
+        admin_account_id INTEGER NOT NULL REFERENCES accounts(account_id) ON DELETE CASCADE,
+        admin_name TEXT NOT NULL,
+        role_label TEXT NOT NULL DEFAULT 'observer',
+        added_by_account_id INTEGER REFERENCES accounts(account_id) ON DELETE SET NULL,
+        added_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (ticket_id, admin_account_id)
+      );
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS account_warnings (
+        warning_id SERIAL PRIMARY KEY,
+        account_id INTEGER NOT NULL REFERENCES accounts(account_id) ON DELETE CASCADE,
+        admin_account_id INTEGER REFERENCES accounts(account_id) ON DELETE SET NULL,
+        reason TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        expires_at TIMESTAMPTZ
+      );
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS support_ticket_mutes (
+        mute_id SERIAL PRIMARY KEY,
+        account_id INTEGER NOT NULL REFERENCES accounts(account_id) ON DELETE CASCADE,
+        admin_account_id INTEGER REFERENCES accounts(account_id) ON DELETE SET NULL,
+        reason TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        expires_at TIMESTAMPTZ NOT NULL
+      );
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS faction_clothing_items (
+        item_id SERIAL PRIMARY KEY,
+        faction_id INTEGER NOT NULL REFERENCES factions(faction_id) ON DELETE CASCADE,
+        min_rank INTEGER NOT NULL DEFAULT 1,
+        component_id INTEGER NOT NULL,
+        drawable_id INTEGER NOT NULL,
+        texture_id INTEGER NOT NULL,
+        label TEXT NOT NULL,
+        category TEXT NOT NULL DEFAULT 'dienst'
+      );
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS personal_outfits (
+        outfit_id SERIAL PRIMARY KEY,
+        account_id INTEGER NOT NULL REFERENCES accounts(account_id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        clothing_json TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+
+    // Add seed data if empty
+    const catalogCountResult = await client.query("SELECT COUNT(*) FROM vehicle_catalog");
+    if (parseInt(catalogCountResult.rows[0].count) === 0) {
+      await client.query(`
+        INSERT INTO vehicle_catalog (model_name, display_name, price, image_url) VALUES
+        ('sultan', 'Sultan RS', 45000, NULL),
+        ('elegy', 'Elegy RH8', 95000, NULL),
+        ('faggio', 'Faggio Sport', 2500, NULL),
+        ('kuruma', 'Kuruma (Armored)', 525000, NULL),
+        ('pbus', 'Festival Bus', 125000, NULL)
+      `);
+    }
+
+    const wardrobeSeedDefinitions = {
+      LSPD: {
+        factionName: "Police Department",
+        colorHex: "#3B82F6",
+        mapIconId: 60,
+        clothingItems: [
+          [1, 11, 55, 0, "LSPD Diensthemd", "tops"],
+          [1, 4, 35, 0, "LSPD Einsatzhose", "legs"],
+          [1, 6, 25, 0, "LSPD Stiefel", "feet"],
+          [1, 9, 10, 0, "LSPD Schutzweste", "armor"],
+          [3, 11, 58, 0, "LSPD Detective Jacke", "detective"],
+          [5, 11, 119, 0, "LSPD Tactical Carrier", "tactical"]
+        ],
+        outfits: [
+          ["dienst", "LSPD Streifendienst", JSON.stringify([[55, 0], [58, 0], [35, 0], [25, 0]])],
+          ["detective", "LSPD Detective", JSON.stringify([[58, 0], [15, 0], [35, 0], [25, 0]])],
+          ["tactical", "LSPD Taktisch", JSON.stringify([[119, 0], [15, 0], [35, 0], [25, 0]])]
+        ]
+      },
+      FIB: {
+        factionName: "Federal Investigation",
+        colorHex: "#1E293B",
+        mapIconId: 60,
+        clothingItems: [
+          [1, 11, 58, 0, "FIB Einsatzjacke", "tops"],
+          [1, 4, 31, 0, "FIB Einsatzhose", "legs"],
+          [1, 6, 25, 0, "FIB Stiefel", "feet"],
+          [2, 9, 10, 0, "FIB Weste", "armor"],
+          [4, 11, 124, 0, "FIB Tactical Rig", "tactical"]
+        ],
+        outfits: [
+          ["dienst", "FIB Standard", JSON.stringify([[58, 0], [15, 0], [31, 0], [25, 0]])],
+          ["tactical", "FIB Raid", JSON.stringify([[124, 0], [15, 0], [31, 0], [25, 0]])]
+        ]
+      },
+      MD: {
+        factionName: "Medical Department",
+        colorHex: "#EF4444",
+        mapIconId: 61,
+        clothingItems: [
+          [1, 11, 250, 0, "MD Dienstkleidung", "tops"],
+          [1, 4, 96, 0, "MD Hose", "legs"],
+          [1, 6, 25, 0, "MD Schuhe", "feet"],
+          [2, 11, 249, 0, "MD Einsatzjacke", "dienst"]
+        ],
+        outfits: [
+          ["dienst", "MD Sanitaeter", JSON.stringify([[250, 0], [15, 0], [96, 0], [25, 0]])],
+          ["dienst", "MD Einsatz", JSON.stringify([[249, 0], [15, 0], [96, 0], [25, 0]])]
+        ]
+      }
+    } satisfies Record<string, {
+      factionName: string;
+      colorHex: string;
+      mapIconId: number;
+      clothingItems: Array<[number, number, number, number, string, string]>;
+      outfits: Array<[string, string, string]>;
+    }>;
+
+    // Seed State Factions and wardrobe test data if missing
+    const factionCountResult = await client.query("SELECT COUNT(*) FROM factions WHERE type = 'state'");
+    if (parseInt(factionCountResult.rows[0].count) === 0) {
+      for (const [shortName, seed] of Object.entries(wardrobeSeedDefinitions)) {
+        await client.query(
+          `
+            INSERT INTO factions (name, short_name, type, color_hex, map_icon_id)
+            VALUES ($1, $2, 'state', $3, $4);
+          `,
+          [seed.factionName, shortName, seed.colorHex, seed.mapIconId]
+        );
+      }
+    }
+
+    for (const [shortName, seed] of Object.entries(wardrobeSeedDefinitions)) {
+      const factionResult = await client.query(
+        "SELECT faction_id FROM factions WHERE short_name = $1 LIMIT 1;",
+        [shortName]
+      );
+
+      if ((factionResult.rowCount ?? 0) === 0) {
+        continue;
+      }
+
+      const factionId = Number(factionResult.rows[0].faction_id);
+
+      const itemCountResult = await client.query(
+        "SELECT COUNT(*) FROM faction_clothing_items WHERE faction_id = $1;",
+        [factionId]
+      );
+
+      if (parseInt(itemCountResult.rows[0].count) === 0) {
+        for (const [minRank, componentId, drawableId, textureId, label, category] of seed.clothingItems) {
+          await client.query(
+            `
+              INSERT INTO faction_clothing_items (faction_id, min_rank, component_id, drawable_id, texture_id, label, category)
+              VALUES ($1, $2, $3, $4, $5, $6, $7);
+            `,
+            [factionId, minRank, componentId, drawableId, textureId, label, category]
+          );
+        }
+      }
+
+      const outfitCountResult = await client.query(
+        "SELECT COUNT(*) FROM faction_outfits WHERE faction_id = $1;",
+        [factionId]
+      );
+
+      if (parseInt(outfitCountResult.rows[0].count) === 0) {
+        for (const [category, name, clothingJson] of seed.outfits) {
+          await client.query(
+            `
+              INSERT INTO faction_outfits (faction_id, category, name, clothing_json)
+              VALUES ($1, $2, $3, $4);
+            `,
+            [factionId, category, name, clothingJson]
+          );
+        }
+      }
+    }
   } finally {
     client.release();
   }

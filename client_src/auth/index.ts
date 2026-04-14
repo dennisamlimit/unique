@@ -43,20 +43,53 @@ const creatorState: CreatorState = {
 };
 
 const cinematicCams: CinematicCam[] = [
+  // Downtown LS skyline from the east
   {
-    pos: new mp.Vector3(-534.0, -1880.0, 125.0),
+    pos:  new mp.Vector3(431.5, -833.0, 85.0),
+    look: new mp.Vector3(-75.0, -818.0, 40.0),
+    fov: 55
+  },
+  // Vinewood Hills overview
+  {
+    pos:  new mp.Vector3(-378.0, 335.0, 175.0),
+    look: new mp.Vector3(-250.0, 160.0, 70.0),
+    fov: 48
+  },
+  // Del Perro Pier / Beach low angle
+  {
+    pos:  new mp.Vector3(-1637.0, -953.0, 18.0),
+    look: new mp.Vector3(-1420.0, -1080.0, 13.0),
+    fov: 60
+  },
+  // Port of LS crane shot
+  {
+    pos:  new mp.Vector3(534.0, -2850.0, 90.0),
+    look: new mp.Vector3(260.0, -2650.0, 10.0),
+    fov: 50
+  },
+  // Mirror Park lake reflection
+  {
+    pos:  new mp.Vector3(1221.0, -1397.0, 42.0),
+    look: new mp.Vector3(1100.0, -1260.0, 35.0),
+    fov: 44
+  },
+  // LS City from north hills (epic cityscape)
+  {
+    pos:  new mp.Vector3(-534.0, -1880.0, 125.0),
     look: new mp.Vector3(-188.0, -1020.0, 85.0),
     fov: 46
   },
+  // Freeway traffic overhead
   {
-    pos: new mp.Vector3(-1660.0, -1090.0, 210.0),
-    look: new mp.Vector3(-730.0, -700.0, 110.0),
-    fov: 48
+    pos:  new mp.Vector3(-183.0, -1250.0, 55.0),
+    look: new mp.Vector3(-190.0, -1150.0, 30.0),
+    fov: 65
   },
+  // Rockford Hills low cruising shot
   {
-    pos: new mp.Vector3(215.0, -925.0, 260.0),
-    look: new mp.Vector3(-75.0, -818.0, 326.0),
-    fov: 42
+    pos:  new mp.Vector3(-670.0, -5.0, 58.0),
+    look: new mp.Vector3(-500.0, -80.0, 42.0),
+    fov: 52
   }
 ];
 
@@ -144,16 +177,56 @@ function stopCinematicCam(): void {
   state.currentCam = null;
   state.nextCam = null;
 
+  cleanupIntroNpcs();
   (mp.game.cam as any).renderScriptCams(false, true, 1500, true, false);
+}
+
+// Ambient NPC models for intro atmosphere
+const NPC_MODELS = [
+  "a_m_y_business_01", "a_f_y_business_02", "a_m_m_business_01",
+  "a_m_y_cyclist_01", "a_m_y_skater_01", "a_f_y_tourist_01",
+  "a_m_y_hipster_01", "a_f_m_fatbath_01"
+];
+let introNpcs: any[] = [];
+
+function cleanupIntroNpcs(): void {
+  for (const ped of introNpcs) {
+    try { ped.destroy(); } catch (_) {}
+  }
+  introNpcs = [];
+}
+
+function spawnIntroNpcs(cam: CinematicCam): void {
+  cleanupIntroNpcs();
+  const count = 4 + Math.floor(Math.random() * 3);
+  for (let i = 0; i < count; i++) {
+    const model = NPC_MODELS[Math.floor(Math.random() * NPC_MODELS.length)];
+    const ox = (Math.random() - 0.5) * 10;
+    const oy = (Math.random() - 0.5) * 10;
+    try {
+      const pos = new mp.Vector3(cam.look.x + ox, cam.look.y + oy, cam.look.z);
+      const ped = mp.peds.new(mp.game.joaat(model), pos, Math.random() * 360, 0);
+      try { (ped as any).taskWanderStandard(10, 10); } catch (_) {}
+      introNpcs.push(ped);
+    } catch (_) {}
+  }
 }
 
 function startCinematicCam(): void {
   stopCinematicCam();
 
-  state.camState = 0;
+  // Golden hour atmosphere
+  try {
+    mp.game.misc.setWeatherTypePersist("EXTRASUNNY");
+    mp.game.clock.setDateTime(2024, 1, 1, 18, 30, 0);
+  } catch (_) {}
+
+  // Random start camera for variety each login
+  state.camState = Math.floor(Math.random() * cinematicCams.length);
   state.currentCam = createCam("authCam0", cinematicCams[state.camState]);
   state.currentCam.setActive(true);
   (mp.game.cam as any).renderScriptCams(true, true, 2500, true, false);
+  spawnIntroNpcs(cinematicCams[state.camState]);
 
   state.switchTimer = setInterval(() => {
     if (!state.authVisible || !state.currentCam) {
@@ -170,8 +243,9 @@ function startCinematicCam(): void {
     state.camState = nextIndex;
 
     setTimeout(() => {
+      spawnIntroNpcs(cinematicCams[nextIndex]);
       destroyCam(previousCam);
-    }, 7000);
+    }, 3500);
   }, 11000);
 }
 

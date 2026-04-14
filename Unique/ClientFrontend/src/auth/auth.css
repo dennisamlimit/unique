@@ -1,0 +1,164 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+:root {
+  --bg-primary: #0F0F1B;
+  --bg-secondary: #161625;
+  --accent-purple: #A855F7;
+  --accent-purple-glow: rgba(168, 85, 247, 0.4);
+  --text-primary: #FFFFFF;
+  --text-secondary: #94A3B8;
+  --input-bg: rgba(255, 255, 255, 0.03);
+  --input-border: rgba(255, 255, 255, 0.1);
+}
+
+.auth-container {
+  font-family: 'Inter', sans-serif;
+  color: var(--text-primary);
+  background: var(--bg-primary);
+  min-height: 100vh;
+  display: flex;
+  overflow: hidden;
+  position: relative;
+}
+
+/* Grid Pattern */
+.auth-grid {
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(circle, rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+  background-size: 32px 32px;
+  pointer-events: none;
+}
+
+/* Topographic Lines (SVG Pattern) */
+.auth-topo {
+  position: absolute;
+  inset: 0;
+  opacity: 0.15;
+  background-image: url("data:image/svg+xml,%3Csvg width='400' height='400' viewBox='0 0 400 400' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M0 100 Q 100 50 200 100 T 400 100' stroke='white' fill='transparent' /%3E%3Cpath d='M0 200 Q 100 150 200 200 T 400 200' stroke='white' fill='transparent' /%3E%3Cpath d='M0 300 Q 100 250 200 300 T 400 300' stroke='white' fill='transparent' /%3E%3C/svg%3E");
+  background-size: 800px 800px;
+  animation: float 60s linear infinite;
+  pointer-events: none;
+}
+
+@keyframes float {
+  from { background-position: 0 0; }
+  to { background-position: 800px 800px; }
+}
+
+.auth-split-left {
+  flex: 1;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, rgba(168, 85, 247, 0.1), transparent);
+}
+
+.auth-hero-img {
+  max-width: 85%;
+  max-height: 85%;
+  object-fit: contain;
+  filter: drop-shadow(0 0 30px var(--accent-purple-glow));
+}
+
+.auth-split-right {
+  width: 520px;
+  background: var(--bg-secondary);
+  border-left: 1px solid var(--input-border);
+  display: flex;
+  flex-direction: column;
+  padding: 60px;
+  position: relative;
+  z-index: 10;
+}
+
+.auth-form-title {
+  font-size: 32px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: -0.02em;
+  margin-bottom: 8px;
+}
+
+.auth-form-subtitle {
+  color: var(--text-secondary);
+  font-size: 16px;
+  margin-bottom: 40px;
+}
+
+.auth-input-group {
+  margin-bottom: 24px;
+}
+
+.auth-label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+  letter-spacing: 0.05em;
+}
+
+.auth-input-wrapper {
+  position: relative;
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
+  border-radius: 12px;
+  transition: all 0.2s ease;
+}
+
+.auth-input-wrapper:focus-within {
+  border-color: var(--accent-purple);
+  box-shadow: 0 0 0 4px var(--accent-purple-glow);
+}
+
+.auth-input {
+  width: 100%;
+  background: transparent;
+  border: none;
+  padding: 14px 16px;
+  color: white;
+  font-size: 15px;
+  outline: none;
+}
+
+.auth-btn-primary {
+  width: 100%;
+  background: linear-gradient(135deg, #A855F7, #7E22CE);
+  border: none;
+  border-radius: 12px;
+  padding: 16px;
+  color: white;
+  font-weight: 700;
+  font-size: 16px;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: transform 0.2s ease, opacity 0.2s ease;
+  margin-top: 12px;
+  box-shadow: 0 10px 15px -3px rgba(168, 85, 247, 0.3);
+}
+
+.auth-btn-primary:hover {
+  transform: translateY(-2px);
+  opacity: 0.9;
+}
+
+.auth-link {
+  color: var(--accent-purple);
+  text-decoration: none;
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.auth-link:hover {
+  text-decoration: underline;
+}
+
+.auth-footer {
+  margin-top: auto;
+  text-align: center;
+  font-size: 14px;
+  color: var(--text-secondary);
+}

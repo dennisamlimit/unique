@@ -111,6 +111,67 @@ export class AccountRepository {
     return mapAccount(result.rows[0]);
   }
 
+  async getPersonalOutfits(accountId: number) {
+    const result = await getPool().query(
+      "SELECT outfit_id, account_id, name, clothing_json, created_at FROM personal_outfits WHERE account_id = $1 ORDER BY created_at ASC;",
+      [accountId]
+    );
+    return result.rows.map((row) => ({
+      outfitId: Number(row.outfit_id),
+      accountId: Number(row.account_id),
+      name: String(row.name),
+      clothingJson: String(row.clothing_json),
+      createdAt: String(row.created_at)
+    }));
+  }
+
+  async getPersonalOutfitById(outfitId: number, accountId: number) {
+    const result = await getPool().query(
+      "SELECT outfit_id, account_id, name, clothing_json, created_at FROM personal_outfits WHERE outfit_id = $1 AND account_id = $2 LIMIT 1;",
+      [outfitId, accountId]
+    );
+    if (!result.rows[0]) return null;
+    const row = result.rows[0];
+    return {
+      outfitId: Number(row.outfit_id),
+      accountId: Number(row.account_id),
+      name: String(row.name),
+      clothingJson: String(row.clothing_json),
+      createdAt: String(row.created_at)
+    };
+  }
+
+  async countPersonalOutfits(accountId: number) {
+    const result = await getPool().query(
+      "SELECT COUNT(*) FROM personal_outfits WHERE account_id = $1;",
+      [accountId]
+    );
+    return parseInt(result.rows[0].count, 10);
+  }
+
+  async createPersonalOutfit(accountId: number, name: string, clothingJson: string) {
+    const result = await getPool().query(
+      "INSERT INTO personal_outfits (account_id, name, clothing_json) VALUES ($1, $2, $3) RETURNING outfit_id, account_id, name, clothing_json, created_at;",
+      [accountId, name, clothingJson]
+    );
+    const row = result.rows[0];
+    return {
+      outfitId: Number(row.outfit_id),
+      accountId: Number(row.account_id),
+      name: String(row.name),
+      clothingJson: String(row.clothing_json),
+      createdAt: String(row.created_at)
+    };
+  }
+
+  async deletePersonalOutfit(outfitId: number, accountId: number) {
+    const result = await getPool().query(
+      "DELETE FROM personal_outfits WHERE outfit_id = $1 AND account_id = $2;",
+      [outfitId, accountId]
+    );
+    return (result.rowCount ?? 0) > 0;
+  }
+
   async save(account: Account) {
     const result = await getPool().query(
       `

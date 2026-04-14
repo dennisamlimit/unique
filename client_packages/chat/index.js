@@ -1,5 +1,53 @@
 (() => {
-  const state = {
+  // client_src/ui-theme.ts
+  var DEFAULT_UI_THEME = {
+    primary: "#D946EF",
+    secondary: "#A855F7",
+    surface: "#0F0A17",
+    surfaceAlt: "#171020",
+    border: "#C084FC",
+    text: "#FFFFFF",
+    muted: "#A1A1AA",
+    danger: "#FB7185",
+    success: "#34D399",
+    warning: "#FBBF24"
+  };
+  function normalizeHex(value, fallback) {
+    const input = String(value ?? "").trim();
+    return /^#[0-9a-fA-F]{6}$/.test(input) ? input.toUpperCase() : fallback;
+  }
+  function normalizeUiTheme(raw) {
+    const source = raw && typeof raw === "object" ? raw : {};
+    return {
+      primary: normalizeHex(source.primary, DEFAULT_UI_THEME.primary),
+      secondary: normalizeHex(source.secondary, DEFAULT_UI_THEME.secondary),
+      surface: normalizeHex(source.surface, DEFAULT_UI_THEME.surface),
+      surfaceAlt: normalizeHex(source.surfaceAlt, DEFAULT_UI_THEME.surfaceAlt),
+      border: normalizeHex(source.border, DEFAULT_UI_THEME.border),
+      text: normalizeHex(source.text, DEFAULT_UI_THEME.text),
+      muted: normalizeHex(source.muted, DEFAULT_UI_THEME.muted),
+      danger: normalizeHex(source.danger, DEFAULT_UI_THEME.danger),
+      success: normalizeHex(source.success, DEFAULT_UI_THEME.success),
+      warning: normalizeHex(source.warning, DEFAULT_UI_THEME.warning)
+    };
+  }
+  var currentTheme = DEFAULT_UI_THEME;
+  function loadUiTheme() {
+    var _a;
+    try {
+      const stored = (_a = mp.storage.data) == null ? void 0 : _a.uniqueUiTheme;
+      currentTheme = normalizeUiTheme(stored);
+    } catch {
+      currentTheme = DEFAULT_UI_THEME;
+    }
+    return currentTheme;
+  }
+  function getUiThemeJson() {
+    return JSON.stringify(currentTheme);
+  }
+
+  // client_src/chat/index.ts
+  var state = {
     browser: null,
     chatOpen: false,
     currentMode: "ic",
@@ -8,6 +56,10 @@
     pendingActions: [],
     readyProbe: null
   };
+  loadUiTheme();
+  function pushTheme() {
+    executeChat(`window.chatApp && window.chatApp.setTheme(${getUiThemeJson()});`);
+  }
   function flushPending() {
     if (!state.browser || !state.isReady) {
       return;
@@ -63,15 +115,20 @@
     state.chatOpen = true;
     state.browser.active = true;
     mp.gui.cursor.show(true, true);
+    mp.events.call("client:chat:inputOpen", true);
     executeChat(`window.chatApp && window.chatApp.openInput(${JSON.stringify(state.currentMode)});`);
   }
   function closeChat() {
     if (!state.browser) {
       return;
     }
+    const wasOpen = state.chatOpen;
     state.chatOpen = false;
     state.browser.active = true;
-    mp.gui.cursor.show(false, false);
+    if (wasOpen) {
+      mp.gui.cursor.show(false, false);
+    }
+    mp.events.call("client:chat:inputOpen", false);
     executeChat("window.chatApp && window.chatApp.closeInput();");
   }
   mp.events.add("playerReady", () => {
@@ -84,7 +141,11 @@
     state.isReady = true;
     stopReadyProbe();
     flushPending();
+    pushTheme();
     executeChat(`window.chatApp && window.chatApp.setVisible(${JSON.stringify(state.isAuthenticated)});`);
+  });
+  mp.events.add("client:uiTheme:sync", () => {
+    pushTheme();
   });
   mp.events.add("client:chat:authState", (...args) => {
     const [stateValue] = args;

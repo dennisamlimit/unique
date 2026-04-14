@@ -1,7 +1,8 @@
 (() => {
-  const KEY_B = 66;
-  const SYNC_INTERVAL_MS = 100;
-  const pointing = {
+  // client_src/fingerpointing/index.ts
+  var KEY_B = 66;
+  var SYNC_INTERVAL_MS = 100;
+  var pointing = {
     active: false,
     lastSync: 0,
     gameplayCam: mp.cameras.new("gameplay")
