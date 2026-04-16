@@ -3,12 +3,8 @@ export type Account = {
   firstName: string;
   lastName: string;
   email: string;
+  phoneNumber: string | null;
   socialClubName: string | null;
-  socialClubId: string | null;
-  passwordHash: string;
-  passwordSalt: string;
-  characterCreated: boolean;
-  birthDate: string | null;
   origin: string | null;
   customizationJson: string | null;
   adminLevel: number;

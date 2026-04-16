@@ -1,4 +1,56 @@
 (() => {
+  // client_src/ui-theme.ts
+  var DEFAULT_UI_THEME = {
+    primary: "#D946EF",
+    secondary: "#A855F7",
+    chat: "#D946EF",
+    money: "#D946EF",
+    surface: "#0F0A17",
+    surfaceAlt: "#171020",
+    border: "#C084FC",
+    text: "#FFFFFF",
+    muted: "#A1A1AA",
+    danger: "#FB7185",
+    success: "#34D399",
+    warning: "#FBBF24"
+  };
+  function normalizeHex(value, fallback) {
+    const input = String(value ?? "").trim();
+    return /^#[0-9a-fA-F]{6}$/.test(input) ? input.toUpperCase() : fallback;
+  }
+  function normalizeUiTheme(raw) {
+    const source = raw && typeof raw === "object" ? raw : {};
+    return {
+      primary: normalizeHex(source.primary, DEFAULT_UI_THEME.primary),
+      secondary: normalizeHex(source.secondary, DEFAULT_UI_THEME.secondary),
+      chat: normalizeHex(source.chat, DEFAULT_UI_THEME.chat),
+      money: normalizeHex(source.money, DEFAULT_UI_THEME.money),
+      surface: normalizeHex(source.surface, DEFAULT_UI_THEME.surface),
+      surfaceAlt: normalizeHex(source.surfaceAlt, DEFAULT_UI_THEME.surfaceAlt),
+      border: normalizeHex(source.border, DEFAULT_UI_THEME.border),
+      text: normalizeHex(source.text, DEFAULT_UI_THEME.text),
+      muted: normalizeHex(source.muted, DEFAULT_UI_THEME.muted),
+      danger: normalizeHex(source.danger, DEFAULT_UI_THEME.danger),
+      success: normalizeHex(source.success, DEFAULT_UI_THEME.success),
+      warning: normalizeHex(source.warning, DEFAULT_UI_THEME.warning)
+    };
+  }
+  var currentTheme = DEFAULT_UI_THEME;
+  function loadUiTheme() {
+    var _a;
+    try {
+      const stored = (_a = mp.storage.data) == null ? void 0 : _a.uniqueUiTheme;
+      currentTheme = normalizeUiTheme(stored);
+    } catch {
+      currentTheme = DEFAULT_UI_THEME;
+    }
+    return currentTheme;
+  }
+  function getUiThemeJson() {
+    loadUiTheme();
+    return JSON.stringify(currentTheme);
+  }
+
   // client_src/hud/index.ts
   var state = {
     browser: null,
@@ -9,6 +61,10 @@
     tickInterval: null,
     speedoInterval: null
   };
+  loadUiTheme();
+  function pushTheme() {
+    executeHud(`window.hudApp && window.hudApp.setTheme(${getUiThemeJson()});`);
+  }
   function flushPending() {
     if (!state.browser || !state.isReady) {
       return;
@@ -199,6 +255,7 @@
   mp.events.add("playerReady", () => {
     createHudBrowser();
   });
+  createHudBrowser();
   mp.events.add("render", () => {
     hideNativeHudParts();
   });
@@ -209,6 +266,7 @@
     state.isReady = true;
     stopReadyProbe();
     flushPending();
+    pushTheme();
     executeHud(`window.hudApp && window.hudApp.setVisible(${JSON.stringify(state.isAuthenticated)});`);
     updateHud();
   });
@@ -239,6 +297,24 @@
   });
   mp.events.add("client:adminJail:hide", () => {
     executeHud("window.hudApp && window.hudApp.hideJail();");
+  });
+  mp.events.add("client:tickets:hudData", (...args) => {
+    const [payload] = args;
+    executeHud(`window.hudApp && window.hudApp.setAdminTickets(${JSON.stringify(payload || '{"visible":false,"openCount":0,"tickets":[]}')});`);
+  });
+  mp.events.add("client:tickets:playerHudData", (...args) => {
+    const [payload] = args;
+    executeHud(`window.hudApp && window.hudApp.setPlayerTicket(${JSON.stringify(payload || '{"visible":false,"ticket":null}')});`);
+  });
+  mp.events.add("client:tickets:mute", (...args) => {
+    const [payload] = args;
+    executeHud(`window.hudApp && window.hudApp.showTicketMute(${JSON.stringify(payload || "{}")});`);
+  });
+  mp.events.add("client:tickets:muteClear", () => {
+    executeHud("window.hudApp && window.hudApp.hideTicketMute();");
+  });
+  mp.events.add("client:uiTheme:sync", () => {
+    pushTheme();
   });
   mp.keys.bind(17, true, () => {
     if (!mp.gui.cursor.visible && mp.players.local.vehicle) {

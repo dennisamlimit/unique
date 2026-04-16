@@ -1,4 +1,56 @@
 (() => {
+  // client_src/ui-theme.ts
+  var DEFAULT_UI_THEME = {
+    primary: "#D946EF",
+    secondary: "#A855F7",
+    chat: "#D946EF",
+    money: "#D946EF",
+    surface: "#0F0A17",
+    surfaceAlt: "#171020",
+    border: "#C084FC",
+    text: "#FFFFFF",
+    muted: "#A1A1AA",
+    danger: "#FB7185",
+    success: "#34D399",
+    warning: "#FBBF24"
+  };
+  function normalizeHex(value, fallback) {
+    const input = String(value ?? "").trim();
+    return /^#[0-9a-fA-F]{6}$/.test(input) ? input.toUpperCase() : fallback;
+  }
+  function normalizeUiTheme(raw) {
+    const source = raw && typeof raw === "object" ? raw : {};
+    return {
+      primary: normalizeHex(source.primary, DEFAULT_UI_THEME.primary),
+      secondary: normalizeHex(source.secondary, DEFAULT_UI_THEME.secondary),
+      chat: normalizeHex(source.chat, DEFAULT_UI_THEME.chat),
+      money: normalizeHex(source.money, DEFAULT_UI_THEME.money),
+      surface: normalizeHex(source.surface, DEFAULT_UI_THEME.surface),
+      surfaceAlt: normalizeHex(source.surfaceAlt, DEFAULT_UI_THEME.surfaceAlt),
+      border: normalizeHex(source.border, DEFAULT_UI_THEME.border),
+      text: normalizeHex(source.text, DEFAULT_UI_THEME.text),
+      muted: normalizeHex(source.muted, DEFAULT_UI_THEME.muted),
+      danger: normalizeHex(source.danger, DEFAULT_UI_THEME.danger),
+      success: normalizeHex(source.success, DEFAULT_UI_THEME.success),
+      warning: normalizeHex(source.warning, DEFAULT_UI_THEME.warning)
+    };
+  }
+  var currentTheme = DEFAULT_UI_THEME;
+  function loadUiTheme() {
+    var _a;
+    try {
+      const stored = (_a = mp.storage.data) == null ? void 0 : _a.uniqueUiTheme;
+      currentTheme = normalizeUiTheme(stored);
+    } catch {
+      currentTheme = DEFAULT_UI_THEME;
+    }
+    return currentTheme;
+  }
+  function getUiThemeJson() {
+    loadUiTheme();
+    return JSON.stringify(currentTheme);
+  }
+
   // client_src/admin/index.ts
   var state = {
     browser: null,
@@ -7,6 +59,10 @@
     pendingActions: [],
     readyProbe: null
   };
+  loadUiTheme();
+  function pushTheme() {
+    executeAdmin(`window.adminApp && window.adminApp.setTheme(${getUiThemeJson()});`);
+  }
   var KEY_F3 = 114;
   function getAdminLevel() {
     try {
@@ -133,6 +189,7 @@
     if (level >= 5) {
       mp.events.callRemote("server:admin:requestLogs");
     }
+    mp.events.callRemote("server:admin:tickets:request");
   }
   function toggleAdminMenu() {
     if (state.isOpen) {
@@ -151,6 +208,10 @@
     state.isReady = true;
     stopReadyProbe();
     flushPending();
+    pushTheme();
+  });
+  mp.events.add("client:uiTheme:sync", () => {
+    pushTheme();
   });
   mp.keys.bind(KEY_F3, true, () => {
     toggleAdminMenu();
@@ -172,6 +233,18 @@
   });
   mp.events.add("client:admin:receiveLogs", (payload) => {
     executeAdmin(`window.adminApp && window.adminApp.setLogs(${JSON.stringify(payload)});`);
+  });
+  mp.events.add("client:admin:setTickets", (...args) => {
+    const [payload] = args;
+    executeAdmin(`window.adminApp && window.adminApp.setTickets(${JSON.stringify(payload || "[]")});`);
+  });
+  mp.events.add("client:admin:setTicketInsight", (...args) => {
+    const [payload] = args;
+    executeAdmin(`window.adminApp && window.adminApp.setTicketInsight(${JSON.stringify(payload || "{}")});`);
+  });
+  mp.events.add("client:admin:setTicketPlayerHistory", (...args) => {
+    const [payload] = args;
+    executeAdmin(`window.adminApp && window.adminApp.setTicketPlayerHistory(${JSON.stringify(payload || "{}")});`);
   });
   mp.events.add("cef:admin:createFaction", (...args) => {
     const [type, shortName, name, colorHex, mapIconId] = args;
@@ -202,5 +275,38 @@
   });
   mp.events.add("cef:admin:requestLogs", () => {
     mp.events.callRemote("server:admin:requestLogs");
+  });
+  mp.events.add("cef:admin:ticketClaim", (ticketId) => {
+    mp.events.callRemote("server:admin:tickets:claim", ticketId);
+  });
+  mp.events.add("cef:admin:ticketReply", (ticketId, message, force) => {
+    mp.events.callRemote("server:admin:tickets:reply", ticketId, message, force);
+  });
+  mp.events.add("cef:admin:ticketStatus", (ticketId, status) => {
+    mp.events.callRemote("server:admin:tickets:status", ticketId, status);
+  });
+  mp.events.add("cef:admin:ticketPriority", (ticketId, priority) => {
+    mp.events.callRemote("server:admin:tickets:priority", ticketId, priority);
+  });
+  mp.events.add("cef:admin:ticketAddParticipant", (ticketId, accountId) => {
+    mp.events.callRemote("server:admin:tickets:addParticipant", ticketId, accountId);
+  });
+  mp.events.add("cef:admin:ticketRequestAdvice", (ticketId) => {
+    mp.events.callRemote("server:admin:tickets:requestAdvice", ticketId);
+  });
+  mp.events.add("cef:admin:ticketGoto", (ticketId) => {
+    mp.events.callRemote("server:admin:tickets:goto", ticketId);
+  });
+  mp.events.add("cef:admin:ticketGetHere", (ticketId) => {
+    mp.events.callRemote("server:admin:tickets:gethere", ticketId);
+  });
+  mp.events.add("cef:admin:ticketCharacterInfo", (ticketId) => {
+    mp.events.callRemote("server:admin:tickets:characterInfo", ticketId);
+  });
+  mp.events.add("cef:admin:ticketWarnings", (ticketId) => {
+    mp.events.callRemote("server:admin:tickets:warnings", ticketId);
+  });
+  mp.events.add("cef:admin:ticketHistory", (accountId) => {
+    mp.events.callRemote("server:admin:tickets:history", accountId);
   });
 })();

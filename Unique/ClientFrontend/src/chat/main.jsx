@@ -1,19 +1,20 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { trigger } from "../lib/rage.js";
+import { THEME_CSS, getStoredUiTheme, normalizeUiTheme, persistUiTheme, getThemeVars } from "../lib/theme.js";
 
 const modes = ["ic", "ooc", "me", "do", "try"];
 const labels = { ic: "IC", ooc: "OOC", me: "ME", do: "DO", try: "TRY" };
 const maxMessages = 120;
 
 const typeStyles = {
-  ic: "text-zinc-100",
-  ooc: "text-violet-100",
-  me: "text-fuchsia-100",
-  do: "text-amber-100",
-  try: "text-emerald-100",
-  system: "text-violet-100",
-  admin: "text-rose-100"
+  ic: "theme-chat-text opacity-95",
+  ooc: "theme-chat-text opacity-90",
+  me: "theme-chat-text italic opacity-95",
+  do: "theme-chat-text opacity-95",
+  try: "theme-chat-text opacity-95",
+  system: "theme-chat-text font-black uppercase tracking-wider",
+  admin: "text-rose-400 font-black shadow-sm"
 };
 
 function ChatLine({ line, faded }) {
@@ -22,15 +23,18 @@ function ChatLine({ line, faded }) {
 
   return (
     <div className={`text-[clamp(12px,1.1vw,15px)] leading-[1.42] transition-opacity duration-500 ${faded ? "opacity-25" : "opacity-100"} ${typeStyles[type] || "text-zinc-100"}`}>
-      {type !== "ic" && <span className="mr-1 font-black text-fuchsia-200">[{type === "admin" ? "ADMIN" : tag}]</span>}
-      {type !== "system" && line.sender ? <span className="mr-1 font-bold text-white">{line.sender}:</span> : null}
-      <span className="break-words">{line.message}</span>
+      <span className="theme-chat-tag mr-1.5 font-black">[{tag}]</span>
+      {type !== "system" && line.sender ? <span className="mr-1.5 font-bold text-white">{line.sender}:</span> : null}
+      <span className="break-words font-medium">{line.message}</span>
     </div>
   );
 }
 
+let CACHED_THEME = getStoredUiTheme();
+
 function ChatApp() {
   const [visible, setVisible] = useState(false);
+  const [theme, setTheme] = useState(CACHED_THEME);
   const [open, setOpen] = useState(false);
   const [currentMode, setCurrentMode] = useState("ic");
   const [input, setInput] = useState("");
@@ -108,6 +112,16 @@ function ChatApp() {
       addMessage,
       openInput,
       closeInput,
+      setTheme: (raw) => {
+        try {
+          const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+          const normalized = normalizeUiTheme(parsed);
+          CACHED_THEME = normalized;
+          setTheme(normalized);
+        } catch {
+          setTheme(getStoredUiTheme());
+        }
+      },
       setVisible: (state) => {
         setVisible(!!state);
         if (!state) {
@@ -130,9 +144,11 @@ function ChatApp() {
 
   const hasMessages = messages.length > 0;
   const showPassiveBackground = open || (!faded && hasMessages);
+  const themeVars = getThemeVars(theme);
 
   return (
-    <main className="pointer-events-none fixed left-[clamp(10px,1.2vw,22px)] top-[clamp(8px,1.2vh,14px)] w-[min(560px,45vw)] text-white max-[760px]:left-2 max-[760px]:top-3 max-[760px]:w-[calc(100vw-16px)]">
+    <main className="unique-theme pointer-events-none fixed left-[clamp(10px,1.2vw,22px)] top-[clamp(8px,1.2vh,14px)] w-[min(560px,45vw)] text-white max-[760px]:left-2 max-[760px]:top-3 max-[760px]:w-[calc(100vw-16px)]" style={themeVars}>
+      <style>{THEME_CSS}</style>
       <section className="pointer-events-auto grid gap-2">
         <div
           ref={scrollRef}
@@ -151,7 +167,7 @@ function ChatApp() {
         </div>
 
         {open && (
-          <div className="grid gap-2 rounded-md border border-violet-200/[0.14] bg-zinc-950/[0.9] p-2 shadow-[0_12px_34px_rgba(0,0,0,0.5)]">
+          <div className="theme-popover grid gap-2 rounded-md p-2 shadow-[0_12px_34px_rgba(0,0,0,0.5)]">
             <div className="grid grid-cols-5 gap-1">
               {modes.map((mode) => (
                 <button
@@ -162,8 +178,8 @@ function ChatApp() {
                     trigger("cef:chat:setMode", mode);
                     inputRef.current?.focus();
                   }}
-                  className={`h-8 rounded text-xs font-black uppercase tracking-normal transition ${
-                    currentMode === mode ? "bg-fuchsia-400 text-white shadow-[0_0_18px_rgba(217,70,239,0.38)]" : "bg-white/[0.08] text-zinc-300 hover:bg-white/[0.14] hover:text-white"
+                  className={`theme-nav-tile h-8 rounded text-xs font-black uppercase tracking-normal transition ${
+                    currentMode === mode ? "theme-chat-soft theme-chat-text theme-chat-primary-border theme-chat-glow" : "bg-white/[0.08] text-zinc-300 hover:bg-white/[0.14] hover:text-white"
                   }`}
                 >
                   {labels[mode]}
@@ -217,7 +233,7 @@ function ChatApp() {
                   event.preventDefault();
                 }
               }}
-              className="h-10 rounded-md border border-violet-300/[0.18] bg-black/[0.64] px-3 text-[15px] font-semibold text-white outline-none placeholder:text-zinc-500 focus:border-fuchsia-300"
+              className="h-10 rounded-md theme-input bg-black/[0.64] px-3 text-[15px] font-semibold text-white outline-none placeholder:text-zinc-500 focus:theme-primary-border"
             />
           </div>
         )}

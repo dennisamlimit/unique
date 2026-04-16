@@ -1,0 +1,22 @@
+export type Character = {
+  characterId: number;
+  accountId: number;
+  firstName: string;
+  lastName: string;
+  cash: number;
+  bankCash: number;
+  adminLevel: number;
+  customizationJson: string | null;
+  phoneNumber: string | null;
+  posX: number;
+  posY: number;
+  posZ: number;
+  rotZ: number;
+  dimension: number;
+  health: number;
+  armor: number;
+  isBanned: boolean;
+  banReason: string | null;
+  banExpiresAt: string | null;
+  createdAt: string;
+};

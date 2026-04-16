@@ -31,9 +31,16 @@ function parseCustomizationJson(raw: string | null) {
   }
 }
 
+import { PhoneService } from "../phone/phone-service.js";
+
 export class AccountService {
   private readonly repository = new AccountRepository();
   private readonly spawns = new SpawnService();
+  private readonly phoneService?: PhoneService;
+
+  constructor(phoneService?: PhoneService) {
+      this.phoneService = phoneService;
+  }
 
   isValidName(input?: string | null) {
     return /^[A-Za-z-]{2,24}$/.test(input?.trim() ?? "");
@@ -90,6 +97,7 @@ export class AccountService {
       firstName: "Charakter",
       lastName: "Erstellen",
       email: dto.email.trim(),
+      phoneNumber: null,
       socialClubName: normalizeOptional(dto.socialClubName),
       socialClubId: normalizeOptional(dto.socialClubId),
       passwordHash: hashPassword(dto.password, salt),
@@ -118,130 +126,83 @@ export class AccountService {
   }
 
   verifyPassword(account: Account, password: string) {
-    const expected = Buffer.from(account.passwordHash, "hex");
-    const actual = Buffer.from(hashPassword(password, account.passwordSalt), "hex");
-    return expected.length === actual.length && timingSafeEqual(expected, actual);
+    const incomingHash = hashPassword(password, account.passwordSalt);
+    return timingSafeEqual(Buffer.from(incomingHash, "hex"), Buffer.from(account.passwordHash, "hex"));
   }
 
-  isSocialClubMatch(account: Account, socialClubId: string | null) {
-    if (!account.socialClubId) {
+  isSocialClubMatch(account: Account, socialClubId?: string | null) {
+    if (!account.socialClubId || !socialClubId) {
       return true;
     }
 
-    return account.socialClubId.toLowerCase() === (socialClubId?.trim().toLowerCase() ?? "");
+    return account.socialClubId === socialClubId;
   }
 
-  async bindSocialClub(account: Account, socialClubName: string | null, socialClubId: string) {
-    account.socialClubId = socialClubId.trim();
-    account.socialClubName = normalizeOptional(socialClubName);
-    return this.repository.save(account);
+  async bindSocialClub(account: Account, name?: string | null, socialClubId?: string | null) {
+    if (account.socialClubId || !socialClubId) {
+      return account;
+    }
+
+    return this.repository.updateSocialClub(account.accountId, normalizeOptional(name), socialClubId);
   }
 
-  async setAdminLevel(accountId: number, adminLevel: number) {
-    if (adminLevel < 0 || adminLevel > 10) {
-      return null;
-    }
-
-    const account = await this.repository.getById(accountId);
-    if (!account) {
-      return null;
-    }
-
-    account.adminLevel = adminLevel;
-    return this.repository.save(account);
-  }
-
-  async setCash(accountId: number, cash: number) {
-    const account = await this.repository.getById(accountId);
-    if (!account) {
-      return null;
-    }
-
-    account.cash = clampMoney(cash);
-    return this.repository.save(account);
-  }
-
-  async setBankCash(accountId: number, bankCash: number) {
-    const account = await this.repository.getById(accountId);
-    if (!account) {
-      return null;
-    }
-
-    account.bankCash = clampMoney(bankCash);
-    return this.repository.save(account);
-  }
-
-  async setBanState(
-    accountId: number,
-    isBanned: boolean,
-    reason?: string | null,
-    adminName?: string | null,
-    adminAccountId = 0,
-    expiresAtUtc?: Date | null
-  ) {
-    const account = await this.repository.getById(accountId);
-    if (!account) {
-      return null;
-    }
-
-    account.isBanned = isBanned;
-    account.banReason = isBanned ? normalizeOptional(reason) ?? "Kein Grund angegeben." : null;
-    account.banDate = isBanned ? new Date().toISOString() : null;
-    account.banExpiresAt = isBanned && expiresAtUtc ? expiresAtUtc.toISOString() : null;
-    account.banAdminName = isBanned ? normalizeOptional(adminName) : null;
-    account.banAdminAccountId = isBanned ? Math.max(0, Math.trunc(adminAccountId)) : 0;
-    return this.repository.save(account);
+  async setBanState(accountId: number, banned: boolean, reason: string | null, expiresAt?: string | null, adminName?: string | null, adminAccountId?: number | null) {
+    return this.repository.updateBanState(accountId, banned, reason, expiresAt, adminName, adminAccountId);
   }
 
   async completeCharacter(accountId: number, dto: CompleteCharacterDto) {
-    if (!this.isValidName(dto.firstName) || !this.isValidName(dto.lastName)) {
-      return null;
-    }
-
-    const account = await this.repository.getById(accountId);
-    if (!account) {
-      return null;
-    }
-
-    account.firstName = normalizeName(dto.firstName);
-    account.lastName = normalizeName(dto.lastName);
-    account.birthDate = normalizeOptional(dto.birthDate);
-    account.origin = normalizeOptional(dto.origin);
-    account.customizationJson = normalizeOptional(dto.customizationJson);
-    account.characterCreated = true;
-    return this.repository.save(account);
+    return this.repository.updateCharacter(accountId, {
+      firstName: normalizeName(dto.firstName),
+      lastName: normalizeName(dto.lastName),
+      characterCreated: true,
+      birthDate: dto.birthDate,
+      origin: dto.origin,
+      customizationJson: dto.customizationJson
+    });
   }
 
-  async savePlayerState(accountId: number, dto: SavePlayerStateDto) {
-    const account = await this.repository.getById(accountId);
-    if (!account) {
-      return null;
-    }
-
-    account.posX = dto.posX;
-    account.posY = dto.posY;
-    account.posZ = dto.posZ;
-    account.rotZ = dto.rotZ;
-    account.dimension = dto.dimension;
-    account.health = clamp(dto.health, 0, 100);
-    account.armor = clamp(dto.armor, 0, 100);
-    account.cash = clampMoney(dto.cash);
-    account.bankCash = clampMoney(dto.bankCash);
-    return this.repository.save(account);
+  async getByName(firstName: string, lastName: string) {
+    return this.repository.getByName(firstName, lastName);
   }
 
-  async setClothing(accountId: number, clothing: number[][]) {
-    const account = await this.repository.getById(accountId);
-    if (!account) {
-      return null;
-    }
-
-    const customization = parseCustomizationJson(account.customizationJson);
-    account.customizationJson = JSON.stringify({
-      ...customization,
-      clothing
+  async savePlayerState(accountId: number, state: SavePlayerStateDto) {
+    const customizationJson = normalizeOptional(state.customizationJson);
+    const result = await this.repository.updateState(accountId, {
+      cash: clampMoney(state.cash),
+      bankCash: clampMoney(state.bankCash),
+      health: clamp(state.health ?? 100, 0, 100),
+      armor: clamp(state.armor ?? 0, 0, 100),
+      dimension: state.dimension,
+      posX: state.posX,
+      posY: state.posY,
+      posZ: state.posZ,
+      rotZ: state.rotZ,
+      customizationJson: state.customizationJson
     });
 
-    return this.repository.save(account);
+    // --- NOTIFICATION INTEGRATION ---
+    if (this.phoneService && state.bankCash !== undefined) {
+      const player = (mp.players as any).toArray().find((p: any) => Number(p.getVariable("ACCOUNT_ID")) === accountId);
+      if (player) {
+          const oldBank = Number(player.getVariable("BANK_CASH") ?? 0);
+          if (state.bankCash !== oldBank) {
+              const diff = state.bankCash - oldBank;
+              this.phoneService.sendNotification(player, {
+                  title: "Bank-Benachrichtigung",
+                  content: `${diff > 0 ? '+' : ''}${diff}$ Gutschrift/Abbuchung. Neuer Kontostand: ${state.bankCash}$`,
+                  icon: "fas fa-university",
+                  app: "Wallet"
+              });
+          }
+      }
+    }
+    // --- END NOTIFICATION INTEGRATION ---
+
+    return result;
+  }
+
+  // Alias für Rückwärtskompatibilität während des Build-Übergangs
+  async updateState(accountId: number, state: SavePlayerStateDto) {
+    return this.savePlayerState(accountId, state);
   }
 }

@@ -204928,6 +204928,69 @@
     }
   };
 
+  // client_src/ui-theme.ts
+  var DEFAULT_UI_THEME = {
+    primary: "#D946EF",
+    secondary: "#A855F7",
+    chat: "#D946EF",
+    money: "#D946EF",
+    surface: "#0F0A17",
+    surfaceAlt: "#171020",
+    border: "#C084FC",
+    text: "#FFFFFF",
+    muted: "#A1A1AA",
+    danger: "#FB7185",
+    success: "#34D399",
+    warning: "#FBBF24"
+  };
+  function normalizeHex(value, fallback) {
+    const input = String(value ?? "").trim();
+    return /^#[0-9a-fA-F]{6}$/.test(input) ? input.toUpperCase() : fallback;
+  }
+  function hexToRgb(value, fallback = "#FFFFFF") {
+    const normalized = normalizeHex(value, fallback).slice(1);
+    return {
+      r: Number.parseInt(normalized.slice(0, 2), 16),
+      g: Number.parseInt(normalized.slice(2, 4), 16),
+      b: Number.parseInt(normalized.slice(4, 6), 16)
+    };
+  }
+  function normalizeUiTheme(raw) {
+    const source = raw && typeof raw === "object" ? raw : {};
+    return {
+      primary: normalizeHex(source.primary, DEFAULT_UI_THEME.primary),
+      secondary: normalizeHex(source.secondary, DEFAULT_UI_THEME.secondary),
+      chat: normalizeHex(source.chat, DEFAULT_UI_THEME.chat),
+      money: normalizeHex(source.money, DEFAULT_UI_THEME.money),
+      surface: normalizeHex(source.surface, DEFAULT_UI_THEME.surface),
+      surfaceAlt: normalizeHex(source.surfaceAlt, DEFAULT_UI_THEME.surfaceAlt),
+      border: normalizeHex(source.border, DEFAULT_UI_THEME.border),
+      text: normalizeHex(source.text, DEFAULT_UI_THEME.text),
+      muted: normalizeHex(source.muted, DEFAULT_UI_THEME.muted),
+      danger: normalizeHex(source.danger, DEFAULT_UI_THEME.danger),
+      success: normalizeHex(source.success, DEFAULT_UI_THEME.success),
+      warning: normalizeHex(source.warning, DEFAULT_UI_THEME.warning)
+    };
+  }
+  var currentTheme = DEFAULT_UI_THEME;
+  function loadUiTheme() {
+    var _a;
+    try {
+      const stored = (_a = mp.storage.data) == null ? void 0 : _a.uniqueUiTheme;
+      currentTheme = normalizeUiTheme(stored);
+    } catch {
+      currentTheme = DEFAULT_UI_THEME;
+    }
+    return currentTheme;
+  }
+  function getUiTheme() {
+    return currentTheme;
+  }
+  function getUiThemeJson() {
+    loadUiTheme();
+    return JSON.stringify(currentTheme);
+  }
+
   // client_src/interaction/index.ts
   var state = {
     browser: null,
@@ -204958,8 +205021,9 @@
   var WARDROBE_RANGE = 3.75;
   var MARKER_DRAW_DISTANCE = 35;
   var SCAN_INTERVAL_MS = 100;
-  var OUTLINE_COLOR = [85, 20, 128, 190];
-  var WARDROBE_COLOR = [59, 130, 246, 220];
+  loadUiTheme();
+  var OUTLINE_COLOR = [217, 70, 239, 190];
+  var WARDROBE_COLOR = [168, 85, 247, 220];
   function ensureWardrobeBrowser() {
     if (state.wardrobeBrowser) return;
     state.wardrobeBrowser = mp.browsers.new("package://wardrobe/wardrobe.html");
@@ -205060,16 +205124,35 @@
       drawVehicleHint(state.targetVehicle);
     }
   }
-  var OUTLINE_OVERLAY_PARAMS = {
-    enableDepth: false,
-    deleteWhenUnused: false,
-    keepNonBlurred: true,
-    processAttachments: false,
-    fill: { enable: false, color: 4294967295 },
-    noise: { enable: false, size: 0, speed: 0, intensity: 0 },
-    outline: { enable: true, color: 2855996255, width: 2, blurRadius: 0.3, blurIntensity: 0.45 },
-    wireframe: { enable: false }
-  };
+  function toOverlayColorHex(r, g, b, a) {
+    return (a & 255) << 24 | (b & 255) << 16 | (g & 255) << 8 | r & 255;
+  }
+  function getOutlineOverlayParams() {
+    return {
+      enableDepth: false,
+      deleteWhenUnused: false,
+      keepNonBlurred: true,
+      processAttachments: false,
+      fill: { enable: false, color: 4294967295 },
+      noise: { enable: false, size: 0, speed: 0, intensity: 0 },
+      outline: { enable: true, color: toOverlayColorHex(OUTLINE_COLOR[0], OUTLINE_COLOR[1], OUTLINE_COLOR[2], 170), width: 2, blurRadius: 0.3, blurIntensity: 0.45 },
+      wireframe: { enable: false }
+    };
+  }
+  function pushInteractionTheme() {
+    const theme = getUiTheme();
+    const primary = hexToRgb(theme.primary, theme.primary);
+    const secondary = hexToRgb(theme.secondary, theme.secondary);
+    OUTLINE_COLOR = [primary.r, primary.g, primary.b, 190];
+    WARDROBE_COLOR = [secondary.r, secondary.g, secondary.b, 220];
+    if (state.overlayBatch) {
+      try {
+        state.overlayBatch.update(getOutlineOverlayParams());
+      } catch (error) {
+      }
+    }
+    executeInteraction(`window.interactionApp && window.interactionApp.setTheme(${getUiThemeJson()});`);
+  }
   var VEHICLE_ACTIONS = [
     { id: "lock", label: "Abschliessen", hint: "Bald verfuegbar" },
     { id: "trunk", label: "Kofferraum", hint: "Bald verfuegbar" },
@@ -205270,7 +205353,7 @@
     if (state.overlayBatch) {
       try {
         if (typeof state.overlayBatch.update === "function") {
-          state.overlayBatch.update(OUTLINE_OVERLAY_PARAMS);
+          state.overlayBatch.update(getOutlineOverlayParams());
         }
       } catch (error) {
       }
@@ -205279,7 +205362,7 @@
     try {
       if (mp.game.graphics && typeof mp.game.graphics.setEntityOverlayPassEnabled === "function" && typeof mp.game.graphics.createEntityOverlayBatch === "function") {
         mp.game.graphics.setEntityOverlayPassEnabled(true);
-        state.overlayBatch = mp.game.graphics.createEntityOverlayBatch(OUTLINE_OVERLAY_PARAMS);
+        state.overlayBatch = mp.game.graphics.createEntityOverlayBatch(getOutlineOverlayParams());
         state.overlaySupported = !!state.overlayBatch;
         return state.overlayBatch;
       }
@@ -205463,6 +205546,10 @@
   mp.events.add("cef:interaction:ready", () => {
     state.isReady = true;
     flushPending();
+    pushInteractionTheme();
+  });
+  mp.events.add("client:uiTheme:sync", () => {
+    pushInteractionTheme();
   });
   mp.events.add("cef:interaction:close", () => {
     closeMenu();
@@ -205509,12 +205596,11 @@
     state.wardrobeCatalogJson = dataJson;
     executeWardrobe(`window.wardrobeApp && window.wardrobeApp.setCatalog(${dataJson});`);
   });
-  mp.events.add("client:wardrobe:applyCustomization", (player, customJson) => {
-    if (player !== mp.players.local) return;
+  mp.events.add("client:wardrobe:applyCustomization", (customJson) => {
     mp.events.call("client:creator:apply", customJson);
   });
-  mp.events.add("client:wardrobe:applyItem", async (player, componentId, drawableId, textureId) => {
-    if (player !== mp.players.local) return;
+  mp.events.add("client:wardrobe:applyItem", (componentId, drawableId, textureId) => {
+    const player = mp.players.local;
     player.setComponentVariation(componentId, drawableId, textureId, 0);
     if (componentId === 11) {
       const isMale = player.model === mp.game.joaat("mp_m_freemode_01");
@@ -205603,5 +205689,119 @@
     applyPreviewOutfit(clothing);
     setCommittedWardrobeAppearanceFromPlayer();
     state.wardrobePreviewActive = false;
+  });
+  function cycleDrawable(componentId, direction) {
+    const player = mp.players.local;
+    const current = Number(player.getDrawableVariation(componentId) ?? 0);
+    if (direction > 0) {
+      player.setComponentVariation(componentId, current + 1, 0, 0);
+      const next = Number(player.getDrawableVariation(componentId) ?? 0);
+      if (next === current) {
+        player.setComponentVariation(componentId, 0, 0, 0);
+        return 0;
+      }
+      return next;
+    } else {
+      if (current <= 0) {
+        player.setComponentVariation(componentId, 9999, 0, 0);
+        return Number(player.getDrawableVariation(componentId) ?? 0);
+      }
+      player.setComponentVariation(componentId, current - 1, 0, 0);
+      return current - 1;
+    }
+  }
+  function cycleTexture(componentId, direction) {
+    const player = mp.players.local;
+    const drawable = Number(player.getDrawableVariation(componentId) ?? 0);
+    const current = Number(player.getTextureVariation(componentId) ?? 0);
+    if (direction > 0) {
+      player.setComponentVariation(componentId, drawable, current + 1, 0);
+      const next = Number(player.getTextureVariation(componentId) ?? 0);
+      if (next === current) {
+        player.setComponentVariation(componentId, drawable, 0, 0);
+        return 0;
+      }
+      return next;
+    } else {
+      if (current <= 0) {
+        player.setComponentVariation(componentId, drawable, 9999, 0);
+        return Number(player.getTextureVariation(componentId) ?? 0);
+      }
+      player.setComponentVariation(componentId, drawable, current - 1, 0);
+      return current - 1;
+    }
+  }
+  mp.events.add("cef:myOutfit:initComponent", (...args) => {
+    const [rawComponentId] = args;
+    const componentId = Number(rawComponentId);
+    if (!Number.isInteger(componentId)) return;
+    const player = mp.players.local;
+    const drawable = Number(player.getDrawableVariation(componentId) ?? 0);
+    const texture = Number(player.getTextureVariation(componentId) ?? 0);
+    executeWardrobe(`window.wardrobeApp && window.wardrobeApp.updateComponentState(${componentId}, ${drawable}, ${texture});`);
+  });
+  mp.events.add("cef:myOutfit:cycleDrawable", (...args) => {
+    const [rawComponentId, rawDirection] = args;
+    const componentId = Number(rawComponentId);
+    const direction = Number(rawDirection);
+    if (!Number.isInteger(componentId) || !Number.isFinite(direction)) return;
+    const drawable = cycleDrawable(componentId, direction);
+    state.wardrobePreviewActive = true;
+    if (componentId === 11) {
+      const player = mp.players.local;
+      const isMale = player.model === mp.game.joaat("mp_m_freemode_01");
+      const sex = isMale ? 1 : 2;
+      const bestTorso = Number(ClothingLib.getBestTorso(sex, drawable));
+      if (Number.isInteger(bestTorso) && bestTorso !== -1) {
+        player.setComponentVariation(3, bestTorso, 0, 0);
+      }
+    }
+    executeWardrobe(`window.wardrobeApp && window.wardrobeApp.updateComponentState(${componentId}, ${drawable}, 0);`);
+  });
+  mp.events.add("cef:myOutfit:cycleTexture", (...args) => {
+    const [rawComponentId, rawDirection] = args;
+    const componentId = Number(rawComponentId);
+    const direction = Number(rawDirection);
+    if (!Number.isInteger(componentId) || !Number.isFinite(direction)) return;
+    const player = mp.players.local;
+    const drawable = Number(player.getDrawableVariation(componentId) ?? 0);
+    const texture = cycleTexture(componentId, direction);
+    state.wardrobePreviewActive = true;
+    executeWardrobe(`window.wardrobeApp && window.wardrobeApp.updateComponentState(${componentId}, ${drawable}, ${texture});`);
+  });
+  mp.events.add("cef:myOutfit:save", (...args) => {
+    const [rawName] = args;
+    const name = String(rawName ?? "").trim();
+    if (!name) return;
+    const player = mp.players.local;
+    const clothing = [
+      [Number(player.getDrawableVariation(11) ?? 0), Number(player.getTextureVariation(11) ?? 0)],
+      [Number(player.getDrawableVariation(8) ?? 0), Number(player.getTextureVariation(8) ?? 0)],
+      [Number(player.getDrawableVariation(4) ?? 0), Number(player.getTextureVariation(4) ?? 0)],
+      [Number(player.getDrawableVariation(6) ?? 0), Number(player.getTextureVariation(6) ?? 0)]
+    ];
+    setCommittedWardrobeAppearanceFromPlayer();
+    state.wardrobePreviewActive = false;
+    mp.events.callRemote("server:myOutfit:save", name, JSON.stringify(clothing));
+  });
+  mp.events.add("cef:myOutfit:delete", (...args) => {
+    const [rawOutfitId] = args;
+    const outfitId = Number(rawOutfitId);
+    if (!Number.isInteger(outfitId) || outfitId <= 0) return;
+    mp.events.callRemote("server:myOutfit:delete", outfitId);
+  });
+  mp.events.add("cef:myOutfit:apply", (...args) => {
+    const [rawOutfitId] = args;
+    const outfitId = Number(rawOutfitId);
+    if (!Number.isInteger(outfitId) || outfitId <= 0) return;
+    restoreWardrobePreview();
+    mp.events.callRemote("server:myOutfit:apply", outfitId);
+  });
+  mp.events.add("cef:myOutfit:requestList", () => {
+    mp.events.callRemote("server:myOutfit:requestList");
+  });
+  mp.events.add("client:myOutfit:setList", (...args) => {
+    const [outfitsJson] = args;
+    executeWardrobe(`window.wardrobeApp && window.wardrobeApp.setMyOutfits(${outfitsJson});`);
   });
 })();

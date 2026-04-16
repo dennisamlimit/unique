@@ -1,10 +1,12 @@
 /// <reference path="../ragemp-client.d.ts" />
+import { getUiThemeJson, loadUiTheme, saveUiTheme } from "../ui-theme";
 
 interface UsermenuState {
   browser: Mp.Browser | null;
   isReady: boolean;
   isOpen: boolean;
   chatInputOpen: boolean;
+  cefInputFocused: boolean;
   pendingActions: string[];
   readyProbe: ReturnType<typeof setInterval> | null;
 }
@@ -14,11 +16,17 @@ const state: UsermenuState = {
   isReady: false,
   isOpen: false,
   chatInputOpen: false,
+  cefInputFocused: false,
   pendingActions: [],
   readyProbe: null
 };
 
 const KEY_M = 0x4D;
+loadUiTheme();
+
+function pushTheme() {
+  executeMenu(`window.usermenuApp && window.usermenuApp.setTheme(${getUiThemeJson()});`);
+}
 
 function flushPending() {
   if (!state.browser || !state.isReady) return;
@@ -87,6 +95,7 @@ function openMenu() {
   mp.events.call("client:chat:authState", false);
   mp.events.call("client:hud:authState", false);
   mp.events.callRemote("server:usermenu:open");
+  pushTheme();
 }
 
 mp.events.add("playerReady", () => {
@@ -97,6 +106,7 @@ mp.events.add("cef:usermenu:ready", () => {
   state.isReady = true;
   stopReadyProbe();
   flushPending();
+  pushTheme();
 });
 
 mp.events.add("client:chat:inputOpen", (...args: unknown[]) => {
@@ -111,7 +121,8 @@ mp.events.add("client:usermenu:open", (...args: unknown[]) => {
   mp.gui.cursor.show(true, true);
   mp.events.call("client:chat:authState", false);
   mp.events.call("client:hud:authState", false);
-  executeMenu(`window.usermenuApp && window.usermenuApp.open(${JSON.stringify(payload || "{}")});`);
+  executeMenu(`window.usermenuApp && window.usermenuApp.open(${payload || "{}"});`);
+  pushTheme();
 });
 
 mp.events.add("cef:usermenu:close", () => {
@@ -120,14 +131,53 @@ mp.events.add("cef:usermenu:close", () => {
 
 mp.events.add("cef:usermenu:openOrga", () => {
   closeMenu();
-  // Kurze Verzögerung damit das Usermenu sauber schliesst
+  // Kurze Verz├Âgerung damit das Usermenu sauber schliesst
   setTimeout(() => {
     mp.events.call("client:orga:requestOpen");
   }, 80);
 });
 
+mp.events.add("client:usermenu:setTickets", (...args: unknown[]) => {
+  const [payload] = args as [string];
+  executeMenu(`window.usermenuApp && window.usermenuApp.setTickets(${JSON.stringify(payload || "{\"allowedPrefixes\":[],\"tickets\":[]}")});`);
+});
+
+mp.events.add("cef:usermenu:requestTickets", () => {
+  mp.events.callRemote("server:tickets:requestMine");
+});
+
+mp.events.add("cef:usermenu:createTicket", (...args: unknown[]) => {
+  const [prefix, subject, message] = args;
+  mp.events.callRemote("server:tickets:create", prefix, subject, message);
+});
+
+mp.events.add("cef:usermenu:replyTicket", (...args: unknown[]) => {
+  const [ticketId, message] = args;
+  mp.events.callRemote("server:tickets:reply", ticketId, message);
+});
+
+mp.events.add("cef:usermenu:inputFocus", (...args: unknown[]) => {
+  state.cefInputFocused = !!args[0];
+});
+
+mp.events.add("cef:usermenu:updateTheme", (...args: unknown[]) => {
+  const [payload] = args as [string];
+  let parsed: unknown = {};
+  try {
+    parsed = JSON.parse(String(payload || "{}"));
+  } catch {
+    parsed = {};
+  }
+  saveUiTheme(parsed);
+  mp.events.call("client:uiTheme:sync");
+});
+
+mp.events.add("client:uiTheme:sync", () => {
+  pushTheme();
+});
+
 mp.keys.bind(KEY_M, true, () => {
-  if (state.chatInputOpen) return;
+  if (state.chatInputOpen || state.cefInputFocused) return;
   if (mp.gui.cursor.visible && !state.isOpen) return;
   if (state.isOpen) {
     closeMenu();

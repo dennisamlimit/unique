@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { logoSrc } from "../lib/brand.js";
 import { trigger } from "../lib/rage.js";
+import { THEME_CSS, getStoredUiTheme, getThemeVars, normalizeUiTheme, persistUiTheme } from "../lib/theme.js";
 
 function formatMoney(value) {
   return `$${Number(value || 0).toLocaleString("en-US")}`;
@@ -25,6 +26,29 @@ function formatCountdown(seconds) {
   return `${minutes}:${String(rest).padStart(2, "0")}`;
 }
 
+function parseOverlayPayload(raw) {
+  if (!raw) return {};
+  if (typeof raw === "string") {
+    try {
+      return JSON.parse(raw);
+    } catch (error) {
+      return {};
+    }
+  }
+  return raw;
+}
+
+function ticketLabel(status) {
+  const labels = {
+    open: "Offen",
+    claimed: "Geclaimt",
+    waiting_player: "Wartet auf dich",
+    waiting_admin: "Wartet auf Admin",
+    closed: "Geschlossen"
+  };
+  return labels[status] || status || "Offen";
+}
+
 function useClock(active) {
   const [now, setNow] = useState(new Date());
 
@@ -45,7 +69,7 @@ function useClock(active) {
 }
 
 function Icon({ children, className = "" }) {
-  return <span className={`grid h-7 w-7 place-items-center rounded text-fuchsia-100 ${className}`}>{children}</span>;
+  return <span className={`grid h-7 w-7 place-items-center rounded theme-primary-text ${className}`}>{children}</span>;
 }
 
 function WalletIcon() {
@@ -117,15 +141,15 @@ function Speedometer({ data }) {
     <div className="absolute bottom-[4vh] right-[clamp(180px,10vw,240px)] flex flex-col items-center select-none">
       <div className="relative h-48 w-48">
         {/* Glow backdrop */}
-        <div className="absolute inset-0 bg-cyan-500/5 blur-[40px] rounded-full" />
+        <div className="absolute inset-0 rounded-full blur-[40px]" style={{ backgroundColor: "rgb(var(--ui-primary-rgb) / 0.08)" }} />
         
         <svg viewBox="0 0 100 100" className="h-full w-full -rotate-90 drop-shadow-[0_0_12px_rgba(0,0,0,0.4)]">
           {/* Background Arcs (Minimal) */}
           <path d={describeArc(50, 50, 44, -120, 120)} fill="none" stroke="white" strokeWidth="0.5" strokeOpacity="0.05" />
           
-          {/* Fuel Arc (Left) - Cyan Glow */}
-          <path d={describeArc(50, 50, 44, -120, -120 + (fuelPercent * 1.1))} fill="none" stroke="#22d3ee" strokeWidth="2.5" strokeLinecap="round" className="transition-all duration-500" strokeOpacity="0.8" />
-          <path d={describeArc(50, 50, 44, -120, -120 + (fuelPercent * 1.1))} fill="none" stroke="#22d3ee" strokeWidth="4" strokeLinecap="round" className="transition-all duration-500 blur-[2px]" strokeOpacity="0.2" />
+          {/* Fuel Arc */}
+          <path d={describeArc(50, 50, 44, -120, -120 + (fuelPercent * 1.1))} fill="none" stroke="var(--ui-primary)" strokeWidth="2.5" strokeLinecap="round" className="transition-all duration-500" strokeOpacity="0.82" />
+          <path d={describeArc(50, 50, 44, -120, -120 + (fuelPercent * 1.1))} fill="none" stroke="var(--ui-primary)" strokeWidth="4" strokeLinecap="round" className="transition-all duration-500 blur-[2px]" strokeOpacity="0.22" />
           
           {/* Health Arc (Right) - Amber Glow */}
           <path d={describeArc(50, 50, 44, 120 - (safeHealthPercent * 1.1), 120)} fill="none" stroke="#fbbf24" strokeWidth="2.5" strokeLinecap="round" className="transition-all duration-500" strokeOpacity="0.8" />
@@ -144,7 +168,7 @@ function Speedometer({ data }) {
       {/* Elegant Floating Icons (No backdrop-blur to avoid CEF black box artifacts) */}
       <div className="flex items-center gap-7 mt-[-15px] px-6 py-3 rounded-2xl bg-zinc-900/40 border border-white/5 shadow-lg">
         {/* Lights */}
-        <div className={`transition-all duration-300 ${headlightsOn ? "text-blue-400 drop-shadow-[0_0_8px_rgba(96,165,250,0.6)] scale-110" : "text-white/10"}`}>
+        <div className={`transition-all duration-300 ${headlightsOn ? "theme-primary-text scale-110" : "text-white/10"}`} style={headlightsOn ? { filter: "drop-shadow(0 0 8px rgb(var(--ui-primary-rgb) / 0.55))" } : undefined}>
           <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
             <path d="M12 18V6l-7 6 7 6zM15 8h4M16 12h4M15 16h4" />
           </svg>
@@ -246,16 +270,23 @@ function Notification({ id, type, title, message, onRemove }) {
   );
 }
 
+let CACHED_THEME = getStoredUiTheme();
+
 function HudApp() {
   const [visible, setVisible] = useState(false);
+  const [theme, setTheme] = useState(CACHED_THEME);
   const [location, setLocation] = useState({ zone: "San Andreas", street: "Unbekannt", crossing: "", direction: "N" });
   const [stats, setStats] = useState({ id: 1, online: 1, cash: 0, bank: 0 });
+  const [adminTickets, setAdminTickets] = useState({ visible: false, openCount: 0, overflowCount: 0, tickets: [] });
+  const [playerTicket, setPlayerTicket] = useState({ visible: false, ticket: null });
+  const [ticketMute, setTicketMute] = useState({ active: false, admin: "", reason: "", expiresAt: "", remaining: 0 });
   const [moneyDeltas, setMoneyDeltas] = useState([]);
   const [jail, setJail] = useState({ active: false, notice: false, admin: "", reason: "", releaseAt: "", remaining: 0 });
   const [vehicleStats, setVehicleStats] = useState(null);
   const [notifications, setNotifications] = useState([]);
   const previousMoneyRef = useRef(null);
   const jailNoticeTimer = useRef(null);
+  const ticketMuteTimer = useRef(null);
   const clock = useClock(visible);
 
   const updateLocation = useCallback((zone, street, crossing, direction) => {
@@ -312,7 +343,8 @@ function HudApp() {
   }, []);
 
   const showJail = useCallback((data) => {
-    const releaseAt = data?.releaseAt || "";
+    const parsed = parseOverlayPayload(data);
+    const releaseAt = parsed?.releaseAt || "";
     const releaseTime = new Date(releaseAt).getTime();
     const remaining = Number.isNaN(releaseTime) ? 0 : Math.max(0, Math.ceil((releaseTime - Date.now()) / 1000));
 
@@ -323,8 +355,8 @@ function HudApp() {
     setJail({
       active: true,
       notice: true,
-      admin: data?.admin || "Unbekannt",
-      reason: data?.reason || "Kein Grund angegeben.",
+      admin: parsed?.admin || "Unbekannt",
+      reason: parsed?.reason || "Kein Grund angegeben.",
       releaseAt,
       remaining
     });
@@ -344,6 +376,38 @@ function HudApp() {
     setJail({ active: false, notice: false, admin: "", reason: "", releaseAt: "", remaining: 0 });
   }, []);
 
+  const showTicketMute = useCallback((data) => {
+    const parsed = parseOverlayPayload(data);
+    const expiresAt = parsed?.expiresAt || "";
+    const releaseTime = new Date(expiresAt).getTime();
+    const remaining = Number.isNaN(releaseTime) ? 0 : Math.max(0, Math.ceil((releaseTime - Date.now()) / 1000));
+
+    if (ticketMuteTimer.current) {
+      clearTimeout(ticketMuteTimer.current);
+    }
+
+    setTicketMute({
+      active: true,
+      admin: parsed?.admin || "Support-Team",
+      reason: parsed?.reason || "Kein Grund angegeben.",
+      expiresAt,
+      remaining
+    });
+
+    ticketMuteTimer.current = setTimeout(() => {
+      setTicketMute((current) => ({ ...current, active: false }));
+      ticketMuteTimer.current = null;
+    }, 4500);
+  }, []);
+
+  const hideTicketMute = useCallback(() => {
+    if (ticketMuteTimer.current) {
+      clearTimeout(ticketMuteTimer.current);
+      ticketMuteTimer.current = null;
+    }
+    setTicketMute({ active: false, admin: "", reason: "", expiresAt: "", remaining: 0 });
+  }, []);
+
   useEffect(() => {
     if (!jail.active || !jail.releaseAt) {
       return undefined;
@@ -359,14 +423,72 @@ function HudApp() {
   }, [jail.active, jail.releaseAt]);
 
   useEffect(() => {
+    if (!ticketMute.active || !ticketMute.expiresAt) {
+      return undefined;
+    }
+
+    const timer = setInterval(() => {
+      const releaseTime = new Date(ticketMute.expiresAt).getTime();
+      const remaining = Number.isNaN(releaseTime) ? 0 : Math.max(0, Math.ceil((releaseTime - Date.now()) / 1000));
+      setTicketMute((current) => ({ ...current, remaining }));
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [ticketMute.active, ticketMute.expiresAt]);
+
+  useEffect(() => {
     window.hudApp = {
       setVisible: (state) => setVisible(!!state),
+      setTheme: (raw) => {
+        try {
+          const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+          const normalized = normalizeUiTheme(parsed);
+          CACHED_THEME = normalized;
+          setTheme(normalized);
+        } catch {
+          // ignore
+        }
+      },
       updateLocation,
       updateStats,
       showJail,
       hideJail,
+      showTicketMute,
+      hideTicketMute,
       addNotification,
-      updateSpeedometer: (data) => setVehicleStats(data)
+      updateSpeedometer: (data) => setVehicleStats(data),
+      setAdminTickets: (rawPayload) => {
+        let parsed = rawPayload;
+        if (typeof rawPayload === "string") {
+          try {
+            parsed = JSON.parse(rawPayload);
+          } catch (error) {
+            parsed = { visible: false, openCount: 0, overflowCount: 0, tickets: [] };
+          }
+        }
+
+        setAdminTickets({
+          visible: !!parsed?.visible,
+          openCount: Number(parsed?.openCount || 0),
+          overflowCount: Number(parsed?.overflowCount || 0),
+          tickets: Array.isArray(parsed?.tickets) ? parsed.tickets : []
+        });
+      },
+      setPlayerTicket: (rawPayload) => {
+        let parsed = rawPayload;
+        if (typeof rawPayload === "string") {
+          try {
+            parsed = JSON.parse(rawPayload);
+          } catch (error) {
+            parsed = { visible: false, ticket: null };
+          }
+        }
+
+        setPlayerTicket({
+          visible: !!parsed?.visible,
+          ticket: parsed?.ticket || null
+        });
+      }
     };
 
     trigger("cef:hud:ready");
@@ -374,7 +496,7 @@ function HudApp() {
     return () => {
       delete window.hudApp;
     };
-  }, [hideJail, showJail, updateLocation, updateStats, addNotification]);
+  }, [hideJail, showJail, showTicketMute, hideTicketMute, updateLocation, updateStats, addNotification]);
 
   if (!visible) {
     return null;
@@ -382,10 +504,12 @@ function HudApp() {
 
   const cashDeltas = moneyDeltas.filter((delta) => delta.type === "cash");
   const bankDeltas = moneyDeltas.filter((delta) => delta.type === "bank");
+  const themeVars = getThemeVars(theme);
 
   return (
-    <main className="fixed inset-0 pointer-events-none text-white">
+    <main className="unique-theme fixed inset-0 pointer-events-none text-white" style={themeVars}>
       <style>{`
+        ${THEME_CSS}
         @keyframes uniqueMoneyDelta {
           0% { opacity: 0; transform: translateY(-4px) scale(0.96); }
           16% { opacity: 1; transform: translateY(0) scale(1); }
@@ -410,6 +534,92 @@ function HudApp() {
           <Notification key={n.id} {...n} onRemove={removeNotification} />
         ))}
       </div>
+
+      {adminTickets.visible && (
+        <>
+          <section className="absolute left-[clamp(16px,2vw,28px)] top-[clamp(270px,33vh,360px)] z-[20] grid w-[350px] gap-2">
+            {adminTickets.tickets.map((ticket) => (
+              <article key={ticket.ticketId} className="rounded-xl border border-white/10 bg-black/60 px-4 py-3 shadow-[0_10px_28px_rgba(0,0,0,0.28)] backdrop-blur-md">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-black uppercase text-white">
+                      #{ticket.ticketId} {ticket.subject}
+                    </div>
+                    <div className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500">
+                      {ticket.accountName} | {ticket.prefix}
+                    </div>
+                  </div>
+                  <div className={`rounded border px-2 py-1 text-[9px] font-black uppercase ${
+                    ticket.claimedByName
+                      ? "border-amber-500/35 bg-amber-500/10 text-amber-200"
+                      : "border-emerald-500/35 bg-emerald-500/10 text-emerald-200"
+                  }`}>
+                    {ticket.claimedByName ? "claimed" : "open"}
+                  </div>
+                </div>
+                {ticket.lastMessage && (
+                  <div className="mt-2 truncate text-[11px] font-semibold text-white/70">
+                    {ticket.lastMessage}
+                  </div>
+                )}
+                {ticket.claimReleaseAt && (
+                  <div className="mt-2 text-[10px] font-black uppercase theme-secondary-text">
+                    Frei um {new Date(ticket.claimReleaseAt).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })}
+                  </div>
+                )}
+              </article>
+            ))}
+            {adminTickets.overflowCount > 0 && (
+              <div className="rounded-xl border border-white/10 bg-black/40 px-4 py-2 text-[11px] font-black uppercase tracking-[0.22em] text-zinc-300 backdrop-blur-md">
+                +{adminTickets.overflowCount} weitere Tickets
+              </div>
+            )}
+          </section>
+
+          <section className="absolute bottom-[clamp(18px,2.8vh,30px)] left-1/2 z-[20] -translate-x-1/2">
+            <div className={`min-w-[88px] rounded-2xl border px-3 py-2 text-center backdrop-blur-md ${
+              adminTickets.openCount >= 5
+                ? "border-rose-400/40 bg-rose-500/10 text-rose-200"
+                : "border-white/15 bg-black/40 text-white"
+            }`}>
+              <div className="text-xl font-black leading-none">{adminTickets.openCount}</div>
+              <div className="mt-0.5 text-[8px] font-black uppercase tracking-[0.24em] opacity-80">Tickets</div>
+            </div>
+          </section>
+        </>
+      )}
+      {ticketMute.active && !jail.active && (
+        <div className="absolute inset-0 grid place-items-center bg-[linear-gradient(90deg,rgba(0,0,0,0.76),rgba(0,0,0,0.28),rgba(0,0,0,0.82))]" style={{ animation: "uniqueJailNotice 4.5s ease-out forwards" }}>
+          <section className="relative grid w-[min(860px,88vw)] gap-5 overflow-hidden rounded-md border-rose-500/20 bg-black/[0.42] p-7 text-center shadow-[0_18px_60px_rgba(0,0,0,0.52)]">
+            <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-rose-950/90 to-black/95" />
+            <div className="relative mx-auto grid h-16 w-16 place-items-center rounded-md border border-rose-500/30 bg-rose-500/10 text-rose-400 shadow-[0_0_28px_rgba(244,63,94,0.24)]">
+              <svg viewBox="0 0 48 48" className="h-9 w-9 fill-none stroke-current stroke-[2]">
+                <path d="M13 19h22" />
+                <path d="M24 10v18" />
+                <circle cx="24" cy="24" r="16" />
+              </svg>
+            </div>
+            <div className="relative">
+              <div className="font-display text-7xl leading-none text-white">TICKET MUTE</div>
+              <div className="mt-2 text-sm font-black uppercase tracking-normal text-rose-200">Ticket-System voruebergehend gesperrt</div>
+            </div>
+            <div className="relative grid gap-3 text-left sm:grid-cols-2">
+              <div className="rounded-md border border-rose-200/[0.12] bg-black/[0.28] p-4 sm:col-span-2">
+                <div className="text-[10px] font-black uppercase text-rose-200">Grund</div>
+                <div className="mt-1 text-lg font-black text-white">{ticketMute.reason}</div>
+              </div>
+              <div className="rounded-md border border-rose-200/[0.1] bg-black/[0.24] p-4">
+                <div className="text-[10px] font-black uppercase text-zinc-500">Vergeben von</div>
+                <div className="mt-1 text-sm font-bold text-zinc-100">{ticketMute.admin}</div>
+              </div>
+              <div className="rounded-md border border-rose-200/[0.1] bg-black/[0.24] p-4">
+                <div className="text-[10px] font-black uppercase text-zinc-500">Restzeit</div>
+                <div className="mt-1 text-sm font-bold text-zinc-100">{formatCountdown(ticketMute.remaining)}</div>
+              </div>
+            </div>
+          </section>
+        </div>
+      )}
       <style>{`
         @keyframes uniqueMoneyDelta {
           0% { opacity: 0; transform: translateY(-4px) scale(0.96); }
@@ -425,11 +635,11 @@ function HudApp() {
         }
       `}</style>
       {jail.active && (
-        <section className="absolute left-1/2 top-5 w-[min(620px,80vw)] -translate-x-1/2 overflow-hidden rounded-md border border-violet-200/[0.18] bg-[linear-gradient(115deg,rgba(4,4,8,0.9),rgba(22,8,34,0.82)_48%,rgba(70,18,100,0.54)_78%,rgba(5,5,8,0.9))] px-4 py-3 text-center shadow-[0_10px_34px_rgba(0,0,0,0.5)]">
-          <div className="pointer-events-none absolute inset-x-8 top-0 h-px bg-gradient-to-r from-transparent via-fuchsia-200 to-transparent" />
-          <div className="mx-auto mb-2 h-1 w-20 rounded bg-fuchsia-400 shadow-[0_0_18px_rgba(217,70,239,0.62)]" />
+        <section className="theme-panel-gradient absolute left-1/2 top-5 w-[min(620px,80vw)] -translate-x-1/2 overflow-hidden rounded-md border-rose-500/20 px-4 py-3 text-center shadow-[0_10px_34px_rgba(0,0,0,0.5)]">
+          <div className="theme-sheen-line pointer-events-none absolute inset-x-8 top-0 h-px" />
+          <div className="theme-primary-bg theme-primary-glow mx-auto mb-2 h-1 w-20 rounded" />
           <div className="flex items-center justify-center gap-3">
-            <span className="rounded bg-fuchsia-500/[0.18] px-2 py-1 text-[10px] font-black uppercase tracking-normal text-fuchsia-100">Admin Jail</span>
+            <span className="rounded bg-rose-500/10 px-2 py-1 text-[10px] font-black uppercase tracking-normal text-rose-400">Admin Jail</span>
             <span className="text-2xl font-black leading-none text-white">{formatCountdown(jail.remaining)}</span>
           </div>
           <div className="mt-2 truncate text-xs font-bold text-zinc-300">
@@ -440,10 +650,10 @@ function HudApp() {
 
       {jail.active && jail.notice && (
         <div className="absolute inset-0 grid place-items-center bg-[linear-gradient(90deg,rgba(0,0,0,0.76),rgba(0,0,0,0.28),rgba(0,0,0,0.82))]" style={{ animation: "uniqueJailNotice 3s ease-out forwards" }}>
-          <section className="relative grid w-[min(860px,88vw)] gap-5 overflow-hidden rounded-md border border-violet-200/[0.16] bg-black/[0.42] p-7 text-center shadow-[0_18px_60px_rgba(0,0,0,0.52)]">
-            <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(115deg,rgba(4,4,8,0.98),rgba(16,8,24,0.94)_42%,rgba(57,18,82,0.62)_74%,rgba(8,8,12,0.96))]" />
-            <div className="pointer-events-none absolute inset-x-[8%] top-[18%] h-[48%] -skew-x-12 border-y border-violet-300/[0.08] bg-violet-400/[0.04]" />
-            <div className="relative mx-auto grid h-16 w-16 place-items-center rounded-md border border-violet-200/[0.18] bg-fuchsia-500/[0.14] text-fuchsia-100 shadow-[0_0_28px_rgba(217,70,239,0.24)]">
+          <section className="relative grid w-[min(860px,88vw)] gap-5 overflow-hidden rounded-md border-rose-500/20 bg-black/[0.42] p-7 text-center shadow-[0_18px_60px_rgba(0,0,0,0.52)]">
+            <div className="theme-hero-gradient pointer-events-none absolute inset-0" />
+            <div className="pointer-events-none absolute inset-x-[8%] top-[18%] h-[48%] -skew-x-12 border-y border-rose-500/10 bg-rose-500/5" />
+            <div className="theme-primary-glow-strong relative mx-auto grid h-16 w-16 place-items-center rounded-md border border-rose-500/30 bg-rose-500/10 text-rose-400">
               <svg viewBox="0 0 48 48" className="h-9 w-9 fill-none stroke-current stroke-[2]">
                 <path d="M15 21V14c0-5 4-9 9-9s9 4 9 9v7" />
                 <path d="M12 21h24v19H12z" />
@@ -474,15 +684,15 @@ function HudApp() {
 
       <section className="absolute right-[clamp(18px,2vw,34px)] top-[clamp(16px,2.2vh,28px)] grid justify-items-end gap-1.5 text-right drop-shadow-[0_2px_4px_rgba(0,0,0,0.75)]">
         <div className="flex items-center justify-end gap-2">
-          <div className="font-display text-[clamp(28px,2.4vw,42px)] leading-none text-white">Unique<span className="text-fuchsia-300"> RP</span></div>
+          <div className="font-display text-[clamp(28px,2.4vw,42px)] leading-none text-white">Unique<span className="theme-primary-text drop-shadow-[0_0_12px_rgb(var(--ui-primary-rgb)/0.4)]"> RP</span></div>
           <img className="h-8 w-8 rounded object-contain" src={logoSrc} alt="Unique Roleplay" />
         </div>
 
-        <div className="flex items-center justify-end gap-3 text-[13px] font-black text-violet-100">
-          <span>ID: <span className="text-white">{stats.id}</span></span>
-          <span className="flex items-center gap-1">
+        <div className="flex items-center justify-end gap-3 text-[13px] font-black">
+          <span className="theme-primary-text">ID: <span className="text-white">{stats.id}</span></span>
+          <span className="flex items-center gap-1 theme-primary-text opacity-90">
             <PeopleIcon />
-            <span>{stats.online}</span>
+            <span className="text-white">{stats.online}</span>
           </span>
         </div>
 
@@ -490,7 +700,7 @@ function HudApp() {
           <div className="grid justify-items-end gap-0.5">
             <div className="flex items-center justify-end gap-2">
               <WalletIcon />
-              <span className="text-[clamp(22px,2vw,34px)] font-black leading-none text-fuchsia-200">{formatMoney(stats.cash)}</span>
+              <span className="theme-money-text theme-money-glow text-[clamp(22px,2vw,34px)] font-black leading-none">{formatMoney(stats.cash)}</span>
             </div>
             <div className="grid min-h-[18px] justify-items-end gap-0.5">
               {cashDeltas.map((delta) => (
@@ -507,7 +717,7 @@ function HudApp() {
           <div className="grid justify-items-end gap-0.5">
             <div className="flex items-center justify-end gap-2">
               <BankIcon />
-              <span className="text-[clamp(14px,1.15vw,19px)] font-black leading-none text-violet-100">{formatMoney(stats.bank)}</span>
+              <span className="theme-money-text text-[clamp(14px,1.15vw,19px)] font-black leading-none" style={{ opacity: 0.92 }}>{formatMoney(stats.bank)}</span>
             </div>
             <div className="grid min-h-[16px] justify-items-end gap-0.5">
               {bankDeltas.map((delta) => (
@@ -526,28 +736,28 @@ function HudApp() {
 
       <Speedometer data={vehicleStats} />
 
-      <section className="absolute bottom-[clamp(20px,3.2vh,36px)] left-[clamp(220px,17.8vw,360px)] flex w-[min(420px,48vw)] items-center gap-3 drop-shadow-[0_2px_5px_rgba(0,0,0,0.86)] max-[760px]:left-[132px] max-[760px]:w-[calc(100vw-150px)]">
-        <div className="grid h-8 w-8 shrink-0 place-items-center rounded-md bg-fuchsia-500 text-sm font-black shadow-[0_0_18px_rgba(217,70,239,0.48)]">{location.direction}</div>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-1 text-[clamp(17px,1.55vw,24px)] font-black leading-tight text-white"><LocationIcon /> <span className="truncate">{location.street}</span></div>
-          <div className="truncate text-[clamp(12px,1.1vw,15px)] font-black text-violet-100">
+      <section className="absolute bottom-[2.8vh] left-[clamp(240px,17.5vw,360px)] flex items-center gap-3 drop-shadow-[0_2px_8px_rgba(0,0,0,0.85)] max-[760px]:left-[132px]">
+        <div className="theme-primary-bg grid h-9 w-9 shrink-0 place-items-center rounded-md text-base font-black text-white shadow-lg">{location.direction}</div>
+        <div className="min-w-0">
+          <div className="flex items-center gap-1 text-[clamp(17px,1.55vw,25px)] font-black leading-tight text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)]"><LocationIcon /> <span className="truncate">{location.street}</span></div>
+          <div className="truncate text-[clamp(12px,1.1vw,15px)] font-black theme-primary-text drop-shadow-[0_1px_2px_rgba(0,0,0,0.5)] opacity-95">
             {location.zone}
             {location.crossing ? ` / ${location.crossing}` : ""}
           </div>
         </div>
       </section>
 
-      <section className="absolute bottom-[clamp(18px,2.8vh,32px)] right-[clamp(18px,2vw,36px)] grid justify-items-end gap-0.5 text-right drop-shadow-[0_2px_4px_rgba(0,0,0,0.78)]">
+      <section className="absolute bottom-[clamp(18px,2.8vh,32px)] right-[clamp(18px,2vw,36px)] grid justify-items-end gap-1 text-right drop-shadow-[0_2px_4px_rgba(0,0,0,0.78)]">
         <div className="flex items-center justify-end gap-2">
-          <Icon className="h-6 w-6 text-violet-100">
+          <Icon className="h-6 w-6 theme-primary-drop text-white">
             <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <circle cx="12" cy="12" r="8" />
               <path d="M12 8v4.5l3 1.5" />
             </svg>
           </Icon>
-          <strong className="text-[clamp(18px,1.6vw,26px)] leading-none">{clock.time}</strong>
+          <strong className="text-[clamp(18px,1.6vw,26px)] leading-none text-white">{clock.time}</strong>
         </div>
-        <div className="text-[12px] font-bold text-violet-100">{clock.date}</div>
+        <div className="text-[12px] font-bold theme-primary-text opacity-90">{clock.date}</div>
       </section>
     </main>
   );

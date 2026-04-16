@@ -1,4 +1,6 @@
 /// <reference path="../ragemp-client.d.ts" />
+import { getUiThemeJson, loadUiTheme } from "../ui-theme";
+
 
 interface HudState {
   browser: Mp.Browser | null;
@@ -19,6 +21,12 @@ const state: HudState = {
   tickInterval: null,
   speedoInterval: null
 };
+
+loadUiTheme();
+
+function pushTheme() {
+  executeHud(`window.hudApp && window.hudApp.setTheme(${getUiThemeJson()});`);
+}
 
 function flushPending(): void {
   if (!state.browser || !state.isReady) {
@@ -250,6 +258,7 @@ function stopHudTick(): void {
 mp.events.add("playerReady", () => {
   createHudBrowser();
 });
+createHudBrowser();
 
 mp.events.add("render", () => {
   hideNativeHudParts();
@@ -263,6 +272,7 @@ mp.events.add("cef:hud:ready", () => {
   state.isReady = true;
   stopReadyProbe();
   flushPending();
+  pushTheme();
   executeHud(`window.hudApp && window.hudApp.setVisible(${JSON.stringify(state.isAuthenticated)});`);
   updateHud();
 });
@@ -299,6 +309,29 @@ mp.events.add("client:adminJail:show", (...args: unknown[]) => {
 
 mp.events.add("client:adminJail:hide", () => {
   executeHud("window.hudApp && window.hudApp.hideJail();");
+});
+
+mp.events.add("client:tickets:hudData", (...args: unknown[]) => {
+  const [payload] = args as [string];
+  executeHud(`window.hudApp && window.hudApp.setAdminTickets(${JSON.stringify(payload || "{\"visible\":false,\"openCount\":0,\"tickets\":[]}")});`);
+});
+
+mp.events.add("client:tickets:playerHudData", (...args: unknown[]) => {
+  const [payload] = args as [string];
+  executeHud(`window.hudApp && window.hudApp.setPlayerTicket(${JSON.stringify(payload || "{\"visible\":false,\"ticket\":null}")});`);
+});
+
+mp.events.add("client:tickets:mute", (...args: unknown[]) => {
+  const [payload] = args as [string];
+  executeHud(`window.hudApp && window.hudApp.showTicketMute(${JSON.stringify(payload || "{}")});`);
+});
+
+mp.events.add("client:tickets:muteClear", () => {
+  executeHud("window.hudApp && window.hudApp.hideTicketMute();");
+});
+
+mp.events.add("client:uiTheme:sync", () => {
+  pushTheme();
 });
 
 // Keybinds for Vehicle

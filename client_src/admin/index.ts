@@ -1,4 +1,6 @@
 /// <reference path="../ragemp-client.d.ts" />
+import { getUiThemeJson, loadUiTheme } from "../ui-theme";
+
 
 interface PlayerInfo {
   name: string;
@@ -24,6 +26,12 @@ const state: AdminState = {
   pendingActions: [],
   readyProbe: null
 };
+
+loadUiTheme();
+
+function pushTheme() {
+  executeAdmin(`window.adminApp && window.adminApp.setTheme(${getUiThemeJson()});`);
+}
 
 const KEY_F3 = 0x72;
 
@@ -179,6 +187,7 @@ function openAdminMenu(): void {
   if (level >= 5) {
       mp.events.callRemote("server:admin:requestLogs");
   }
+  mp.events.callRemote("server:admin:tickets:request");
 }
 
 function toggleAdminMenu(): void {
@@ -202,6 +211,11 @@ mp.events.add("cef:admin:ready", () => {
   state.isReady = true;
   stopReadyProbe();
   flushPending();
+  pushTheme();
+});
+
+mp.events.add("client:uiTheme:sync", () => {
+  pushTheme();
 });
 
 mp.keys.bind(KEY_F3, true, () => {
@@ -229,6 +243,21 @@ mp.events.add("client:admin:receiveCommands", (payload: string) => {
 
 mp.events.add("client:admin:receiveLogs", (payload: string) => {
     executeAdmin(`window.adminApp && window.adminApp.setLogs(${JSON.stringify(payload)});`);
+});
+
+mp.events.add("client:admin:setTickets", (...args: unknown[]) => {
+  const [payload] = args as [string];
+  executeAdmin(`window.adminApp && window.adminApp.setTickets(${JSON.stringify(payload || "[]")});`);
+});
+
+mp.events.add("client:admin:setTicketInsight", (...args: unknown[]) => {
+  const [payload] = args as [string];
+  executeAdmin(`window.adminApp && window.adminApp.setTicketInsight(${JSON.stringify(payload || "{}")});`);
+});
+
+mp.events.add("client:admin:setTicketPlayerHistory", (...args: unknown[]) => {
+  const [payload] = args as [string];
+  executeAdmin(`window.adminApp && window.adminApp.setTicketPlayerHistory(${JSON.stringify(payload || "{}")});`);
 });
 
 mp.events.add("cef:admin:createFaction", (...args: unknown[]) => {
@@ -267,6 +296,50 @@ mp.events.add("cef:admin:updateCommandLevel", (commandId: string, level: number)
 
 mp.events.add("cef:admin:requestLogs", () => {
     mp.events.callRemote("server:admin:requestLogs");
+});
+
+mp.events.add("cef:admin:ticketClaim", (ticketId: number) => {
+  mp.events.callRemote("server:admin:tickets:claim", ticketId);
+});
+
+mp.events.add("cef:admin:ticketReply", (ticketId: number, message: string, force: boolean) => {
+  mp.events.callRemote("server:admin:tickets:reply", ticketId, message, force);
+});
+
+mp.events.add("cef:admin:ticketStatus", (ticketId: number, status: string) => {
+  mp.events.callRemote("server:admin:tickets:status", ticketId, status);
+});
+
+mp.events.add("cef:admin:ticketPriority", (ticketId: number, priority: string) => {
+  mp.events.callRemote("server:admin:tickets:priority", ticketId, priority);
+});
+
+mp.events.add("cef:admin:ticketAddParticipant", (ticketId: number, accountId: number) => {
+  mp.events.callRemote("server:admin:tickets:addParticipant", ticketId, accountId);
+});
+
+mp.events.add("cef:admin:ticketRequestAdvice", (ticketId: number) => {
+  mp.events.callRemote("server:admin:tickets:requestAdvice", ticketId);
+});
+
+mp.events.add("cef:admin:ticketGoto", (ticketId: number) => {
+  mp.events.callRemote("server:admin:tickets:goto", ticketId);
+});
+
+mp.events.add("cef:admin:ticketGetHere", (ticketId: number) => {
+  mp.events.callRemote("server:admin:tickets:gethere", ticketId);
+});
+
+mp.events.add("cef:admin:ticketCharacterInfo", (ticketId: number) => {
+  mp.events.callRemote("server:admin:tickets:characterInfo", ticketId);
+});
+
+mp.events.add("cef:admin:ticketWarnings", (ticketId: number) => {
+  mp.events.callRemote("server:admin:tickets:warnings", ticketId);
+});
+
+mp.events.add("cef:admin:ticketHistory", (accountId: number) => {
+  mp.events.callRemote("server:admin:tickets:history", accountId);
 });
 
 export {};

@@ -1,5 +1,6 @@
-/// <reference path="../ragemp-client.d.ts" />
+﻿/// <reference path="../ragemp-client.d.ts" />
 import { ClothingLib } from "@shared/clothing-lib";
+import { getUiTheme, getUiThemeJson, hexToRgb, loadUiTheme } from "../ui-theme";
 
 interface VehicleAimResult {
   distance: number;
@@ -91,8 +92,10 @@ const INTERACTION_RANGE = 8.0;
 const WARDROBE_RANGE = 3.75;
 const MARKER_DRAW_DISTANCE = 35.0;
 const SCAN_INTERVAL_MS = 100;
-const OUTLINE_COLOR: [number, number, number, number] = [85, 20, 128, 190];
-const WARDROBE_COLOR: [number, number, number, number] = [59, 130, 246, 220]; // Sleek blue
+loadUiTheme();
+
+let OUTLINE_COLOR: [number, number, number, number] = [217, 70, 239, 190];
+let WARDROBE_COLOR: [number, number, number, number] = [168, 85, 247, 220];
 
 // --- Wardrobe Browser Support ---
 function ensureWardrobeBrowser(): void {
@@ -219,16 +222,38 @@ function scanTargets(): void {
   }
 }
 
-const OUTLINE_OVERLAY_PARAMS = {
-  enableDepth: false,
-  deleteWhenUnused: false,
-  keepNonBlurred: true,
-  processAttachments: false,
-  fill: { enable: false, color: 0xFFFFFFFF },
-  noise: { enable: false, size: 0.0, speed: 0.0, intensity: 0.0 },
-  outline: { enable: true, color: 0xAA3B0B5F, width: 2.0, blurRadius: 0.3, blurIntensity: 0.45 },
-  wireframe: { enable: false }
-};
+function toOverlayColorHex(r: number, g: number, b: number, a: number): number {
+  return ((a & 0xff) << 24) | ((b & 0xff) << 16) | ((g & 0xff) << 8) | (r & 0xff);
+}
+
+function getOutlineOverlayParams() {
+  return {
+    enableDepth: false,
+    deleteWhenUnused: false,
+    keepNonBlurred: true,
+    processAttachments: false,
+    fill: { enable: false, color: 0xFFFFFFFF },
+    noise: { enable: false, size: 0.0, speed: 0.0, intensity: 0.0 },
+    outline: { enable: true, color: toOverlayColorHex(OUTLINE_COLOR[0], OUTLINE_COLOR[1], OUTLINE_COLOR[2], 170), width: 2.0, blurRadius: 0.3, blurIntensity: 0.45 },
+    wireframe: { enable: false }
+  };
+}
+
+function pushInteractionTheme(): void {
+  const theme = getUiTheme();
+  const primary = hexToRgb(theme.primary, theme.primary);
+  const secondary = hexToRgb(theme.secondary, theme.secondary);
+  OUTLINE_COLOR = [primary.r, primary.g, primary.b, 190];
+  WARDROBE_COLOR = [secondary.r, secondary.g, secondary.b, 220];
+
+  if (state.overlayBatch) {
+    try {
+      state.overlayBatch.update(getOutlineOverlayParams());
+    } catch (error) {}
+  }
+
+  executeInteraction(`window.interactionApp && window.interactionApp.setTheme(${getUiThemeJson()});`);
+}
 
 const VEHICLE_ACTIONS: InteractionAction[] = [
   { id: "lock", label: "Abschliessen", hint: "Bald verfuegbar" },
@@ -476,7 +501,7 @@ function ensureOverlayBatch(): Mp.EntityOverlayBatch | null {
   if (state.overlayBatch) {
     try {
       if (typeof state.overlayBatch.update === "function") {
-        state.overlayBatch.update(OUTLINE_OVERLAY_PARAMS);
+        state.overlayBatch.update(getOutlineOverlayParams());
       }
     } catch (error) {}
 
@@ -486,7 +511,7 @@ function ensureOverlayBatch(): Mp.EntityOverlayBatch | null {
   try {
     if (mp.game.graphics && typeof mp.game.graphics.setEntityOverlayPassEnabled === "function" && typeof mp.game.graphics.createEntityOverlayBatch === "function") {
       mp.game.graphics.setEntityOverlayPassEnabled(true);
-      state.overlayBatch = mp.game.graphics.createEntityOverlayBatch(OUTLINE_OVERLAY_PARAMS);
+      state.overlayBatch = mp.game.graphics.createEntityOverlayBatch(getOutlineOverlayParams());
       state.overlaySupported = !!state.overlayBatch;
       return state.overlayBatch;
     }
@@ -701,6 +726,11 @@ function openMenu(): void {
 mp.events.add("cef:interaction:ready", () => {
   state.isReady = true;
   flushPending();
+  pushInteractionTheme();
+});
+
+mp.events.add("client:uiTheme:sync", () => {
+  pushInteractionTheme();
 });
 
 mp.events.add("cef:interaction:close", () => {
@@ -877,9 +907,9 @@ mp.events.add("client:wardrobe:applyOutfit", (clothingJson: string) => {
   state.wardrobePreviewActive = false;
 });
 
-// ─── Personal Outfit Builder ──────────────────────────────────────────────────
+// ÔöÇÔöÇÔöÇ Personal Outfit Builder ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
 // Kein Zugriff auf getNumberOfPedDrawableVariations in alter RAGE:MP Runtime.
-// Stattdessen: Wert setzen und zurücklesen — GTA begrenzt ungültige IDs automatisch.
+// Stattdessen: Wert setzen und zur├╝cklesen ÔÇö GTA begrenzt ung├╝ltige IDs automatisch.
 
 function cycleDrawable(componentId: number, direction: number): number {
   const player = mp.players.local;
@@ -889,14 +919,14 @@ function cycleDrawable(componentId: number, direction: number): number {
     player.setComponentVariation(componentId, current + 1, 0, 0);
     const next = Number((player as any).getDrawableVariation(componentId) ?? 0);
     if (next === current) {
-      // Am Maximum angekommen → zurück zu 0
+      // Am Maximum angekommen ÔåÆ zur├╝ck zu 0
       player.setComponentVariation(componentId, 0, 0, 0);
       return 0;
     }
     return next;
   } else {
     if (current <= 0) {
-      // Bei 0 rückwärts → Maximum suchen (GTA begrenzt 9999 auf echtes Max)
+      // Bei 0 r├╝ckw├ñrts ÔåÆ Maximum suchen (GTA begrenzt 9999 auf echtes Max)
       player.setComponentVariation(componentId, 9999, 0, 0);
       return Number((player as any).getDrawableVariation(componentId) ?? 0);
     }

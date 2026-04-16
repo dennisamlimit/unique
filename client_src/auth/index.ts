@@ -10,6 +10,7 @@ interface AuthState {
   isReady: boolean;
   pendingActions: string[];
   readyProbe: ReturnType<typeof setInterval> | null;
+  lastCharactersJson: string | null;
 }
 
 interface CreatorState {
@@ -33,7 +34,8 @@ const state: AuthState = {
   camState: 0,
   isReady: false,
   pendingActions: [],
-  readyProbe: null
+  readyProbe: null,
+  lastCharactersJson: null
 };
 
 const creatorState: CreatorState = {
@@ -541,6 +543,34 @@ mp.events.add("client:auth:result", (...args: unknown[]) => {
   ensureAuthCursor();
 });
 
+mp.events.add("client:charselect:result", (...args: unknown[]) => {
+  const [success, message] = args;
+  executeAuth(`window.authApp && window.authApp.setResult(${JSON.stringify(success)}, ${JSON.stringify(message)});`);
+  ensureAuthCursor();
+});
+
+mp.events.add("client:charselect:show", (...args: unknown[]) => {
+  const [charactersJson] = args as [string];
+  ensureBrowser();
+  state.authVisible = true;
+  state.authBrowser!.active = true;
+  state.lastCharactersJson = charactersJson;
+
+  stopCinematicCam();
+  stopCreatorCamera();
+
+  (mp.players.local as any).freezePosition(true);
+  (mp.players.local as any).setAlpha(0);
+  (mp.game.ui as any).displayHud(false);
+  (mp.game.ui as any).displayRadar(false);
+  (mp.gui as any).chat.activate(false);
+
+  executeAuth(`window.authApp && window.authApp.showCharSelect(${JSON.stringify(charactersJson)});`);
+  mp.events.call("client:chat:authState", false);
+  mp.events.call("client:hud:authState", false);
+  ensureAuthCursor();
+});
+
 mp.events.add("cef:auth:login", (...args: unknown[]) => {
   const [email, password] = args;
   ensureAuthCursor();
@@ -551,6 +581,17 @@ mp.events.add("cef:auth:register", (...args: unknown[]) => {
   const [firstName, lastName, email, password, repeatPassword] = args;
   ensureAuthCursor();
   mp.events.callRemote("server:auth:register", firstName, lastName, email, password, repeatPassword);
+});
+
+mp.events.add("cef:charselect:select", (...args: unknown[]) => {
+  const [characterId] = args;
+  ensureAuthCursor();
+  mp.events.callRemote("server:charselect:select", Number(characterId));
+});
+
+mp.events.add("cef:charselect:create", () => {
+  ensureAuthCursor();
+  mp.events.callRemote("server:charselect:create");
 });
 
 mp.events.add("cef:creator:preview", (...args: unknown[]) => {
@@ -579,6 +620,10 @@ mp.events.add("client:creator:result", (...args: unknown[]) => {
 mp.events.add("client:creator:apply", (...args: unknown[]) => {
   const [characterJson] = args as [string];
   applyCreatorData(characterJson);
+});
+
+mp.events.add("client:creator:show", () => {
+  mp.events.call("client:auth:showCreator");
 });
 
 mp.events.add("client:auth:banned", (...args: unknown[]) => {

@@ -10,6 +10,15 @@ import { FactionService } from "./features/factions/faction-service.js";
 import { handleFactionAdminCommand, registerFactionCefEvents } from "./features/factions/faction-events.js";
 import { AdminService } from "./features/admin/admin-service.js";
 import { registerAllAdminCommands } from "./features/admin/admin-commands.js";
+import { TicketService } from "./features/tickets/ticket-service.js";
+import { PhoneService } from "./features/phone/phone-service.js";
+import { registerPhoneEvents } from "./features/phone/phone-events.js";
+import { CharacterRepository } from "./features/accounts/character-repository.js";
+import { parseAccountProfileDto } from "./features/accounts/account-dto-parsers.js";
+import { parseFactionProfileDto } from "./features/factions/faction-dto-parsers.js";
+import { InventoryRepository } from "./features/inventory/inventory-repository.js";
+import { InventoryService } from "./features/inventory/inventory-service.js";
+
 
 // Vehicle Consumption & State Sync
 setInterval(async () => {
@@ -139,9 +148,14 @@ import {
 } from "./runtime/helpers.js";
 
 const accounts = new AccountService();
+const characterRepository = new CharacterRepository();
 const spawns = new SpawnService();
 const factions = new FactionService();
+const tickets = new TicketService(getPool());
 const adminService = new AdminService(getPool());
+const phone = new PhoneService();
+const inventoryRepo = new InventoryRepository(getPool());
+export const inventoryService = new InventoryService(inventoryRepo);
 const LOCAL_CHAT_RANGE = 20;
 const ADMIN_JAIL_POSITION = { x: 1691.14, y: 2565.66, z: 45.56, rotZ: 180, dimension: 1 };
 const ADMIN_JAIL_RELEASE_POSITION = { x: 1846.64, y: 2585.86, z: 45.67, rotZ: 90, dimension: 1 };
@@ -191,6 +205,134 @@ function systemMessage(player: any, message: string) {
 
 function adminMessage(player: any, sender: string, message: string) {
   emitClient(player, "client:chat:addMessage", "admin", sender, message);
+}
+
+function adminRoleLabel(level: number) {
+  return level >= 2 ? "Administrator" : "Assistant";
+}
+
+function hasAdminAccess(player: any) {
+  return Number(getVar(player, "ADMIN_LEVEL", 0)) >= 1;
+}
+
+function isAdminModeEnabled(player: any) {
+  return Boolean(getVar(player, "ADMIN_MODE", false));
+}
+
+function buildHudTicketPayload(ticketsForHud: Awaited<ReturnType<TicketService["getAdminDashboard"]>>) {
+  return JSON.stringify({
+    visible: true,
+    openCount: ticketsForHud.openCount,
+    overflowCount: Math.max(0, ticketsForHud.tickets.length - 5),
+    tickets: ticketsForHud.tickets.slice(0, 5).map((ticket) => ({
+      ticketId: ticket.ticketId,
+      accountId: ticket.accountId,
+      accountName: ticket.accountName,
+      prefix: ticket.prefix,
+      subject: ticket.subject,
+      status: ticket.status,
+      priority: ticket.priority,
+      claimedByName: ticket.claimedByName,
+      claimReleaseAt:
+        ticket.claimedByAccountId
+          ? new Date(new Date(ticket.updatedAt || ticket.createdAt).getTime() + 15 * 60 * 1000).toISOString()
+          : null,
+      lastMessage: ticket.messages[ticket.messages.length - 1]?.message ?? ""
+    }))
+  });
+}
+
+function buildPlayerHudTicketPayload(ticket: Awaited<ReturnType<TicketService["getOpenTicketByAccountId"]>>) {
+  if (!ticket) return JSON.stringify({ visible: false, ticket: null });
+  return JSON.stringify({ visible: true, ticket });
+}
+
+function buildTicketMutePayload(reason: string, expiresAt: string, admin = "Support-Team") {
+  return JSON.stringify({
+    reason,
+    admin,
+    expiresAt
+  });
+}
+
+async function sendPlayerTicketData(player: any) {
+  const accountId = Number(getVar(player, "ACCOUNT_ID", 0));
+  if (accountId <= 0) {
+    emitClient(player, "client:usermenu:setTickets", JSON.stringify({ allowedPrefixes: tickets.getAllowedPrefixes(), tickets: [] }));
+    emitClient(player, "client:tickets:playerHudData", JSON.stringify({ visible: false, ticket: null }));
+    return;
+  }
+
+  const [dashboard, openTicket] = await Promise.all([
+    tickets.getPlayerDashboard(accountId),
+    tickets.getOpenTicketByAccountId(accountId)
+  ]);
+
+  emitClient(player, "client:usermenu:setTickets", JSON.stringify(dashboard));
+  emitClient(player, "client:tickets:playerHudData", buildPlayerHudTicketPayload(openTicket));
+}
+
+async function sendAdminTicketData(player: any) {
+  if (!hasAdminAccess(player)) {
+    emitClient(player, "client:tickets:hudData", JSON.stringify({ visible: false, openCount: 0, tickets: [] }));
+    return;
+  }
+
+  const dashboard = await tickets.getAdminDashboard();
+  emitClient(player, "client:admin:setTickets", JSON.stringify(dashboard));
+  emitClient(
+    player,
+    "client:tickets:hudData",
+    isAdminModeEnabled(player) ? buildHudTicketPayload(dashboard) : JSON.stringify({ visible: false, openCount: 0, tickets: [], overflowCount: 0 })
+  );
+}
+
+function pushTicketPlayerHistory(player: any, accountId: number, history: Awaited<ReturnType<TicketService["getPlayerHistory"]>>) {
+  emitClient(player, "client:admin:setTicketPlayerHistory", JSON.stringify({ accountId, tickets: history }));
+}
+
+async function pushTicketInsight(player: any, accountId: number) {
+  const account = await accounts.getById(accountId);
+  const warnings = await tickets.getWarningsByAccountId(accountId);
+  emitClient(player, "client:admin:setTicketInsight", JSON.stringify({
+    accountId,
+    account: account ? {
+      accountId: account.accountId,
+      name: `${account.firstName} ${account.lastName}`,
+      email: account.email,
+      adminLevel: account.adminLevel,
+      cash: account.cash,
+      bankCash: account.bankCash,
+      health: account.health,
+      armor: account.armor,
+      dimension: account.dimension,
+      isBanned: account.isBanned,
+      banReason: account.banReason,
+      banExpiresAt: account.banExpiresAt
+    } : null,
+    warnings
+  }));
+}
+
+async function syncTicketState(targetAccountId = 0) {
+  const jobs: Promise<unknown>[] = [];
+
+  forEachPlayer((player) => {
+    if (hasAdminAccess(player)) {
+      jobs.push(sendAdminTicketData(player));
+    }
+
+    const playerAccountId = Number(getVar(player, "ACCOUNT_ID", 0));
+    if (playerAccountId <= 0) {
+      return;
+    }
+
+    if (targetAccountId <= 0 || playerAccountId === targetAccountId) {
+      jobs.push(sendPlayerTicketData(player));
+    }
+  });
+
+  await Promise.all(jobs);
 }
 
 function rangeMessage(source: any, type: string, sender: string, message: string, range = LOCAL_CHAT_RANGE) {
@@ -1168,6 +1310,7 @@ async function bootstrap() {
     setVar(player, "ADMIN_JAIL_RELEASE_AT", 0);
     setVar(player, "CASH", 0);
     setVar(player, "BANK_CASH", 0);
+    setVar(player, "PHONE_NUMBER", "");
     setVar(player, "FACTION_ID", 0);
     setVar(player, "FACTION_NAME", "");
     setVar(player, "FACTION_SHORT_NAME", "");
@@ -1188,7 +1331,8 @@ async function bootstrap() {
     });
   }, 3 * 60 * 1000);
 
-  registerAuthEvents({ accounts, spawns, factions, logError, systemMessage, syncFactionMapBlips: syncFactionMapBlipsForPlayer });
+  registerAuthEvents({ accounts, characterRepository, spawns, factions, phoneService: phone, inventory: inventoryService, logError, systemMessage, syncFactionMapBlips: syncFactionMapBlipsForPlayer });
+  registerPhoneEvents(phone);
   registerFactionCefEvents({
     factions,
     logError,
@@ -1219,10 +1363,10 @@ async function bootstrap() {
         factionName: profile?.factionName ?? null,
         factionRankName: profile?.rankName ?? null,
         // Platzhalter – noch nicht implementiert
-        money: 0,
-        bankMoney: 0,
+        money: Number(getVar(player, "CASH", 0)),
+        bankMoney: Number(getVar(player, "BANK_CASH", 0)),
         dirtyMoney: 0,
-        phoneNumber: null,
+        phoneNumber: String(getVar(player, "PHONE_NUMBER", "")) || null,
         playTime: 0,
         job: null,
         generalRecord: 0
@@ -1300,6 +1444,360 @@ async function bootstrap() {
       logError("admin create faction failed", error);
       systemMessage(player, "Fraktion konnte nicht erstellt werden.");
     });
+  });
+
+  mp.events.add("server:tickets:create", (player: any, rawPrefix: unknown, rawSubject: unknown, rawMessage: unknown) => {
+    void (async () => {
+      const accountId = Number(getVar(player, "ACCOUNT_ID", 0));
+      if (accountId <= 0) {
+        return;
+      }
+
+      const result = await tickets.createTicket(
+        accountId,
+        getPlayerName(player),
+        String(rawPrefix ?? ""),
+        String(rawSubject ?? ""),
+        String(rawMessage ?? "")
+      );
+
+      if (!result.ok) {
+        if (result.reason === "muted") {
+          emitClient(player, "client:tickets:mute", buildTicketMutePayload(result.mute.reason, result.mute.expiresAt, result.mute.adminName || "Support-Team"));
+        } else if (result.reason === "existing_open") {
+          systemMessage(player, `Du hast bereits ein offenes Ticket (#${result.ticket.ticketId}).`);
+        } else {
+          systemMessage(player, "Ticket konnte nicht erstellt werden. Pruefe Betreff und Text.");
+        }
+        await sendPlayerTicketData(player);
+        return;
+      }
+
+      systemMessage(player, `Ticket #${result.ticket?.ticketId ?? 0} wurde erstellt.`);
+      notifyAdmins(`Neues Ticket #${result.ticket?.ticketId ?? 0} von ${getPlayerName(player)} (${result.ticket?.prefix}).`);
+      await syncTicketState(accountId);
+    })().catch((error) => logError("create ticket failed", error));
+  });
+
+  mp.events.add("server:tickets:reply", (player: any, rawTicketId: unknown, rawMessage: unknown) => {
+    void (async () => {
+      const accountId = Number(getVar(player, "ACCOUNT_ID", 0));
+      if (accountId <= 0) {
+        return;
+      }
+
+      const ticketId = Number(rawTicketId);
+      const result = await tickets.replyAsPlayer(accountId, ticketId, getPlayerName(player), String(rawMessage ?? ""));
+      if (!result.ok) {
+        systemMessage(player, "Nachricht konnte nicht zum Ticket hinzugefuegt werden.");
+        return;
+      }
+
+      await syncTicketState(accountId);
+    })().catch((error) => logError("reply ticket failed", error));
+  });
+
+  mp.events.add("server:admin:tickets:request", (player: any) => {
+    void sendAdminTicketData(player).catch((error) => logError("admin ticket request failed", error));
+  });
+
+  mp.events.add("server:admin:tickets:claim", (player: any, rawTicketId: unknown) => {
+    void (async () => {
+      if (!hasAdminAccess(player)) {
+        return;
+      }
+
+      const ticketId = Number(rawTicketId);
+      const accountId = Number(getVar(player, "ACCOUNT_ID", 0));
+      const result = await tickets.claimTicket(ticketId, accountId, getPlayerName(player));
+      if (!result.ok) {
+        systemMessage(player, "Ticket konnte nicht geclaimt werden.");
+        return;
+      }
+
+      systemMessage(player, `Ticket #${ticketId} uebernommen.`);
+      await syncTicketState(result.ticket?.accountId ?? 0);
+    })().catch((error) => logError("claim ticket failed", error));
+  });
+
+  mp.events.add("server:tickets:requestMine", (player: any) => {
+    void sendPlayerTicketData(player).catch((error) => logError("request mine tickets failed", error));
+  });
+
+  mp.events.add("server:usermenu:open", (player: any) => {
+    void (async () => {
+      const accountId = Number(getVar(player, "ACCOUNT_ID", 0));
+      if (accountId <= 0) return;
+
+      const profile = await factions.getMemberProfile(accountId);
+
+      emitClient(player, "client:usermenu:open", JSON.stringify({
+        playerName: getPlayerName(player),
+        accountId,
+        adminLevel: Number(getVar(player, "ADMIN_LEVEL", 0)),
+        money: Number(getVar(player, "MONEY", 0)),
+        bankMoney: Number(getVar(player, "BANK_MONEY", 0)),
+        dirtyMoney: Number(getVar(player, "DIRTY_MONEY", 0)),
+        playTime: Number(getVar(player, "PLAY_TIME", 0)),
+        job: getVar(player, "JOB_NAME", "Arbeitslos"),
+        phoneNumber: getVar(player, "PHONE_NUMBER", null),
+        factionName: profile?.factionName || null,
+        factionRankName: profile?.rankName || null,
+        generalRecord: 0
+      }));
+
+      await sendPlayerTicketData(player);
+    })().catch((error) => logError("usermenu open failed", error));
+  });
+
+  mp.events.add("server:chat:submit", (player: any, rawMode: unknown, rawMessage: unknown) => {
+    void (async () => {
+        const mode = String(rawMode || "ic").toLowerCase();
+        const message = String(rawMessage || "").trim();
+        if (!message) return;
+
+        if (message.startsWith("/")) {
+            const adminLevel = Number(getVar(player, "ADMIN_LEVEL", 0));
+            if (await adminService.execute(player, message, adminLevel)) {
+                return;
+            }
+        }
+
+        const name = chatName(player);
+
+    if (mode === "ooc") {
+      rangeMessage(player, "ooc", `(( ${name} ))`, message, 25);
+    } else if (mode === "me") {
+      rangeMessage(player, "me", "*", `${name} ${message}`, 20);
+    } else if (mode === "do") {
+      rangeMessage(player, "do", "*", `${message} (( ${name} ))`, 20);
+    } else if (mode === "try") {
+      const outcome = Math.random() > 0.5;
+      const outcomeText = outcome ? "~g~Erfolg~w~" : "~r~Fehlgeschlagen~w~";
+      rangeMessage(player, "try", "*", `${name} versucht ${message}: ${outcomeText}`, 20);
+    } else {
+      // IC (Default)
+      rangeMessage(player, "ic", name, message, 20);
+    }
+    })().catch((error) => logError("chat submission failed", error));
+  });
+
+  mp.events.add("server:interaction:select", (player: any, rawAction: unknown) => {
+    const actionId = String(rawAction || "");
+    if (!actionId) return;
+
+    // TODO: Implement contextual actions based on player state (near vehicle, etc.)
+    if (actionId === "lock") {
+      mp.events.call("server:vehicle:toggleLock", player);
+    } else {
+      systemMessage(player, `Aktion ${actionId} ist aktuell noch nicht verfuegbar.`);
+    }
+  });
+
+  mp.events.add("server:admin:tickets:reply", (player: any, rawTicketId: unknown, rawMessage: unknown, rawForce: unknown) => {
+    void (async () => {
+      if (!hasAdminAccess(player)) {
+        return;
+      }
+
+      const ticketId = Number(rawTicketId);
+      const accountId = Number(getVar(player, "ACCOUNT_ID", 0));
+      const result = await tickets.replyAsAdmin(ticketId, accountId, getPlayerName(player), String(rawMessage ?? ""), Boolean(rawForce));
+      if (!result.ok) {
+        if (result.reason === "claimed_by_other") {
+          systemMessage(player, `Ticket ist aktuell von ${result.ticket.claimedByName || "einem anderen Admin"} geclaimt.`);
+        } else {
+          systemMessage(player, "Ticket konnte nicht beantwortet werden.");
+        }
+        return;
+      }
+
+      const targetPlayer = findOnlinePlayerByAccountId(result.ticket?.accountId ?? 0);
+      if (targetPlayer) {
+        adminMessage(targetPlayer, "Support", `Antwort auf dein Ticket #${ticketId} von ${getPlayerName(player)}.`);
+      }
+      await syncTicketState(result.ticket?.accountId ?? 0);
+    })().catch((error) => logError("admin reply ticket failed", error));
+  });
+
+  mp.events.add("server:admin:tickets:status", (player: any, rawTicketId: unknown, rawStatus: unknown) => {
+    void (async () => {
+      if (!hasAdminAccess(player)) {
+        return;
+      }
+
+      const ticketId = Number(rawTicketId);
+      const status = String(rawStatus ?? "") as any;
+      const result = await tickets.setStatus(ticketId, Number(getVar(player, "ACCOUNT_ID", 0)), getPlayerName(player), status);
+      if (!result.ok) {
+        systemMessage(player, "Ticket-Status konnte nicht gesetzt werden.");
+        return;
+      }
+
+      await syncTicketState(result.ticket?.accountId ?? 0);
+    })().catch((error) => logError("admin set ticket status failed", error));
+  });
+
+  mp.events.add("server:admin:tickets:priority", (player: any, rawTicketId: unknown, rawPriority: unknown) => {
+    void (async () => {
+      if (!hasAdminAccess(player)) {
+        return;
+      }
+
+      const ticketId = Number(rawTicketId);
+      const priority = String(rawPriority ?? "normal") as any;
+      const result = await tickets.setPriority(ticketId, Number(getVar(player, "ACCOUNT_ID", 0)), getPlayerName(player), priority);
+      if (!result.ok) {
+        systemMessage(player, "Ticket-Prioritaet konnte nicht gesetzt werden.");
+        return;
+      }
+
+      await syncTicketState(result.ticket?.accountId ?? 0);
+    })().catch((error) => logError("admin set ticket priority failed", error));
+  });
+
+  mp.events.add("server:admin:tickets:addParticipant", (player: any, rawTicketId: unknown, rawTargetAccountId: unknown) => {
+    void (async () => {
+      if (!hasAdminAccess(player)) {
+        return;
+      }
+
+      const ticketId = Number(rawTicketId);
+      const targetAccountId = Number(rawTargetAccountId);
+      if (!Number.isInteger(ticketId) || !Number.isInteger(targetAccountId) || targetAccountId <= 0) {
+        return;
+      }
+
+      const targetAccount = await accounts.getById(targetAccountId);
+      if (!targetAccount || targetAccount.adminLevel < 1) {
+        systemMessage(player, "Admin-Account nicht gefunden.");
+        return;
+      }
+
+      const targetAdminName = `${targetAccount.firstName} ${targetAccount.lastName}`;
+      const result = await tickets.addParticipant(ticketId, targetAccountId, targetAdminName, Number(getVar(player, "ACCOUNT_ID", 0)), getPlayerName(player));
+      if (!result.ok) {
+        systemMessage(player, "Admin konnte nicht zum Ticket hinzugefuegt werden.");
+        return;
+      }
+
+      notifyAdmins(`${getPlayerName(player)} hat ${targetAdminName} zu Ticket #${ticketId} hinzugezogen.`);
+      await syncTicketState(result.ticket?.accountId ?? 0);
+    })().catch((error) => logError("add ticket participant failed", error));
+  });
+
+  mp.events.add("server:admin:tickets:requestAdvice", (player: any, rawTicketId: unknown) => {
+    void (async () => {
+      if (!hasAdminAccess(player)) {
+        return;
+      }
+
+      const ticketId = Number(rawTicketId);
+      const result = await tickets.requestAdvice(ticketId, Number(getVar(player, "ACCOUNT_ID", 0)), getPlayerName(player));
+      if (!result.ok) {
+        systemMessage(player, "Rat konnte nicht angefordert werden.");
+        return;
+      }
+
+      const myLevel = Number(getVar(player, "ADMIN_LEVEL", 0));
+      forEachPlayer((target) => {
+        const targetLevel = Number(getVar(target, "ADMIN_LEVEL", 0));
+        if (targetLevel > myLevel) {
+          adminMessage(target, "TICKET", `${adminRoleLabel(myLevel)} ${getPlayerName(player)} bittet bei Ticket #${ticketId} um Unterstuetzung.`);
+        }
+      });
+      await syncTicketState(result.ticket?.accountId ?? 0);
+    })().catch((error) => logError("request ticket advice failed", error));
+  });
+
+  mp.events.add("server:admin:tickets:goto", (player: any, rawTicketId: unknown) => {
+    void (async () => {
+      if (!hasAdminAccess(player)) {
+        return;
+      }
+
+      const ticket = await tickets.getTicketById(Number(rawTicketId));
+      const target = ticket ? findOnlinePlayerByAccountId(ticket.accountId) : null;
+      if (!ticket || !target) {
+        systemMessage(player, "Spieler zum Ticket ist nicht online.");
+        return;
+      }
+
+      player.dimension = target.dimension;
+      player.position = vector3(target.position.x + 1.5, target.position.y, target.position.z);
+      systemMessage(player, `Teleportiert zu ${getPlayerName(target)}.`);
+    })().catch((error) => logError("ticket goto failed", error));
+  });
+
+  mp.events.add("server:admin:tickets:gethere", (player: any, rawTicketId: unknown) => {
+    void (async () => {
+      if (!hasAdminAccess(player)) {
+        return;
+      }
+
+      const ticket = await tickets.getTicketById(Number(rawTicketId));
+      const target = ticket ? findOnlinePlayerByAccountId(ticket.accountId) : null;
+      if (!ticket || !target) {
+        systemMessage(player, "Spieler zum Ticket ist nicht online.");
+        return;
+      }
+
+      target.dimension = player.dimension;
+      target.position = vector3(player.position.x + 1.5, player.position.y, player.position.z);
+      systemMessage(player, `${getPlayerName(target)} wurde zu dir teleportiert.`);
+      systemMessage(target, "Ein Admin hat dich wegen deines Tickets zu sich teleportiert.");
+    })().catch((error) => logError("ticket gethere failed", error));
+  });
+
+  mp.events.add("server:admin:tickets:characterInfo", (player: any, rawTicketId: unknown) => {
+    void (async () => {
+      if (!hasAdminAccess(player)) {
+        return;
+      }
+
+      const ticket = await tickets.getTicketById(Number(rawTicketId));
+      if (!ticket) {
+        systemMessage(player, "Ticket nicht gefunden.");
+        return;
+      }
+
+      await pushTicketInsight(player, ticket.accountId);
+      systemMessage(player, `Charakter-Info fuer Account ${ticket.accountId} geladen.`);
+    })().catch((error) => logError("ticket character info failed", error));
+  });
+
+  mp.events.add("server:admin:tickets:warnings", (player: any, rawTicketId: unknown) => {
+    void (async () => {
+      if (!hasAdminAccess(player)) {
+        return;
+      }
+
+      const ticket = await tickets.getTicketById(Number(rawTicketId));
+      if (!ticket) {
+        systemMessage(player, "Ticket nicht gefunden.");
+        return;
+      }
+
+      await pushTicketInsight(player, ticket.accountId);
+      systemMessage(player, `Warns fuer Account ${ticket.accountId} geladen.`);
+    })().catch((error) => logError("ticket warnings failed", error));
+  });
+
+  mp.events.add("server:admin:tickets:history", (player: any, rawAccountId: unknown) => {
+    void (async () => {
+      if (!hasAdminAccess(player)) {
+        return;
+      }
+
+      const accountId = Number(rawAccountId);
+      if (!Number.isInteger(accountId) || accountId <= 0) {
+        return;
+      }
+
+      const history = await tickets.getPlayerHistory(accountId);
+      pushTicketPlayerHistory(player, accountId, history);
+      systemMessage(player, `Ticket-Historie fuer Account ${accountId} geladen.`);
+    })().catch((error) => logError("ticket history failed", error));
   });
 
   mp.events.add("server:admin:setFactionLeader", (player: any, rawAccountId: unknown, rawFactionId: unknown) => {
@@ -1966,6 +2464,30 @@ async function bootstrap() {
     });
   });
 
+  mp.events.addCommand("testinv", async (player: any) => {
+    if (!hasAdminLevel(player, 1)) return;
+
+    const charId = Number(getVar(player, "CHARACTER_ID", 0));
+    if (charId <= 0) {
+      systemMessage(player, "Du musst eingeloggt sein.");
+      return;
+    }
+
+    try {
+      await inventoryService.addItem(player, "burger", 2);
+      await inventoryService.addItem(player, "water", 1);
+      await inventoryService.addItem(player, "phone", 1);
+      
+      await inventoryService.savePlayerInventory(player);
+      
+      systemMessage(player, "Test-Items hinzugefuegt und Inventar gespeichert.");
+      logInfo(`Admin ${player.name} used /testinv`);
+    } catch (error) {
+      logError("testinv failed", error);
+      systemMessage(player, "Fehler beim Hinzufuegen der Items.");
+    }
+  });
+
   await respawnAllFactionVehicles();
   logInfo(`TypeScript resource ready. Default spawn ${formatSpawn(DEFAULT_SPAWN)}`);
 }
@@ -1996,4 +2518,7 @@ process.on("SIGINT", () => {
 
 void bootstrap().catch((error) => {
   logError("bootstrap failed", error);
+});
+mp.events.add("playerQuit", (player: PlayerMp) => {
+    inventoryService.cleanupPlayer(player);
 });

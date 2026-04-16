@@ -1,4 +1,6 @@
 /// <reference path="../ragemp-client.d.ts" />
+import { getUiThemeJson, loadUiTheme } from "../ui-theme";
+
 
 interface ChatState {
   browser: Mp.Browser | null;
@@ -19,6 +21,12 @@ const state: ChatState = {
   pendingActions: [],
   readyProbe: null
 };
+
+loadUiTheme();
+
+function pushTheme() {
+  executeChat(`window.chatApp && window.chatApp.setTheme(${getUiThemeJson()});`);
+}
 
 function flushPending(): void {
   if (!state.browser || !state.isReady) {
@@ -108,9 +116,9 @@ function closeChat(): void {
   executeChat("window.chatApp && window.chatApp.closeInput();");
 }
 
-mp.events.add("playerReady", () => {
-  createChatBrowser();
-});
+// Chat wird nach dem Spawn per require() geladen — playerReady ist bereits gefeuert.
+// Browser direkt beim Modul-Load erstellen.
+createChatBrowser();
 
 mp.events.add("cef:chat:ready", () => {
   if (state.isReady) {
@@ -120,6 +128,7 @@ mp.events.add("cef:chat:ready", () => {
   state.isReady = true;
   stopReadyProbe();
   flushPending();
+  pushTheme();
   executeChat(`window.chatApp && window.chatApp.setVisible(${JSON.stringify(state.isAuthenticated)});`);
 });
 
@@ -163,8 +172,12 @@ mp.events.add("cef:chat:submit", (...args: unknown[]) => {
     return;
   }
 
-  mp.events.callRemote("server:chat:send", mode, text.trim());
+  mp.events.callRemote("server:chat:submit", mode, text.trim());
   closeChat();
+});
+
+mp.events.add("client:uiTheme:sync", () => {
+  pushTheme();
 });
 
 mp.events.add("cef:chat:close", () => {

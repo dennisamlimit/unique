@@ -1,36 +1,68 @@
-(()=>{function n(r,...a){typeof window>"u"||typeof window.mp>"u"||window.mp.trigger(r,...a)}var w=[{id:"tops",label:"Oberteile"},{id:"legs",label:"Hosen"},{id:"feet",label:"Schuhe"},{id:"armor",label:"Westen"},{id:"outfits",label:"Outfits"}],t={visible:!1,activeTab:"tops",catalog:{items:[],outfits:[]},hoveredItem:null};function u(r,a){if(typeof r=="string"&&r.trim())return r;if(r&&typeof r=="object"){if(typeof r.name=="string"&&r.name.trim())return r.name;if(typeof r.label=="string"&&r.label.trim())return r.label}return a}function g(r){let a=Number(r==null?void 0:r.componentId),i=Number(r==null?void 0:r.drawableId),b=Number(r==null?void 0:r.textureId);return{itemId:Number((r==null?void 0:r.itemId)??0),factionId:Number((r==null?void 0:r.factionId)??0),minRank:Number((r==null?void 0:r.minRank)??1),componentId:a,drawableId:i,textureId:b,category:String((r==null?void 0:r.category)??""),label:u(r==null?void 0:r.label,`Item ${Number.isInteger(i)?i:"?"}`)}}function v(r){return{outfitId:Number((r==null?void 0:r.outfitId)??0),factionId:Number((r==null?void 0:r.factionId)??0),category:String((r==null?void 0:r.category)??"dienst"),name:u(r==null?void 0:r.name,`Outfit ${Number((r==null?void 0:r.outfitId)??0)}`),clothingJson:typeof(r==null?void 0:r.clothingJson)=="string"?r.clothingJson:"[]"}}function x(){let r=document.getElementById("root");if(!r)throw new Error("wardrobe root not found");return r}function y(r){try{let a=JSON.parse(r||"[]");return Array.isArray(a)?a:[]}catch{return[]}}function h(){return Array.isArray(t.catalog.items)?t.catalog.items.filter(r=>r.category===t.activeTab):[]}function I(){return t.activeTab==="outfits"&&Array.isArray(t.catalog.outfits)?t.catalog.outfits:[]}function k(r){let a=Number(r==null?void 0:r.componentId),i=Number(r==null?void 0:r.drawableId),b=Number(r==null?void 0:r.textureId);!Number.isInteger(a)||!Number.isInteger(i)||!Number.isInteger(b)||(t.hoveredItem=r,n("cef:wardrobe:previewItem",JSON.stringify({componentId:a,drawableId:i,textureId:b})),d())}function A(r){t.hoveredItem=r,n("cef:wardrobe:previewOutfit",JSON.stringify({outfitId:r.outfitId,clothing:y(r.clothingJson)})),d()}function N(){t.hoveredItem=null,n("cef:wardrobe:clearPreview"),d()}function d(){var l,p;let r=x();if(!t.visible){r.innerHTML="";return}let a=h(),i=I(),b=t.hoveredItem?`
+(()=>{function o(e,...n){typeof window>"u"||typeof window.mp>"u"||window.mp.trigger(e,...n)}var y=[{id:"tops",label:"Oberteile"},{id:"legs",label:"Hosen"},{id:"feet",label:"Schuhe"},{id:"armor",label:"Westen"},{id:"outfits",label:"Outfits"},{id:"builder",label:"Mein Stil"}],g=[{id:11,label:"Oberteil"},{id:8,label:"Shirt"},{id:4,label:"Hose"},{id:6,label:"Schuhe"},{id:9,label:"Weste"}],r={visible:!1,activeTab:"tops",catalog:{items:[],outfits:[]},hoveredItem:null,builderComponents:{},myOutfits:[]};function x(e,n){if(typeof e=="string"&&e.trim())return e;if(e&&typeof e=="object"){if(typeof e.name=="string"&&e.name.trim())return e.name;if(typeof e.label=="string"&&e.label.trim())return e.label}return n}function m(e){let n=Number(e==null?void 0:e.componentId),d=Number(e==null?void 0:e.drawableId),l=Number(e==null?void 0:e.textureId);return{itemId:Number((e==null?void 0:e.itemId)??0),factionId:Number((e==null?void 0:e.factionId)??0),minRank:Number((e==null?void 0:e.minRank)??1),componentId:n,drawableId:d,textureId:l,category:String((e==null?void 0:e.category)??""),label:x(e==null?void 0:e.label,`Item ${Number.isInteger(d)?d:"?"}`)}}function w(e){return{outfitId:Number((e==null?void 0:e.outfitId)??0),factionId:Number((e==null?void 0:e.factionId)??0),category:String((e==null?void 0:e.category)??"dienst"),name:x(e==null?void 0:e.name,`Outfit ${Number((e==null?void 0:e.outfitId)??0)}`),clothingJson:typeof(e==null?void 0:e.clothingJson)=="string"?e.clothingJson:"[]"}}function h(){let e=document.getElementById("root");if(!e)throw new Error("wardrobe root not found");return e}function I(e){try{let n=JSON.parse(e||"[]");return Array.isArray(n)?n:[]}catch{return[]}}function k(){return Array.isArray(r.catalog.items)?r.catalog.items.filter(e=>e.category===r.activeTab):[]}function A(){return r.activeTab==="outfits"&&Array.isArray(r.catalog.outfits)?r.catalog.outfits:[]}function N(e){let n=Number(e==null?void 0:e.componentId),d=Number(e==null?void 0:e.drawableId),l=Number(e==null?void 0:e.textureId);!Number.isInteger(n)||!Number.isInteger(d)||!Number.isInteger(l)||(r.hoveredItem=e,o("cef:wardrobe:previewItem",JSON.stringify({componentId:n,drawableId:d,textureId:l})),c())}function E(e){r.hoveredItem=e,o("cef:wardrobe:previewOutfit",JSON.stringify({outfitId:e.outfitId,clothing:I(e.clothingJson)})),c()}function O(){r.hoveredItem=null,o("cef:wardrobe:clearPreview"),c()}function c(){var p,u,f;let e=h();if(!r.visible){e.innerHTML="";return}let n=k(),d=A(),l=r.hoveredItem?`
             <div class="wardrobe-preview-card">
-                <strong>${t.hoveredItem.name||t.hoveredItem.label||"Vorschau"}</strong>
-                <span>${String(t.hoveredItem.category||t.activeTab).toUpperCase()}</span>
+                <strong>${r.hoveredItem.name||r.hoveredItem.label||"Vorschau"}</strong>
+                <span>${String(r.hoveredItem.category||r.activeTab).toUpperCase()}</span>
             </div>
-        `:"",f=w.map(e=>`
-        <button class="nav-item ${t.activeTab===e.id?"active":""}" data-action="tab" data-tab="${e.id}" type="button">
-            <span class="label">${e.label}</span>
+        `:"",v=y.map(t=>`
+        <button class="nav-item ${r.activeTab===t.id?"active":""}" data-action="tab" data-tab="${t.id}" type="button">
+            <span class="label">${t.label}</span>
         </button>
-    `).join(""),m=t.activeTab!=="outfits"?a.map(e=>`
-            <div class="item-card">
-                <div class="item-rank">Rang ${e.minRank}</div>
-                <div class="item-info">
-                    <h3>${e.label}</h3>
-                    <p>${String(e.category).toUpperCase()}</p>
+    `).join(""),b="";if(r.activeTab==="builder"){let t=g.map(i=>{let s=r.builderComponents[i.id]||{drawable:0,texture:0};return`
+                <div class="builder-row">
+                    <span class="builder-comp-label">${i.label}</span>
+                    <div class="builder-controls">
+                        <button class="builder-btn" data-action="prev-drawable" data-comp="${i.id}" type="button">&#9664;</button>
+                        <span class="builder-value">${s.drawable}</span>
+                        <button class="builder-btn" data-action="next-drawable" data-comp="${i.id}" type="button">&#9654;</button>
+                        <span class="builder-sep">Tex</span>
+                        <button class="builder-btn" data-action="prev-texture" data-comp="${i.id}" type="button">&#9664;</button>
+                        <span class="builder-value">${s.texture}</span>
+                        <button class="builder-btn" data-action="next-texture" data-comp="${i.id}" type="button">&#9654;</button>
+                    </div>
                 </div>
-                <div class="item-actions">
-                    <button class="item-action secondary" data-action="preview-item" data-item-id="${e.itemId}" type="button">Vorschau</button>
-                    <button class="item-action primary" data-action="apply-item" data-item-id="${e.itemId}" type="button">Ausr\xFCsten</button>
+            `}).join(""),a=r.myOutfits.length===0?'<p class="builder-empty">Noch keine gespeicherten Outfits.</p>':r.myOutfits.map(i=>`
+                <div class="builder-saved-row">
+                    <span class="builder-saved-name">${i.name}</span>
+                    <div class="builder-saved-actions">
+                        <button class="item-action primary" data-action="my-outfit-apply" data-outfit-id="${i.outfitId}" type="button">Anlegen</button>
+                        <button class="item-action builder-delete" data-action="my-outfit-delete" data-outfit-id="${i.outfitId}" type="button">&#10005;</button>
+                    </div>
                 </div>
+            `).join("");b=`
+            <div class="builder-panel">
+                <div class="builder-section-title">Kleidung anpassen</div>
+                ${t}
+                <div class="builder-save-row">
+                    <input class="builder-name-input" id="builder-name-input" type="text" placeholder="Outfit-Name..." maxlength="32" />
+                    <button class="item-action primary" data-action="builder-save" type="button">Speichern</button>
+                </div>
+                <div class="builder-section-title" style="margin-top:24px;">Gespeicherte Outfits</div>
+                ${a}
             </div>
-        `).join(""):i.map(e=>`
+        `}else r.activeTab==="outfits"?b=`<div class="item-grid">${d.map(t=>`
             <div class="item-card outfit-card">
                 <div class="item-info">
-                    <h3>${e.name}</h3>
-                    <p>${String(e.category).toUpperCase()}</p>
+                    <h3>${t.name}</h3>
+                    <p>${String(t.category).toUpperCase()}</p>
                 </div>
                 <div class="item-actions">
-                    <button class="item-action secondary" data-action="preview-outfit" data-outfit-id="${e.outfitId}" type="button">Vorschau</button>
-                    <button class="item-action primary" data-action="apply-outfit" data-outfit-id="${e.outfitId}" type="button">Ausr\xFCsten</button>
+                    <button class="item-action secondary" data-action="preview-outfit" data-outfit-id="${t.outfitId}" type="button">Vorschau</button>
+                    <button class="item-action primary" data-action="apply-outfit" data-outfit-id="${t.outfitId}" type="button">Ausr\xFCsten</button>
                 </div>
             </div>
-        `).join("");r.innerHTML=`
+        `).join("")}</div>`:b=`<div class="item-grid">${n.map(t=>`
+            <div class="item-card">
+                <div class="item-rank">Rang ${t.minRank}</div>
+                <div class="item-info">
+                    <h3>${t.label}</h3>
+                    <p>${String(t.category).toUpperCase()}</p>
+                </div>
+                <div class="item-actions">
+                    <button class="item-action secondary" data-action="preview-item" data-item-id="${t.itemId}" type="button">Vorschau</button>
+                    <button class="item-action primary" data-action="apply-item" data-item-id="${t.itemId}" type="button">Ausr\xFCsten</button>
+                </div>
+            </div>
+        `).join("")}</div>`;e.innerHTML=`
         <div class="wardrobe-overlay">
             <div class="wardrobe-container">
                 <header class="wardrobe-header">
@@ -42,7 +74,7 @@
                 </header>
                 <div class="wardrobe-content">
                     <nav class="wardrobe-sidebar">
-                        ${f}
+                        ${v}
                         <div class="sidebar-footer">
                             <button class="end-service-btn" data-action="end-service" type="button">
                                 <span>Dienst beenden</span>
@@ -51,13 +83,13 @@
                     </nav>
                     <main class="wardrobe-main">
                         <div class="wardrobe-toolbar">
-                            <span class="wardrobe-toolbar-title">${t.activeTab==="outfits"?"Outfit-Vorschau":"Kleidungs-Vorschau"}</span>
-                            <span class="wardrobe-toolbar-hint">Erst Vorschau, dann Ausr\xFCsten</span>
+                            <span class="wardrobe-toolbar-title">${r.activeTab==="builder"?"Mein Stil":r.activeTab==="outfits"?"Outfit-Vorschau":"Kleidungs-Vorschau"}</span>
+                            <span class="wardrobe-toolbar-hint">${r.activeTab==="builder"?"Eigene Outfits zusammenstellen und speichern":"Erst Vorschau, dann Ausr\xFCsten"}</span>
                         </div>
+                        ${r.activeTab!=="builder"?l:""}
                         ${b}
-                        <div class="item-grid">${m}</div>
                     </main>
                 </div>
             </div>
         </div>
-    `,r.querySelectorAll('[data-action="tab"]').forEach(e=>{e.addEventListener("click",()=>{t.activeTab=e.getAttribute("data-tab")||"tops",N(),d()})}),(l=r.querySelector('[data-action="close"]'))==null||l.addEventListener("click",()=>{n("cef:wardrobe:close")}),(p=r.querySelector('[data-action="end-service"]'))==null||p.addEventListener("click",()=>{n("cef:wardrobe:endService")}),r.querySelectorAll('[data-action="preview-item"]').forEach(e=>{let s=Number(e.getAttribute("data-item-id")),o=t.catalog.items.find(c=>Number(c.itemId)===s);o&&e.addEventListener("click",()=>k(o))}),r.querySelectorAll('[data-action="apply-item"]').forEach(e=>{let s=Number(e.getAttribute("data-item-id")),o=t.catalog.items.find(c=>Number(c.itemId)===s);o&&e.addEventListener("click",()=>n("cef:wardrobe:applyItem",o.itemId))}),r.querySelectorAll('[data-action="preview-outfit"]').forEach(e=>{let s=Number(e.getAttribute("data-outfit-id")),o=t.catalog.outfits.find(c=>Number(c.outfitId)===s);o&&e.addEventListener("click",()=>A(o))}),r.querySelectorAll('[data-action="apply-outfit"]').forEach(e=>{let s=Number(e.getAttribute("data-outfit-id")),o=t.catalog.outfits.find(c=>Number(c.outfitId)===s);o&&e.addEventListener("click",()=>n("cef:wardrobe:applyOutfit",o.outfitId))})}window.addEventListener("keydown",r=>{r.key==="Escape"&&n("cef:wardrobe:close")});window.wardrobeApp={show:()=>{t.visible=!0,d()},hide:()=>{t.visible=!1,d()},setCatalog:r=>{t.catalog=Array.isArray(r)?{items:r.map(g),outfits:[]}:{items:Array.isArray(r==null?void 0:r.items)?r.items.map(g):[],outfits:Array.isArray(r==null?void 0:r.outfits)?r.outfits.map(v):[]},d()}};d();n("cef:wardrobe:ready");})();
+    `,e.querySelectorAll('[data-action="tab"]').forEach(t=>{t.addEventListener("click",()=>{r.activeTab=t.getAttribute("data-tab")||"tops",O(),r.activeTab==="builder"&&(g.forEach(a=>o("cef:myOutfit:initComponent",a.id)),o("cef:myOutfit:requestList")),c()})}),(p=e.querySelector('[data-action="close"]'))==null||p.addEventListener("click",()=>{o("cef:wardrobe:close")}),(u=e.querySelector('[data-action="end-service"]'))==null||u.addEventListener("click",()=>{o("cef:wardrobe:endService")}),e.querySelectorAll('[data-action="preview-item"]').forEach(t=>{let a=Number(t.getAttribute("data-item-id")),i=r.catalog.items.find(s=>Number(s.itemId)===a);i&&t.addEventListener("click",()=>N(i))}),e.querySelectorAll('[data-action="apply-item"]').forEach(t=>{let a=Number(t.getAttribute("data-item-id")),i=r.catalog.items.find(s=>Number(s.itemId)===a);i&&t.addEventListener("click",()=>o("cef:wardrobe:applyItem",i.itemId))}),e.querySelectorAll('[data-action="preview-outfit"]').forEach(t=>{let a=Number(t.getAttribute("data-outfit-id")),i=r.catalog.outfits.find(s=>Number(s.outfitId)===a);i&&t.addEventListener("click",()=>E(i))}),e.querySelectorAll('[data-action="apply-outfit"]').forEach(t=>{let a=Number(t.getAttribute("data-outfit-id")),i=r.catalog.outfits.find(s=>Number(s.outfitId)===a);i&&t.addEventListener("click",()=>o("cef:wardrobe:applyOutfit",i.outfitId))}),e.querySelectorAll('[data-action="prev-drawable"]').forEach(t=>{let a=Number(t.getAttribute("data-comp"));t.addEventListener("click",()=>o("cef:myOutfit:cycleDrawable",a,-1))}),e.querySelectorAll('[data-action="next-drawable"]').forEach(t=>{let a=Number(t.getAttribute("data-comp"));t.addEventListener("click",()=>o("cef:myOutfit:cycleDrawable",a,1))}),e.querySelectorAll('[data-action="prev-texture"]').forEach(t=>{let a=Number(t.getAttribute("data-comp"));t.addEventListener("click",()=>o("cef:myOutfit:cycleTexture",a,-1))}),e.querySelectorAll('[data-action="next-texture"]').forEach(t=>{let a=Number(t.getAttribute("data-comp"));t.addEventListener("click",()=>o("cef:myOutfit:cycleTexture",a,1))}),(f=e.querySelector('[data-action="builder-save"]'))==null||f.addEventListener("click",()=>{let t=document.getElementById("builder-name-input"),a=((t==null?void 0:t.value)||"").trim();a&&(o("cef:myOutfit:save",a),t&&(t.value=""))}),e.querySelectorAll('[data-action="my-outfit-apply"]').forEach(t=>{let a=Number(t.getAttribute("data-outfit-id"));t.addEventListener("click",()=>o("cef:myOutfit:apply",a))}),e.querySelectorAll('[data-action="my-outfit-delete"]').forEach(t=>{let a=Number(t.getAttribute("data-outfit-id"));t.addEventListener("click",()=>o("cef:myOutfit:delete",a))})}window.addEventListener("keydown",e=>{e.key==="Escape"&&o("cef:wardrobe:close")});window.wardrobeApp={show:()=>{r.visible=!0,c()},hide:()=>{r.visible=!1,c()},setCatalog:e=>{r.catalog=Array.isArray(e)?{items:e.map(m),outfits:[]}:{items:Array.isArray(e==null?void 0:e.items)?e.items.map(m):[],outfits:Array.isArray(e==null?void 0:e.outfits)?e.outfits.map(w):[]},c()},updateComponentState:(e,n,d)=>{r.builderComponents[e]={drawable:Number(n),texture:Number(d)},r.activeTab==="builder"&&c()},setMyOutfits:e=>{r.myOutfits=Array.isArray(e)?e:[],r.activeTab==="builder"&&c()}};c();o("cef:wardrobe:ready");})();

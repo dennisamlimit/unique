@@ -9,7 +9,8 @@
     camState: 0,
     isReady: false,
     pendingActions: [],
-    readyProbe: null
+    readyProbe: null,
+    lastCharactersJson: null
   };
   var creatorState = {
     opened: false,
@@ -448,6 +449,29 @@
     executeAuth(`window.authApp && window.authApp.setResult(${JSON.stringify(success)}, ${JSON.stringify(message)});`);
     ensureAuthCursor();
   });
+  mp.events.add("client:charselect:result", (...args) => {
+    const [success, message] = args;
+    executeAuth(`window.authApp && window.authApp.setResult(${JSON.stringify(success)}, ${JSON.stringify(message)});`);
+    ensureAuthCursor();
+  });
+  mp.events.add("client:charselect:show", (...args) => {
+    const [charactersJson] = args;
+    ensureBrowser();
+    state.authVisible = true;
+    state.authBrowser.active = true;
+    state.lastCharactersJson = charactersJson;
+    stopCinematicCam();
+    stopCreatorCamera();
+    mp.players.local.freezePosition(true);
+    mp.players.local.setAlpha(0);
+    mp.game.ui.displayHud(false);
+    mp.game.ui.displayRadar(false);
+    mp.gui.chat.activate(false);
+    executeAuth(`window.authApp && window.authApp.showCharSelect(${JSON.stringify(charactersJson)});`);
+    mp.events.call("client:chat:authState", false);
+    mp.events.call("client:hud:authState", false);
+    ensureAuthCursor();
+  });
   mp.events.add("cef:auth:login", (...args) => {
     const [email, password] = args;
     ensureAuthCursor();
@@ -457,6 +481,15 @@
     const [firstName, lastName, email, password, repeatPassword] = args;
     ensureAuthCursor();
     mp.events.callRemote("server:auth:register", firstName, lastName, email, password, repeatPassword);
+  });
+  mp.events.add("cef:charselect:select", (...args) => {
+    const [characterId] = args;
+    ensureAuthCursor();
+    mp.events.callRemote("server:charselect:select", Number(characterId));
+  });
+  mp.events.add("cef:charselect:create", () => {
+    ensureAuthCursor();
+    mp.events.callRemote("server:charselect:create");
   });
   mp.events.add("cef:creator:preview", (...args) => {
     const [type, data] = args;
@@ -480,6 +513,9 @@
   mp.events.add("client:creator:apply", (...args) => {
     const [characterJson] = args;
     applyCreatorData(characterJson);
+  });
+  mp.events.add("client:creator:show", () => {
+    mp.events.call("client:auth:showCreator");
   });
   mp.events.add("client:auth:banned", (...args) => {
     const [rawBanData] = args;

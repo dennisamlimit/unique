@@ -1,301 +1,308 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect } from 'react';
 import { createRoot } from 'react-dom/client';
+import CharSelect from './CharSelect';
+import CreatorFlow from './CreatorFlow';
+
+const VERSION = "1.3.0-RADICAL-ISOLATION";
 
 const trigger = (name, ...args) => {
+  console.log(`[AUTH-RES-DEBUG] Triggering ${name}`, args);
   if (window.mp) {
     window.mp.trigger(name, ...args);
+  } else {
+    console.warn(`[AUTH-RES-DEBUG] mp.trigger for "${name}" ignored: window.mp is undefined.`);
   }
 };
 
-// ─── Login Form ───────────────────────────────────────────────────────────────
-function LoginForm({ onLogin, onSwitch }) {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const submit = () => onLogin(email.trim(), password);
+// ─── Shared Components ────────────────────────────────────────────────────────
+
+function StatusBox({ status }) {
+  if (!status || !status.message) return null;
+  return (
+    <div className={`auth-status ${status.success ? 'success' : 'error'}`}>
+      {status.message}
+    </div>
+  );
+}
+
+const VersionBadge = () => (
+  <div style={{ position: 'fixed', bottom: 10, right: 10, fontSize: 10, color: '#475569', opacity: 0.5, pointerEvents: 'none', zIndex: 9999 }}>
+    {VERSION}
+  </div>
+);
+
+function SpawnScreen({ payload, onSelect, status }) {
+  const options = Array.isArray(payload?.options) ? payload.options : [];
 
   return (
-    <>
-      <div className="auth-field">
+    <div className="auth-panel-shell">
+      <div className="auth-panel-card">
+        <div className="auth-form-title">Spawn-Auswahl</div>
+        <div className="auth-form-subtitle">{payload?.message || 'Waehle deinen Startpunkt.'}</div>
+        <div className="spawn-list">
+          {options.map((option) => (
+            <button
+              key={option.id}
+              type="button"
+              className={`spawn-option ${option.disabled ? 'is-disabled' : ''}`}
+              disabled={!!option.disabled}
+              onClick={() => onSelect(option.id)}
+            >
+              <div className="spawn-option-title">{option.title}</div>
+              <div className="spawn-option-subtitle">{option.subtitle}</div>
+            </button>
+          ))}
+        </div>
+        <StatusBox status={status} />
+      </div>
+    </div>
+  );
+}
+
+function BannedScreen({ banData }) {
+  return (
+    <div className="auth-panel-shell">
+      <div className="auth-panel-card banned">
+        <div className="auth-form-title">Account Gesperrt</div>
+        <div className="auth-form-subtitle">
+          {banData?.reason || 'Kein Grund angegeben.'}
+        </div>
+        <div className="ban-meta">
+          <div>Seit: {banData?.banDate || 'Unbekannt'}</div>
+          <div>Bis: {banData?.expiresAt || 'Permanent'}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Login Form ───────────────────────────────────────────────────────────────
+
+function LoginForm({ onLogin, onSwitch, status }) {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  
+  const handleLoginClick = (e) => {
+    e.preventDefault();
+    console.log("[AUTH-NUCLEAR] Login button pressed");
+    // Immediate diagnostic trigger
+    if (window.mp) window.mp.trigger('cef:auth:clickTrack');
+    onLogin(email.trim(), password);
+  };
+  
+  return (
+    <form onSubmit={handleLoginClick}>
+      <div className="auth-input-group">
         <label className="auth-label">Email Adresse</label>
-        <div className="auth-input-wrap">
-          <input className="auth-input" type="email" placeholder="name@example.com"
-            value={email} onChange={e => setEmail(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && submit()} />
+        <div className="auth-input-wrapper">
+          <input className="auth-input" type="email" value={email} onChange={e => setEmail(e.target.value)} required />
         </div>
       </div>
-      <div className="auth-field">
+      <div className="auth-input-group">
         <label className="auth-label">Passwort</label>
-        <div className="auth-input-wrap">
-          <input className="auth-input" type="password" placeholder="••••••••"
-            value={password} onChange={e => setPassword(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && submit()} />
+        <div className="auth-input-wrapper">
+          <input className="auth-input" type="password" value={password} onChange={e => setPassword(e.target.value)} required />
         </div>
       </div>
-      <button className="auth-btn" onClick={submit}>Anmelden</button>
-      <div className="auth-switch">
-        Noch kein Account?{' '}
-        <button onClick={onSwitch}>Jetzt registrieren</button>
+      <button type="submit" className="auth-btn-primary">Anmelden</button>
+      <StatusBox status={status} />
+      <div style={{ marginTop: 24, textAlign: 'center', fontSize: 13, color: '#94A3B8' }}>
+        Noch keinen Account? <button type="button" className="auth-link" onClick={onSwitch}>Registrieren</button>
       </div>
-    </>
+    </form>
   );
 }
 
 // ─── Register Form ────────────────────────────────────────────────────────────
-function RegisterForm({ onRegister, onSwitch }) {
+
+function RegisterForm({ onRegister, onSwitch, status }) {
   const [form, setForm] = useState({ email: '', password: '', repeat: '' });
   const set = k => e => setForm(p => ({ ...p, [k]: e.target.value }));
-  const submit = () => onRegister(form.email.trim(), form.password, form.repeat);
-
+  
   return (
-    <>
-      <div className="auth-field">
+    <form onSubmit={(e) => { e.preventDefault(); onRegister(form.email.trim(), form.password, form.repeat); }}>
+      <div className="auth-input-group">
         <label className="auth-label">Email Adresse</label>
-        <div className="auth-input-wrap">
-          <input className="auth-input" type="email" placeholder="name@example.com"
-            value={form.email} onChange={set('email')} />
-        </div>
+        <div className="auth-input-wrapper"><input className="auth-input" type="email" value={form.email} onChange={set('email')} required /></div>
       </div>
-      <div className="auth-row">
-        <div className="auth-field">
+      <div className="auth-row" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+        <div className="auth-input-group">
           <label className="auth-label">Passwort</label>
-          <div className="auth-input-wrap">
-            <input className="auth-input" type="password" placeholder="••••••••"
-              value={form.password} onChange={set('password')} />
-          </div>
+          <div className="auth-input-wrapper"><input className="auth-input" type="password" value={form.password} onChange={set('password')} required /></div>
         </div>
-        <div className="auth-field">
+        <div className="auth-input-group">
           <label className="auth-label">Wiederholen</label>
-          <div className="auth-input-wrap">
-            <input className="auth-input" type="password" placeholder="••••••••"
-              value={form.repeat} onChange={set('repeat')}
-              onKeyDown={e => e.key === 'Enter' && submit()} />
-          </div>
+          <div className="auth-input-wrapper"><input className="auth-input" type="password" value={form.repeat} onChange={set('repeat')} required /></div>
         </div>
       </div>
-      <button className="auth-btn" onClick={submit}>Account erstellen</button>
-      <div className="auth-switch">
-        Bereits registriert?{' '}
-        <button onClick={onSwitch}>Zum Login</button>
+      <button type="submit" className="auth-btn-primary">Konto erstellen</button>
+      <StatusBox status={status} />
+      <div style={{ marginTop: 24, textAlign: 'center', fontSize: 13, color: '#94A3B8' }}>
+        Schon dabei? <button type="button" className="auth-link" onClick={onSwitch}>Zum Login</button>
       </div>
-    </>
+    </form>
   );
 }
 
-// ─── Auth Screen (Login/Register Panel) ───────────────────────────────────────
-function AuthScreen({ status }) {
-  const [tab, setTab] = useState('login');
+// ─── App Root ─────────────────────────────────────────────────────────────────
 
-  return (
-    <div className="auth-root">
-      <div className="auth-left">
-        <div className="auth-left-overlay">
-          <div className="auth-left-brand">UNIQUE ROLEPLAY</div>
-          <div className="auth-left-sub">Los Santos • Roleplay Server</div>
-        </div>
-      </div>
-
-      <div className="auth-right">
-        <div>
-          <div className="auth-title">Unique Roleplay</div>
-          <div className="auth-subtitle">
-            {tab === 'login'
-              ? 'Willkommen zurück. Melde dich an, um dein Abenteuer fortzusetzen.'
-              : 'Erstelle deinen Account und starte in Los Santos.'}
-          </div>
-        </div>
-
-        <div className="auth-tabs">
-          <button className={`auth-tab ${tab === 'login' ? 'active' : ''}`} onClick={() => setTab('login')}>Login</button>
-          <button className={`auth-tab ${tab === 'register' ? 'active' : ''}`} onClick={() => setTab('register')}>Registrieren</button>
-        </div>
-
-        {tab === 'login'
-          ? <LoginForm onLogin={(e, p) => trigger('cef:auth:login', e, p)} onSwitch={() => setTab('register')} />
-          : <RegisterForm onRegister={(e, p, r) => trigger('cef:auth:register', '', '', e, p, r)} onSwitch={() => setTab('login')} />
-        }
-
-        {status.message && (
-          <div className={`auth-status ${status.success ? 'success' : 'error'}`}>
-            {status.message}
-          </div>
-        )}
-
-        <div className="auth-footer">© 2024 Unique Network. All Rights Reserved.</div>
-      </div>
-    </div>
-  );
-}
-
-// ─── Spawn Selection ──────────────────────────────────────────────────────────
-const defaultSpawnOptions = [
-  { id: "last",  title: "Letzter Standort", subtitle: "Dort weitermachen, wo du aufgehört hast.", disabled: false },
-  { id: "hotel", title: "Einsteiger Hotel",  subtitle: "Neu in Los Santos? Starte hier.", disabled: false }
-];
-
-function SpawnCard({ title, subtitle, selected, disabled, onSelect }) {
-  return (
-    <button
-      type="button"
-      disabled={disabled}
-      onClick={onSelect}
-      style={{
-        flex: 1,
-        background: selected ? 'linear-gradient(135deg,rgba(168,85,247,0.2),rgba(126,34,206,0.15))' : 'rgba(255,255,255,0.03)',
-        border: `1px solid ${selected ? '#A855F7' : 'rgba(255,255,255,0.1)'}`,
-        borderRadius: 14,
-        padding: '28px 24px',
-        color: disabled ? '#334155' : '#fff',
-        cursor: disabled ? 'not-allowed' : 'pointer',
-        textAlign: 'left',
-        transition: 'all 0.2s',
-        boxShadow: selected ? '0 0 24px rgba(168,85,247,0.3)' : 'none',
-        opacity: disabled ? 0.5 : 1,
-      }}
-    >
-      <div style={{ fontWeight: 800, fontSize: 18, textTransform: 'uppercase', letterSpacing: '-0.02em' }}>{title}</div>
-      <div style={{ marginTop: 8, fontSize: 13, color: '#94A3B8', lineHeight: 1.5 }}>{subtitle}</div>
-      {selected && <div style={{ marginTop: 16, height: 3, borderRadius: 99, background: 'linear-gradient(90deg,#A855F7,#7E22CE)' }} />}
-    </button>
-  );
-}
-
-function SpawnScreen({ payload, status }) {
-  let options = defaultSpawnOptions;
-  try {
-    const parsed = JSON.parse(payload || '{}');
-    if (Array.isArray(parsed.options) && parsed.options.length > 0) options = parsed.options;
-  } catch (_) {}
-
-  const firstAvail = options.find(o => !o.disabled)?.id || options[0]?.id;
-  const [selected, setSelected] = useState(firstAvail);
-
-  const select = id => {
-    setSelected(id);
-    trigger('cef:spawn:select', id);
-  };
-
-  return (
-    <div className="auth-root">
-      <div className="auth-left">
-        <div className="auth-left-overlay">
-          <div className="auth-left-brand">UNIQUE ROLEPLAY</div>
-          <div className="auth-left-sub">Los Santos • Roleplay Server</div>
-        </div>
-      </div>
-
-      <div className="auth-right" style={{ width: 560 }}>
-        <div className="auth-title">Spawn Auswahl</div>
-        <div className="auth-subtitle">Wo möchtest du in Los Santos starten?</div>
-
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 16, flex: 1 }}>
-          {options.map(opt => (
-            <SpawnCard
-              key={opt.id}
-              title={opt.title}
-              subtitle={opt.subtitle}
-              disabled={opt.disabled}
-              selected={selected === opt.id}
-              onSelect={() => !opt.disabled && select(opt.id)}
-            />
-          ))}
-        </div>
-
-        {status.message && (
-          <div className={`auth-status ${status.success ? 'success' : 'error'}`}>
-            {status.message}
-          </div>
-        )}
-
-        <div className="auth-footer">Dein Charakter wird an dem gewählten Ort gespawnt.</div>
-      </div>
-    </div>
-  );
-}
-
-// ─── Banned Screen ────────────────────────────────────────────────────────────
-function BannedScreen({ ban }) {
-  const fmt = v => {
-    if (!v) return 'Unbekannt';
-    const d = new Date(v);
-    return isNaN(d) ? v : d.toLocaleString('de-DE');
-  };
-
-  return (
-    <div style={{
-      position: 'fixed', inset: 0, background: 'rgba(10,5,15,0.97)',
-      display: 'flex', alignItems: 'center', justifyContent: 'center',
-      fontFamily: 'Inter, Arial, sans-serif', color: '#fff'
-    }}>
-      <div style={{ maxWidth: 600, width: '90%', textAlign: 'center' }}>
-        <div style={{ fontSize: 64, fontWeight: 900, color: '#ef4444', textTransform: 'uppercase', letterSpacing: '-0.03em' }}>
-          Gesperrt
-        </div>
-        <div style={{ marginTop: 8, color: '#94A3B8', fontSize: 14 }}>Dein Account wurde gesperrt. Verbindung wird getrennt.</div>
-        <div style={{ marginTop: 32, background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)', borderRadius: 14, padding: '24px 28px', textAlign: 'left' }}>
-          <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#94A3B8' }}>Grund</div>
-          <div style={{ marginTop: 6, fontSize: 18, fontWeight: 700 }}>{ban.reason || 'Kein Grund angegeben.'}</div>
-        </div>
-        <div style={{ marginTop: 16, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-          {[['Bann Datum', fmt(ban.banDate)], ['Läuft ab', ban.expiresAt ? fmt(ban.expiresAt) : 'Permanent'], ['Admin', ban.admin || 'Unbekannt'], ['Account', `#${ban.accountId || '?'}`]].map(([k, v]) => (
-            <div key={k} style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 10, padding: '14px 16px', textAlign: 'left' }}>
-              <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: '#64748B' }}>{k}</div>
-              <div style={{ marginTop: 4, fontWeight: 600, fontSize: 14 }}>{v}</div>
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─── Root App ─────────────────────────────────────────────────────────────────
 function AuthApp() {
   const [visible, setVisible] = useState(false);
   const [screen, setScreen] = useState('auth');
+  const [tab, setTab] = useState('login');
   const [status, setStatus] = useState({ success: true, message: '' });
-  const [spawnPayload, setSpawnPayload] = useState('');
-  const [banInfo, setBanInfo] = useState({});
+  const [charList, setCharList] = useState([]);
+  const [spawnPayload, setSpawnPayload] = useState({ message: '', options: [] });
+  const [banData, setBanData] = useState({});
+
+  const buildCreatorPayload = (data) => JSON.stringify({
+    firstname: data.firstName || '',
+    lastname: data.lastName || '',
+    birth: '',
+    origin: 'Los Santos',
+    gender: Number(data.gender || 0),
+    blendData: [0, 0, 0, 0, 0.5, 0.5],
+    hair: [0, 0, 0],
+    beard: [0, 0],
+    clothing: [[15, 0], [15, 0], [21, 0], [34, 0]],
+    headOverlays: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    faceFeatures: Array(20).fill(0)
+  });
 
   useEffect(() => {
+    console.log(`[AUTH-RES-DEBUG] AuthApp mounted. Version: ${VERSION}`);
+    
     window.authApp = {
-      show:        () => { setScreen('auth');    setStatus({ success: true, message: '' }); setVisible(true); },
-      hide:        () => setVisible(false),
-      showCreator: () => { setScreen('creator'); setVisible(true); },
-      showSpawn:   (msg) => { setSpawnPayload(msg || ''); setScreen('spawn'); setVisible(true); },
-      showBanned:  (data) => { setBanInfo(data || {}); setScreen('banned'); setVisible(true); },
-      setResult:   (success, message) => setStatus({ success: !!success, message: message || '' }),
+      show: () => { 
+        console.log("[AUTH-RES-DEBUG] window.authApp.show() called");
+        setScreen('auth'); 
+        setVisible(true); 
+      },
+      showCharSelect: (chars) => {
+        console.log("[AUTH-RES-DEBUG] window.authApp.showCharSelect() called with:", chars);
+        try {
+          // Robust parsing - handles objects and strings
+          const data = typeof chars === 'string' ? JSON.parse(chars) : chars;
+          setCharList(Array.isArray(data) ? data : []);
+          setScreen('charselect');
+          setStatus({ success: true, message: '' });
+          setVisible(true);
+          console.log("[AUTH-RES-DEBUG] Character list updated, switching to charselect");
+        } catch (e) {
+          console.error("[AUTH-RES-DEBUG] Failed to parse character list:", e);
+          setStatus({ success: false, message: "Fehler beim Laden der Charakterdaten." });
+        }
+      },
+      showCreator: () => {
+        setScreen('creator');
+        setStatus({ success: true, message: '' });
+        setVisible(true);
+      },
+      showSpawn: (payload) => {
+        try {
+          const data = typeof payload === 'string' ? JSON.parse(payload) : payload;
+          setSpawnPayload(data && typeof data === 'object' ? data : { message: '', options: [] });
+          setScreen('spawn');
+          setStatus({ success: true, message: '' });
+          setVisible(true);
+        } catch (e) {
+          console.error("[AUTH-RES-DEBUG] Failed to parse spawn payload:", e);
+          setStatus({ success: false, message: 'Spawn-Auswahl konnte nicht geladen werden.' });
+        }
+      },
+      showBanned: (payload) => {
+        try {
+          const data = typeof payload === 'string' ? JSON.parse(payload) : payload;
+          setBanData(data && typeof data === 'object' ? data : {});
+        } catch (e) {
+          setBanData({ reason: 'Kein Grund angegeben.' });
+        }
+        setScreen('banned');
+        setVisible(true);
+      },
+      setResult: (success, msg) => {
+        console.log("[AUTH-RES-DEBUG] window.authApp.setResult()", success, msg);
+        setStatus({ success: !!success, message: msg || '' });
+      },
+      hide: () => setVisible(false)
     };
+
     trigger('cef:auth:ready');
+
     return () => { delete window.authApp; };
   }, []);
 
   if (!visible) return null;
 
-  if (screen === 'banned')  return <BannedScreen ban={banInfo} />;
-  if (screen === 'spawn')   return <SpawnScreen payload={spawnPayload} status={status} />;
+  return (
+    <div className="auth-container">
+      <VersionBadge />
+      <div className="auth-grid" />
+      <div className="auth-topo" />
 
-  // Creator: The existing CharacterCreator component handles itself via the old
-  // main.jsx logic embedded. We just keep the browser open and let the server
-  // trigger the creator camera on the client side.
-  if (screen === 'creator') {
-    // Show a minimal overlay — actual character editing is done via game camera
-    return (
-      <div style={{ position: 'fixed', inset: 0, pointerEvents: 'none' }}>
-        {status.message && (
-          <div style={{
-            position: 'absolute', bottom: 32, left: '50%', transform: 'translateX(-50%)',
-            background: 'rgba(15,15,27,0.9)', border: '1px solid rgba(168,85,247,0.4)',
-            borderRadius: 10, padding: '12px 24px', color: '#d8b4fe', fontFamily: 'Inter,Arial,sans-serif',
-            fontSize: 14, fontWeight: 600, pointerEvents: 'auto'
-          }}>
-            {status.message}
+      {screen === 'charselect' ? (
+        <div style={{ width: '100%' }}>
+          <div style={{ position: 'fixed', top: 5, left: 5, fontSize: 10, color: 'lime', zIndex: 99999 }}>[STATE: CHARSELECT]</div>
+          <CharSelect 
+            characters={charList} 
+            onSelect={(id) => trigger('cef:charselect:select', id)}
+            onCreate={() => trigger('cef:charselect:create')}
+            status={status}
+          />
+        </div>
+      ) : screen === 'creator' ? (
+        <div className="auth-panel-shell">
+          <div className="auth-panel-card">
+            <div className="auth-form-title">Charakter Erstellung</div>
+            <div className="auth-form-subtitle">Erstelle deine Identitaet fuer Los Santos.</div>
+            <CreatorFlow onFinish={(data) => trigger('cef:creator:finish', buildCreatorPayload(data))} />
+            <StatusBox status={status} />
           </div>
-        )}
-      </div>
-    );
-  }
+        </div>
+      ) : screen === 'spawn' ? (
+        <SpawnScreen payload={spawnPayload} onSelect={(id) => trigger('cef:spawn:select', id)} status={status} />
+      ) : screen === 'banned' ? (
+        <BannedScreen banData={banData} />
+      ) : (
+        <>
+          <div className="auth-split-left">
+            <div style={{ position: 'relative', zIndex: 1, textAlign: 'center' }}>
+              <div style={{ fontSize: 48, fontWeight: 900, textTransform: 'uppercase', letterSpacing: '-0.04em' }}>UNIQUE</div>
+              <div style={{ marginTop: 4, letterSpacing: '0.2em', fontSize: 12, opacity: 0.6, fontWeight: 800 }}>ROLEPLAY NETWORK</div>
+            </div>
+          </div>
 
-  return <AuthScreen status={status} />;
+          <div className="auth-split-right" style={{ zIndex: 999999 }}>
+            <div>
+              <div className="auth-form-title">Willkommen</div>
+              <div className="auth-form-subtitle">{tab === 'login' ? 'Melde dich an.' : 'Erstelle ein Konto.'}</div>
+            </div>
+
+            <div style={{ display: 'flex', gap: 24, marginBottom: 32, borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+              {['login', 'register'].map(t => (
+                <button 
+                  key={t} type="button" onClick={() => setTab(t)}
+                  style={{ 
+                    padding: '12px 0', fontSize: 13, fontWeight: 800, background: 'none', border: 'none', cursor: 'pointer',
+                    color: tab === t ? '#A855F7' : '#64748B', borderBottom: tab === t ? '2px solid #A855F7' : 'none' 
+                  }}
+                >{t.toUpperCase()}</button>
+              ))}
+            </div>
+
+            <div style={{ flex: 1 }}>
+              {tab === 'login' ? (
+                <LoginForm onLogin={(e, p) => trigger('cef:auth:login', e, p)} onSwitch={() => setTab('register')} status={status} />
+              ) : (
+                <RegisterForm onRegister={(e, p, r) => trigger('cef:auth:register', '', '', e, p, r)} onSwitch={() => setTab('login')} status={status} />
+              )}
+            </div>
+            <div className="auth-footer">© 2024 Unique Network</div>
+          </div>
+        </>
+      )}
+    </div>
+  );
 }
 
 createRoot(document.getElementById('root')).render(<AuthApp />);

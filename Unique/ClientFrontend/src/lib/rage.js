@@ -1,4 +1,4 @@
-export function trigger(name, ...args) {
+﻿export function trigger(name, ...args) {
   if (typeof window === "undefined" || typeof window.mp === "undefined") {
     return;
   }

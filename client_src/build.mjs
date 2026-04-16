@@ -18,6 +18,7 @@ const modules = [
   "admin/index",
   "chat/index",
   "hud/index",
+  "phone/index",
   "faction_map/index",
   "interaction/index",
   "orga/index",

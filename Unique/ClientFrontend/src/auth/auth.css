@@ -14,7 +14,7 @@
 .auth-container {
   font-family: 'Inter', sans-serif;
   color: var(--text-primary);
-  background: var(--bg-primary);
+  background: transparent;
   min-height: 100vh;
   display: flex;
   overflow: hidden;
@@ -161,4 +161,299 @@
   text-align: center;
   font-size: 14px;
   color: var(--text-secondary);
+}
+
+/* ─── CHARACTER SELECTION ─────────────────────────────────────────────────── */
+
+.char-select-container {
+  width: 100%;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 60px 40px;
+  display: flex;
+  flex-direction: column;
+  z-index: 10;
+  animation: fadeIn 0.4s ease-out;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.char-select-header {
+  margin-bottom: 48px;
+  text-align: center;
+}
+
+.char-select-title {
+  font-size: 42px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: -0.04em;
+  margin-bottom: 8px;
+}
+
+.char-select-subtitle {
+  color: var(--text-secondary);
+  font-size: 16px;
+}
+
+.char-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 32px;
+  width: 100%;
+}
+
+.char-card {
+  position: relative;
+  background: var(--bg-secondary);
+  border: 1px solid var(--input-border);
+  border-radius: 20px;
+  padding: 32px;
+  min-height: 480px;
+  display: flex;
+  flex-direction: column;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.char-card:hover {
+  transform: translateY(-8px);
+  border-color: var(--accent-purple);
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4), 0 0 20px rgba(168, 85, 247, 0.1);
+}
+
+.char-card.empty {
+  border-style: dashed;
+  background: rgba(255, 255, 255, 0.02);
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
+.char-slot-number {
+  position: absolute;
+  top: 24px;
+  right: 24px;
+  font-size: 12px;
+  font-weight: 800;
+  color: rgba(255, 255, 255, 0.15);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.char-empty-icon {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.03);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24px;
+  color: var(--text-secondary);
+  margin-bottom: 20px;
+  border: 1px solid var(--input-border);
+}
+
+.char-empty-text {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 24px;
+}
+
+.char-name {
+  font-size: 26px;
+  font-weight: 800;
+  margin-bottom: 4px;
+  letter-spacing: -0.02em;
+}
+
+.char-sub {
+  color: var(--text-secondary);
+  font-size: 13px;
+  margin-bottom: 40px;
+}
+
+.char-level-badge {
+  background: rgba(168, 85, 247, 0.15);
+  color: #D8B4FE;
+  padding: 6px 14px;
+  border-radius: 100px;
+  font-size: 13px;
+  font-weight: 800;
+  align-self: flex-start;
+  margin-bottom: 24px;
+  border: 1px solid rgba(168, 85, 247, 0.3);
+}
+
+.char-stats {
+  margin-top: auto;
+  margin-bottom: 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.char-stat {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+}
+
+.char-stat-label {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: #64748B;
+}
+
+.char-stat-value {
+  font-weight: 800;
+  font-size: 16px;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.char-actions {
+  margin-top: auto;
+}
+
+.char-btn-select {
+  width: 100%;
+  padding: 14px;
+  background: var(--accent-purple);
+  border: none;
+  border-radius: 12px;
+  color: white;
+  font-weight: 800;
+  font-size: 14px;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.char-btn-create {
+  padding: 12px 24px;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 10px;
+  color: white;
+  font-weight: 700;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.char-btn-create:hover {
+  background: white;
+  color: black;
+}
+
+.char-status {
+  margin-top: 32px;
+  text-align: center;
+  padding: 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.char-status.error { background: rgba(239, 68, 68, 0.1); color: #ef4444; }
+.char-status.success { background: rgba(34, 197, 94, 0.1); color: #22c55e; }
+
+.char-ban-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(10, 5, 15, 0.95);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 20px;
+  z-index: 20;
+}
+
+.auth-panel-shell {
+  width: 100%;
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 24px;
+  position: relative;
+  z-index: 10;
+}
+
+.auth-panel-card {
+  width: min(760px, 100%);
+  max-height: calc(100vh - 80px);
+  overflow-y: auto;
+  background: rgba(22, 22, 37, 0.96);
+  border: 1px solid var(--input-border);
+  border-radius: 24px;
+  padding: 32px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+}
+
+.auth-panel-card.banned {
+  width: min(520px, 100%);
+  text-align: center;
+}
+
+.spawn-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 12px;
+}
+
+.spawn-option {
+  width: 100%;
+  text-align: left;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--input-border);
+  border-radius: 16px;
+  padding: 18px 20px;
+  color: white;
+  cursor: pointer;
+  transition: border-color 0.2s ease, transform 0.2s ease, background 0.2s ease;
+}
+
+.spawn-option:hover {
+  transform: translateY(-1px);
+  border-color: var(--accent-purple);
+  background: rgba(168, 85, 247, 0.08);
+}
+
+.spawn-option.is-disabled,
+.spawn-option:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.spawn-option-title {
+  font-size: 16px;
+  font-weight: 800;
+  margin-bottom: 4px;
+}
+
+.spawn-option-subtitle {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.ban-meta {
+  margin-top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 14px;
 }

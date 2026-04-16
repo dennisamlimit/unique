@@ -1,6 +1,7 @@
-import React, { useCallback, useEffect, useState } from "react";
+﻿import React, { useCallback, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { trigger } from "../lib/rage.js";
+import { THEME_CSS, getStoredUiTheme, getThemeVars, normalizeUiTheme, persistUiTheme } from "../lib/theme.js";
 
 const actions = [
   { id: "lock", label: "Abschliessen", hint: "Bald verfuegbar" },
@@ -13,6 +14,7 @@ const radius = 116;
 
 function InteractionApp() {
   const [visible, setVisible] = useState(false);
+  const [theme, setTheme] = useState(getStoredUiTheme());
   const [position, setPosition] = useState({ x: 960, y: 540 });
   const [title, setTitle] = useState("Fahrzeug");
   const [items, setItems] = useState(actions);
@@ -33,6 +35,13 @@ function InteractionApp() {
       close: () => {
         setItems(actions);
         setVisible(false);
+      },
+      setTheme: (raw) => {
+        try {
+          setTheme(persistUiTheme(normalizeUiTheme(typeof raw === "string" ? JSON.parse(raw) : raw)));
+        } catch {
+          setTheme(getStoredUiTheme());
+        }
       }
     };
 
@@ -47,8 +56,11 @@ function InteractionApp() {
     return null;
   }
 
+  const themeVars = getThemeVars(theme);
+
   return (
-    <main className="fixed inset-0 text-white" style={{ background: "transparent" }}>
+    <main className="unique-theme fixed inset-0 text-white" style={{ ...themeVars, background: "transparent" }}>
+      <style>{THEME_CSS}</style>
       <button
         type="button"
         aria-label="Schliessen"
@@ -60,11 +72,11 @@ function InteractionApp() {
         className="pointer-events-none absolute h-[310px] w-[310px] -translate-x-1/2 -translate-y-1/2"
         style={{ left: position.x, top: position.y }}
       >
-        <div className="absolute left-1/2 top-1/2 h-20 w-20 -translate-x-1/2 -translate-y-1/2 rounded-full border border-violet-200/[0.22] bg-black/[0.72] shadow-[0_0_30px_rgba(85,20,128,0.52)]" />
-        <div className="pointer-events-auto absolute left-1/2 top-1/2 grid h-16 w-16 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full border border-fuchsia-200/[0.5] bg-black/[0.64] text-center shadow-[0_0_24px_rgba(217,70,239,0.32)]">
+        <div className="absolute left-1/2 top-1/2 h-20 w-20 -translate-x-1/2 -translate-y-1/2 rounded-full border border-violet-200/[0.22] bg-black/[0.72] theme-primary-glow-strong" />
+        <div className="pointer-events-auto absolute left-1/2 top-1/2 grid h-16 w-16 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full border border-fuchsia-200/[0.5] bg-black/[0.64] text-center theme-primary-glow">
           <div>
             <div className="font-display text-2xl leading-none">G</div>
-            <div className="max-w-[58px] truncate text-[9px] font-black uppercase text-fuchsia-200">{title}</div>
+            <div className="max-w-[58px] truncate text-[9px] font-black uppercase theme-primary-text">{title}</div>
           </div>
         </div>
         {items.map((action, index) => {

@@ -28,6 +28,7 @@ export async function initializeDatabase() {
         email TEXT NOT NULL UNIQUE,
         social_club_name TEXT,
         social_club_id TEXT UNIQUE,
+        phone_number VARCHAR(15),
         password_hash TEXT NOT NULL,
         password_salt TEXT NOT NULL,
         character_created BOOLEAN NOT NULL DEFAULT FALSE,
@@ -53,9 +54,6 @@ export async function initializeDatabase() {
       );
     `);
 
-    await client.query("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS ban_date TEXT;");
-    await client.query("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS ban_expires_at TEXT;");
-    await client.query("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS ban_admin_name TEXT;");
     await client.query("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS ban_admin_account_id INTEGER NOT NULL DEFAULT 0;");
 
     await client.query(`
@@ -291,6 +289,14 @@ export async function initializeDatabase() {
       );
     `);
 
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS character_inventories (
+        character_id INTEGER PRIMARY KEY REFERENCES accounts(account_id) ON DELETE CASCADE,
+        inventory_data JSONB NOT NULL DEFAULT '[]',
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+
     // Add seed data if empty
     const catalogCountResult = await client.query("SELECT COUNT(*) FROM vehicle_catalog");
     if (parseInt(catalogCountResult.rows[0].count) === 0) {
@@ -423,6 +429,147 @@ export async function initializeDatabase() {
       }
     }
   } finally {
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS support_tickets (
+        ticket_id SERIAL PRIMARY KEY,
+        account_id INTEGER NOT NULL REFERENCES accounts(account_id) ON DELETE CASCADE,
+        creator_name TEXT NOT NULL,
+        title TEXT NOT NULL,
+        category TEXT NOT NULL DEFAULT 'Allgemein',
+        priority TEXT NOT NULL DEFAULT 'normal',
+        status TEXT NOT NULL DEFAULT 'open',
+        admin_account_id INTEGER REFERENCES accounts(account_id) ON DELETE SET NULL,
+        admin_name TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        closed_at TIMESTAMPTZ,
+        last_message_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS support_ticket_messages (
+        message_id SERIAL PRIMARY KEY,
+        ticket_id INTEGER NOT NULL REFERENCES support_tickets(ticket_id) ON DELETE CASCADE,
+        sender_type TEXT NOT NULL,
+        sender_account_id INTEGER REFERENCES accounts(account_id) ON DELETE SET NULL,
+        sender_name TEXT NOT NULL,
+        message TEXT NOT NULL,
+        internal_note BOOLEAN NOT NULL DEFAULT FALSE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS support_ticket_participants (
+        ticket_id INTEGER NOT NULL REFERENCES support_tickets(ticket_id) ON DELETE CASCADE,
+        admin_account_id INTEGER NOT NULL REFERENCES accounts(account_id) ON DELETE CASCADE,
+        admin_name TEXT NOT NULL,
+        role_label TEXT NOT NULL DEFAULT 'observer',
+        added_by_account_id INTEGER REFERENCES accounts(account_id) ON DELETE SET NULL,
+        added_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (ticket_id, admin_account_id)
+      );
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS support_ticket_mutes (
+        mute_id SERIAL PRIMARY KEY,
+        account_id INTEGER NOT NULL REFERENCES accounts(account_id) ON DELETE CASCADE,
+        admin_account_id INTEGER REFERENCES accounts(account_id) ON DELETE SET NULL,
+        reason TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        expires_at TIMESTAMPTZ NOT NULL
+      );
+    `);
+
+    // --- PHONE TABLES ---
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS phone_phones (
+        id VARCHAR(100) PRIMARY KEY,
+        owner_id VARCHAR(100) NOT NULL,
+        phone_number VARCHAR(15) UNIQUE NOT NULL,
+        name VARCHAR(50),
+        pin VARCHAR(4),
+        face_id VARCHAR(100),
+        settings JSONB,
+        is_setup BOOLEAN DEFAULT FALSE,
+        assigned BOOLEAN DEFAULT FALSE,
+        battery INT DEFAULT 100,
+        last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS phone_contacts (
+        contact_id SERIAL PRIMARY KEY,
+        phone_number VARCHAR(15) NOT NULL,
+        contact_phone_number VARCHAR(15) NOT NULL,
+        firstname VARCHAR(50) DEFAULT '',
+        lastname VARCHAR(50) DEFAULT '',
+        profile_image VARCHAR(500),
+        email VARCHAR(100),
+        address VARCHAR(100),
+        favourite BOOLEAN DEFAULT FALSE
+      );
+    `);
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS phone_message_channels (
+        channel_id SERIAL PRIMARY KEY,
+        is_group BOOLEAN NOT NULL DEFAULT FALSE,
+        name VARCHAR(50),
+        last_message TEXT DEFAULT '',
+        last_message_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS phone_message_members (
+        channel_id INTEGER REFERENCES phone_message_channels(channel_id) ON DELETE CASCADE,
+        phone_number VARCHAR(15) NOT NULL,
+        is_owner BOOLEAN DEFAULT FALSE,
+        unread INTEGER DEFAULT 0,
+        PRIMARY KEY (channel_id, phone_number)
+      );
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS phone_message_messages (
+        message_id SERIAL PRIMARY KEY,
+        channel_id INTEGER REFERENCES phone_message_channels(channel_id) ON DELETE CASCADE,
+        sender VARCHAR(15) NOT NULL,
+        content TEXT,
+        attachments JSONB,
+        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS phone_twitter_accounts (
+        username VARCHAR(20) PRIMARY KEY,
+        display_name VARCHAR(30) NOT NULL,
+        password VARCHAR(100) NOT NULL,
+        phone_number VARCHAR(15) NOT NULL,
+        bio VARCHAR(100),
+        profile_image VARCHAR(500),
+        profile_header VARCHAR(500),
+        verified BOOLEAN DEFAULT FALSE,
+        date_joined TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS phone_twitter_tweets (
+        tweet_id SERIAL PRIMARY KEY,
+        username VARCHAR(20) REFERENCES phone_twitter_accounts(username) ON DELETE CASCADE,
+        content VARCHAR(280),
+        attachments JSONB,
+        reply_to INTEGER,
+        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    // --- END PHONE TABLES ---
+
     client.release();
   }
 }

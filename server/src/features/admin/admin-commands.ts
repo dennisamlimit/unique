@@ -1,4 +1,4 @@
-import { AdminService } from "./admin-service.js";
+﻿import { AdminService } from "./admin-service.js";
 
 export function registerAllAdminCommands(adminService: AdminService, deps: any) {
     const { 
@@ -8,7 +8,8 @@ export function registerAllAdminCommands(adminService: AdminService, deps: any) 
         emitClient, findPlayerByAnyId, notifyAdmins,
         parseDurationToken, formatDuration, findOnlinePlayerByAccountId,
         jailPlayer, releasePlayerFromJail, setArmour, formatSpawn,
-        spawnFactionVehicle, syncOnlineFactionMember, syncFactionMapBlips
+        spawnFactionVehicle, syncOnlineFactionMember, syncFactionMapBlips,
+        tickets, syncTicketState, pushTicketPlayerHistory
     } = deps;
 
     // Helper for finding targets
@@ -33,6 +34,9 @@ export function registerAllAdminCommands(adminService: AdminService, deps: any) 
             const current = Boolean(getVar(player, "ADMIN_MODE", false));
             setVar(player, "ADMIN_MODE", !current);
             systemMessage(player, `Admin-Modus: ${!current ? "aktiv" : "inaktiv"}`);
+            if (syncTicketState) {
+                await syncTicketState();
+            }
             return true;
         }
     });
@@ -102,6 +106,132 @@ export function registerAllAdminCommands(adminService: AdminService, deps: any) 
     });
 
     adminService.register({
+        commandId: "tmute",
+        usage: "/tmute [spielerId] [dauer] [grund]",
+        description: "Spieler fuer Support-Tickets stummschalten.",
+        category: "Support",
+        defaultLevel: 2,
+        handler: async (player, parts) => {
+            const target = findTarget(player, parts[1], "/tmute [spielerId] [dauer] [grund]");
+            if (!target) return;
+
+            const durationMs = parseDurationToken(parts[2]);
+            if (!durationMs) {
+                systemMessage(player, "Ungueltige Dauer. Beispiel: 30m, 2h oder 1d");
+                return true;
+            }
+
+            const targetAccountId = Number(getVar(target, "ACCOUNT_ID", 0));
+            if (targetAccountId <= 0) {
+                systemMessage(player, "Spieler hat keinen gueltigen Account.");
+                return true;
+            }
+
+            const reason = parts.slice(3).join(" ").trim() || "Missbrauch des Ticket-Systems";
+            const mute = await tickets.muteAccount(targetAccountId, Number(getVar(player, "ACCOUNT_ID", 0)), reason, durationMs);
+            systemMessage(player, `${getPlayerName(target)} ist fuer ${formatDuration(durationMs)} von Tickets ausgeschlossen.`);
+            emitClient(target, "client:tickets:mute", JSON.stringify({ reason, admin: getPlayerName(player), expiresAt: mute.expiresAt }));
+            if (syncTicketState) {
+                await syncTicketState(targetAccountId);
+            }
+            return true;
+        }
+    });
+
+    adminService.register({
+        commandId: "tunmute",
+        usage: "/unmute [spielerId]",
+        description: "Aktive Ticket-Sperre eines Spielers entfernen.",
+        category: "Support",
+        defaultLevel: 2,
+        aliases: ["unmute"],
+        handler: async (player, parts) => {
+            const target = findTarget(player, parts[1], "/unmute [spielerId]");
+            if (!target) return;
+
+            const targetAccountId = Number(getVar(target, "ACCOUNT_ID", 0));
+            if (targetAccountId <= 0) {
+                systemMessage(player, "Spieler hat keinen gueltigen Account.");
+                return true;
+            }
+
+            const result = await tickets.unmuteAccount(targetAccountId);
+            if (!result.ok) {
+                systemMessage(player, `${getPlayerName(target)} hat aktuell keine aktive Ticket-Sperre.`);
+                return true;
+            }
+
+            systemMessage(player, `${getPlayerName(target)} kann wieder Tickets erstellen.`);
+            emitClient(target, "client:tickets:muteClear");
+            if (syncTicketState) {
+                await syncTicketState(targetAccountId);
+            }
+            return true;
+        }
+    });
+
+    adminService.register({
+        commandId: "ans",
+        usage: "/ans [ticketId] [text]",
+        description: "Direkt auf ein Support-Ticket antworten.",
+        category: "Support",
+        defaultLevel: 1,
+        handler: async (player, parts) => {
+            const ticketId = Number(parts[1]);
+            const message = parts.slice(2).join(" ").trim();
+            if (!Number.isInteger(ticketId) || !message) {
+                systemMessage(player, "Nutze: /ans [ticketId] [text]");
+                return true;
+            }
+
+            const accountId = Number(getVar(player, "ACCOUNT_ID", 0));
+            const result = await tickets.replyAsAdmin(ticketId, accountId, getPlayerName(player), message);
+            if (!result.ok) {
+                if (result.reason === "claimed_by_other") {
+                    systemMessage(player, `Ticket gehoert aktuell ${result.ticket.claimedByName || "einem anderen Admin"}. Nutze das F3-Menue zum bestaetigten Antworten.`);
+                } else {
+                    systemMessage(player, "Ticket konnte nicht beantwortet werden.");
+                }
+                return true;
+            }
+
+            systemMessage(player, `Antwort an Ticket #${ticketId} gesendet.`);
+            if (syncTicketState) {
+                await syncTicketState(result.ticket?.accountId ?? 0);
+            }
+            return true;
+        }
+    });
+
+    adminService.register({
+        commandId: "lp",
+        usage: "/lp [accountId]",
+        description: "Komplette Ticket-Historie eines Spielers laden.",
+        category: "Support",
+        defaultLevel: 1,
+        handler: async (player, parts) => {
+            const accountId = Number(parts[1]);
+            if (!Number.isInteger(accountId) || accountId <= 0) {
+                systemMessage(player, "Nutze: /lp [accountId]");
+                return true;
+            }
+
+            const history = await tickets.getPlayerHistory(accountId);
+            if (history.length === 0) {
+                systemMessage(player, `Keine Ticket-Historie fuer Account ${accountId} gefunden.`);
+                return true;
+            }
+
+            if (pushTicketPlayerHistory) {
+                pushTicketPlayerHistory(player, accountId, history);
+            }
+            emitClient(player, "client:admin:showTicketHistory", accountId);
+
+            return true;
+        }
+    });
+
+    adminService.register({
         commandId: "kick",
         usage: "/kick [spielerId] [grund]",
         description: "Spieler vom Server kicken.",
@@ -128,7 +258,7 @@ export function registerAllAdminCommands(adminService: AdminService, deps: any) 
             const durationMs = parseDurationToken(parts[2]);
             if (!durationMs) return systemMessage(player, "Ungueltige Dauer.");
             const reason = parts.slice(3).join(" ") || "Kein Grund.";
-            jailPlayer(target, durationMs, reason);
+            jailPlayer(target, durationMs, reason, getPlayerName(player));
             notifyAdmins(`${getPlayerName(player)} hat ${getPlayerName(target)} fuer ${formatDuration(durationMs)} im Jail. Grund: ${reason}`);
         }
     });

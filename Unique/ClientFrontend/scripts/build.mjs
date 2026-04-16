@@ -13,6 +13,8 @@ const assets = {
 
 const entries = [
   { name: "auth", entry: resolve(root, "src/auth/main.jsx"), title: "Unique Auth" },
+  { name: "charselect", entry: resolve(root, "src/auth/CharSelectEntry.jsx"), title: "Unique Character Selection" },
+  { name: "admin", entry: resolve(root, "src/admin/main.jsx"), title: "Unique Admin" },
   { name: "admin", entry: resolve(root, "src/admin/main.jsx"), title: "Unique Admin" },
   { name: "chat", entry: resolve(root, "src/chat/main.jsx"), title: "Unique Chat" },
   { name: "hud", entry: resolve(root, "src/hud/main.jsx"), title: "Unique HUD" },
@@ -73,6 +75,15 @@ for (const app of entries) {
   await copyFile(resolve(dist, "shared", "ui.css"), resolve(dist, app.name, "ui.css"));
   await copyFile(assets.logo, resolve(dist, app.name, "Unique_logo.png"));
   await copyFile(assets.font, resolve(dist, app.name, "ChaletComprime-CologneSixty.woff2"));
+  
+  // Copy app-specific CSS if it exists
+  const appCss = resolve(root, "src", app.name, `${app.name}.css`);
+  try {
+    await copyFile(appCss, resolve(dist, app.name, `${app.name}.css`));
+    console.log(`[BUILD] Copied ${app.name}.css`);
+  } catch (e) {
+    // Some apps might only use Tailwind (ui.css)
+  }
 
   await build({
     entryPoints: [app.entry],
