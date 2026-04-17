@@ -1,4 +1,5 @@
 import { getPool } from "../../infrastructure/database.js";
+import { DatabaseError } from "../../shared/errors.js";
 import type { Character } from "./character.js";
 
 type RawCharacterRow = {
@@ -51,40 +52,53 @@ function mapRowToCharacter(row: RawCharacterRow): Character {
 
 export class CharacterRepository {
   async getByAccountId(accountId: number): Promise<Character[]> {
-    const result = await getPool().query("SELECT * FROM characters WHERE account_id = $1 ORDER BY created_at ASC", [accountId]);
-    return result.rows.map(mapRowToCharacter);
+    try {
+      const result = await getPool().query("SELECT * FROM characters WHERE account_id = $1 ORDER BY created_at ASC", [accountId]);
+      return result.rows.map(mapRowToCharacter);
+    } catch (cause) {
+      throw new DatabaseError("getByAccountId failed", cause);
+    }
   }
 
   async getById(characterId: number): Promise<Character | null> {
-    const result = await getPool().query("SELECT * FROM characters WHERE character_id = $1 LIMIT 1", [characterId]);
-    return result.rows.length > 0 ? mapRowToCharacter(result.rows[0]) : null;
+    try {
+      const result = await getPool().query("SELECT * FROM characters WHERE character_id = $1 LIMIT 1", [characterId]);
+      return result.rows.length > 0 ? mapRowToCharacter(result.rows[0]) : null;
+    } catch (cause) {
+      throw new DatabaseError("getById failed", cause);
+    }
   }
 
   async create(character: Omit<Character, "characterId" | "createdAt">): Promise<Character> {
-    const result = await getPool().query(
-      `
+    try {
+      const result = await getPool().query(
+        `
         INSERT INTO characters (
-          account_id, first_name, last_name, cash, bank_cash, 
-          admin_level, customization_json, phone_number, 
+          account_id, first_name, last_name, cash, bank_cash,
+          admin_level, customization_json, phone_number,
           pos_x, pos_y, pos_z, rot_z, dimension, health, armor,
           is_banned, ban_reason, ban_expires_at
         ) VALUES (
           $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18
         ) RETURNING *
       `,
-      [
-        character.accountId, character.firstName, character.lastName, character.cash, character.bankCash,
-        character.adminLevel, character.customizationJson, character.phoneNumber,
-        character.posX, character.posY, character.posZ, character.rotZ, character.dimension,
-        character.health, character.armor, character.isBanned, character.banReason, character.banExpiresAt
-      ]
-    );
-    return mapRowToCharacter(result.rows[0]);
+        [
+          character.accountId, character.firstName, character.lastName, character.cash, character.bankCash,
+          character.adminLevel, character.customizationJson, character.phoneNumber,
+          character.posX, character.posY, character.posZ, character.rotZ, character.dimension,
+          character.health, character.armor, character.isBanned, character.banReason, character.banExpiresAt
+        ]
+      );
+      return mapRowToCharacter(result.rows[0]);
+    } catch (cause) {
+      throw new DatabaseError("create failed", cause);
+    }
   }
 
   async updateState(characterId: number, update: Partial<Character>): Promise<Character | null> {
-    const result = await getPool().query(
-      `
+    try {
+      const result = await getPool().query(
+        `
         UPDATE characters SET
           cash = COALESCE($1, cash),
           bank_cash = COALESCE($2, bank_cash),
@@ -98,18 +112,25 @@ export class CharacterRepository {
           customization_json = COALESCE($10, customization_json)
         WHERE character_id = $11 RETURNING *
       `,
-      [
-        update.cash, update.bankCash, update.health, update.armor, update.dimension,
-        update.posX, update.posY, update.posZ, update.rotZ, 
-        update.customizationJson ? (typeof update.customizationJson === 'string' ? update.customizationJson : JSON.stringify(update.customizationJson)) : null,
-        characterId
-      ]
-    );
-    return result.rows.length > 0 ? mapRowToCharacter(result.rows[0]) : null;
+        [
+          update.cash, update.bankCash, update.health, update.armor, update.dimension,
+          update.posX, update.posY, update.posZ, update.rotZ,
+          update.customizationJson ? (typeof update.customizationJson === 'string' ? update.customizationJson : JSON.stringify(update.customizationJson)) : null,
+          characterId
+        ]
+      );
+      return result.rows.length > 0 ? mapRowToCharacter(result.rows[0]) : null;
+    } catch (cause) {
+      throw new DatabaseError("updateState failed", cause);
+    }
   }
 
   async getStarterMoney(): Promise<number> {
-    const result = await getPool().query("SELECT setting_value FROM server_settings WHERE setting_key = 'starter_money'");
-    return result.rows.length > 0 ? parseInt(result.rows[0].setting_value) : 100;
+    try {
+      const result = await getPool().query("SELECT setting_value FROM server_settings WHERE setting_key = 'starter_money'");
+      return result.rows.length > 0 ? parseInt(result.rows[0].setting_value) : 100;
+    } catch (cause) {
+      throw new DatabaseError("getStarterMoney failed", cause);
+    }
   }
 }
