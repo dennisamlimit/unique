@@ -1,15 +1,21 @@
 /// <reference path="../ragemp-client.d.ts" />
 
+import {
+  createBrowserState,
+  initBrowser,
+  executeInBrowser,
+  flushPending,
+  startReadyProbe,
+  stopReadyProbe,
+  type BrowserState
+} from "../shared/browser-manager.js";
+
 interface AuthState {
-  authBrowser: Mp.Browser | null;
   currentCam: any | null;
   nextCam: any | null;
   authVisible: boolean;
   switchTimer: ReturnType<typeof setInterval> | null;
   camState: number;
-  isReady: boolean;
-  pendingActions: string[];
-  readyProbe: ReturnType<typeof setInterval> | null;
   lastCharactersJson: string | null;
 }
 
@@ -25,16 +31,13 @@ interface CinematicCam {
   fov: number;
 }
 
+const browserState: BrowserState = createBrowserState();
 const state: AuthState = {
-  authBrowser: null,
   currentCam: null,
   nextCam: null,
   authVisible: false,
   switchTimer: null,
   camState: 0,
-  isReady: false,
-  pendingActions: [],
-  readyProbe: null,
   lastCharactersJson: null
 };
 
@@ -96,61 +99,9 @@ const cinematicCams: CinematicCam[] = [
 ];
 
 function ensureBrowser(): void {
-  if (state.authBrowser) {
-    return;
-  }
-
-  state.authBrowser = mp.browsers.new("package://auth/auth.html");
-  state.authBrowser.active = true;
-  startReadyProbe();
-}
-
-function executeAuth(js: string): void {
-  if (!state.authBrowser || !state.isReady) {
-    state.pendingActions.push(js);
-    return;
-  }
-
-  state.authBrowser.execute(js);
-}
-
-function flushPending(): void {
-  if (!state.authBrowser || !state.isReady) {
-    return;
-  }
-
-  while (state.pendingActions.length > 0) {
-    state.authBrowser.execute(state.pendingActions.shift()!);
-  }
-}
-
-function stopReadyProbe(): void {
-  if (!state.readyProbe) {
-    return;
-  }
-
-  clearInterval(state.readyProbe);
-  state.readyProbe = null;
-}
-
-function startReadyProbe(): void {
-  stopReadyProbe();
-
-  state.readyProbe = setInterval(() => {
-    if (!state.authBrowser || state.isReady) {
-      stopReadyProbe();
-      return;
-    }
-
-    state.authBrowser.execute(`
-      if (window.authApp && !window.__authReadyNotified) {
-        window.__authReadyNotified = true;
-        if (typeof mp !== "undefined") {
-          mp.trigger("cef:auth:ready");
-        }
-      }
-    `);
-  }, 300);
+  if (browserState.browser) return;
+  initBrowser(browserState, { htmlPath: "package://auth/auth.html", active: true });
+  startReadyProbe(browserState, "auth");
 }
 
 function createCam(name: string, data: CinematicCam): any {
@@ -256,8 +207,8 @@ function ensureAuthCursor(): void {
     return;
   }
 
-  if (state.authBrowser) {
-    state.authBrowser.active = true;
+  if (browserState.browser) {
+    browserState.browser.active = true;
   }
 
   mp.gui.cursor.show(true, true);
@@ -474,19 +425,16 @@ mp.events.add("playerReady", () => {
 });
 
 mp.events.add("cef:auth:ready", () => {
-  if (state.isReady) {
-    return;
-  }
-
-  state.isReady = true;
-  stopReadyProbe();
-  flushPending();
+  if (browserState.isReady) return;
+  browserState.isReady = true;
+  stopReadyProbe(browserState);
+  flushPending(browserState);
 });
 
 mp.events.add("client:auth:show", () => {
   ensureBrowser();
   state.authVisible = true;
-  state.authBrowser!.active = true;
+  browserState.browser!.active = true;
 
   (mp.players.local as any).freezePosition(true);
   (mp.players.local as any).setAlpha(0);
@@ -495,7 +443,7 @@ mp.events.add("client:auth:show", () => {
 
   startCinematicCam();
 
-  executeAuth("window.authApp && window.authApp.show();");
+  executeInBrowser(browserState, "window.authApp && window.authApp.show();");
   mp.events.call("client:chat:authState", false);
   mp.events.call("client:hud:authState", false);
 
@@ -516,7 +464,7 @@ mp.events.add("client:auth:hide", () => {
   stopCinematicCam();
   stopCreatorCamera();
 
-  executeAuth("window.authApp && window.authApp.hide();");
+  executeInBrowser(browserState, "window.authApp && window.authApp.hide();");
   mp.events.call("client:chat:authState", true);
   mp.events.call("client:hud:authState", true);
 
@@ -526,12 +474,12 @@ mp.events.add("client:auth:hide", () => {
 mp.events.add("client:auth:showCreator", () => {
   ensureBrowser();
   state.authVisible = true;
-  state.authBrowser!.active = true;
+  browserState.browser!.active = true;
   (mp.game.ui as any).displayHud(false);
   (mp.game.ui as any).displayRadar(false);
   (mp.gui as any).chat.activate(false);
   startCreatorCamera();
-  executeAuth("window.authApp && window.authApp.showCreator();");
+  executeInBrowser(browserState, "window.authApp && window.authApp.showCreator();");
   mp.events.call("client:chat:authState", false);
   mp.events.call("client:hud:authState", false);
   ensureAuthCursor();
@@ -539,13 +487,13 @@ mp.events.add("client:auth:showCreator", () => {
 
 mp.events.add("client:auth:result", (...args: unknown[]) => {
   const [success, message] = args;
-  executeAuth(`window.authApp && window.authApp.setResult(${JSON.stringify(success)}, ${JSON.stringify(message)});`);
+  executeInBrowser(browserState, `window.authApp && window.authApp.setResult(${JSON.stringify(success)}, ${JSON.stringify(message)});`);
   ensureAuthCursor();
 });
 
 mp.events.add("client:charselect:result", (...args: unknown[]) => {
   const [success, message] = args;
-  executeAuth(`window.authApp && window.authApp.setResult(${JSON.stringify(success)}, ${JSON.stringify(message)});`);
+  executeInBrowser(browserState, `window.authApp && window.authApp.setResult(${JSON.stringify(success)}, ${JSON.stringify(message)});`);
   ensureAuthCursor();
 });
 
@@ -553,7 +501,7 @@ mp.events.add("client:charselect:show", (...args: unknown[]) => {
   const [charactersJson] = args as [string];
   ensureBrowser();
   state.authVisible = true;
-  state.authBrowser!.active = true;
+  browserState.browser!.active = true;
   state.lastCharactersJson = charactersJson;
 
   stopCinematicCam();
@@ -565,7 +513,7 @@ mp.events.add("client:charselect:show", (...args: unknown[]) => {
   (mp.game.ui as any).displayRadar(false);
   (mp.gui as any).chat.activate(false);
 
-  executeAuth(`window.authApp && window.authApp.showCharSelect(${JSON.stringify(charactersJson)});`);
+  executeInBrowser(browserState, `window.authApp && window.authApp.showCharSelect(${JSON.stringify(charactersJson)});`);
   mp.events.call("client:chat:authState", false);
   mp.events.call("client:hud:authState", false);
   ensureAuthCursor();
@@ -601,7 +549,7 @@ mp.events.add("cef:creator:preview", (...args: unknown[]) => {
 
 mp.events.add("cef:creator:notify", (...args: unknown[]) => {
   const [message] = args;
-  executeAuth(`window.authApp && window.authApp.setResult(false, ${JSON.stringify(message)});`);
+  executeInBrowser(browserState, `window.authApp && window.authApp.setResult(false, ${JSON.stringify(message)});`);
   ensureAuthCursor();
 });
 
@@ -613,7 +561,7 @@ mp.events.add("cef:creator:finish", (...args: unknown[]) => {
 
 mp.events.add("client:creator:result", (...args: unknown[]) => {
   const [success, message] = args;
-  executeAuth(`window.authApp && window.authApp.setResult(${JSON.stringify(success)}, ${JSON.stringify(message)});`);
+  executeInBrowser(browserState, `window.authApp && window.authApp.setResult(${JSON.stringify(success)}, ${JSON.stringify(message)});`);
   ensureAuthCursor();
 });
 
@@ -630,7 +578,7 @@ mp.events.add("client:auth:banned", (...args: unknown[]) => {
   const [rawBanData] = args as [string];
   ensureBrowser();
   state.authVisible = true;
-  state.authBrowser!.active = true;
+  browserState.browser!.active = true;
 
   stopCinematicCam();
   stopCreatorCamera();
@@ -650,7 +598,7 @@ mp.events.add("client:auth:banned", (...args: unknown[]) => {
     banData = { reason: "Kein Grund angegeben." };
   }
 
-  executeAuth(`window.authApp && window.authApp.showBanned(${JSON.stringify(banData)});`);
+  executeInBrowser(browserState, `window.authApp && window.authApp.showBanned(${JSON.stringify(banData)});`);
   ensureAuthCursor();
 
   setTimeout(() => {
@@ -662,7 +610,7 @@ mp.events.add("client:spawn:show", (...args: unknown[]) => {
   const [message] = args;
   ensureBrowser();
   state.authVisible = true;
-  state.authBrowser!.active = true;
+  browserState.browser!.active = true;
 
   stopCinematicCam();
   stopCreatorCamera();
@@ -673,7 +621,7 @@ mp.events.add("client:spawn:show", (...args: unknown[]) => {
   (mp.game.ui as any).displayRadar(false);
   (mp.gui as any).chat.activate(false);
 
-  executeAuth(`window.authApp && window.authApp.showSpawn(${JSON.stringify(message || "")});`);
+  executeInBrowser(browserState, `window.authApp && window.authApp.showSpawn(${JSON.stringify(message || "")});`);
   mp.events.call("client:chat:authState", false);
   mp.events.call("client:hud:authState", false);
   ensureAuthCursor();
@@ -687,7 +635,7 @@ mp.events.add("client:spawn:hide", () => {
   (mp.game.ui as any).displayHud(true);
   (mp.game.ui as any).displayRadar(true);
 
-  executeAuth("window.authApp && window.authApp.hide();");
+  executeInBrowser(browserState, "window.authApp && window.authApp.hide();");
   hideAuthCursor();
 });
 
@@ -698,7 +646,7 @@ mp.events.add("client:spawn:resolveGround", () => {
 
 mp.events.add("client:spawn:result", (...args: unknown[]) => {
   const [success, message] = args;
-  executeAuth(`window.authApp && window.authApp.setResult(${JSON.stringify(success)}, ${JSON.stringify(message)});`);
+  executeInBrowser(browserState, `window.authApp && window.authApp.setResult(${JSON.stringify(success)}, ${JSON.stringify(message)});`);
   ensureAuthCursor();
 });
 
