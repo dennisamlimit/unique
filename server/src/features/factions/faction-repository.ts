@@ -1,4 +1,5 @@
 import { getPool } from "../../infrastructure/database.js";
+import { DatabaseError } from "../../shared/errors.js";
 import type {
   Faction,
   FactionMembership,
@@ -212,23 +213,31 @@ export class FactionRepository {
   }
 
   async create(faction: Omit<Faction, "factionId" | "createdAt">) {
-    const result = await getPool().query(
-      `
+    try {
+      const result = await getPool().query(
+        `
         INSERT INTO factions (name, short_name, type, color_hex, map_icon_id)
         VALUES ($1, $2, $3, $4, $5)
         RETURNING *;
       `,
-      [faction.name, faction.shortName, faction.type, faction.colorHex, faction.mapIconId]
-    );
-    return mapFaction(result.rows[0]);
+        [faction.name, faction.shortName, faction.type, faction.colorHex, faction.mapIconId]
+      );
+      return mapFaction(result.rows[0]);
+    } catch (cause) {
+      throw new DatabaseError("faction create failed", cause);
+    }
   }
 
   async delete(factionId: number) {
-    const result = await getPool().query(
-      "DELETE FROM factions WHERE faction_id = $1 RETURNING *;",
-      [factionId]
-    );
-    return result.rowCount > 0;
+    try {
+      const result = await getPool().query(
+        "DELETE FROM factions WHERE faction_id = $1 RETURNING *;",
+        [factionId]
+      );
+      return result.rowCount > 0;
+    } catch (cause) {
+      throw new DatabaseError("faction delete failed", cause);
+    }
   }
 
   async getRanksByFactionId(factionId: number) {
@@ -356,16 +365,20 @@ export class FactionRepository {
   }
 
   async assignMember(factionId: number, accountId: number, rankLevel: number) {
-    const result = await getPool().query(
-      `
+    try {
+      const result = await getPool().query(
+        `
         INSERT INTO faction_memberships (account_id, faction_id, rank_level)
         VALUES ($1, $2, $3)
         ON CONFLICT (account_id) DO UPDATE SET faction_id = EXCLUDED.faction_id, rank_level = EXCLUDED.rank_level, joined_at = NOW()
         RETURNING *;
       `,
-      [accountId, factionId, rankLevel]
-    );
-    return mapMembership(result.rows[0]);
+        [accountId, factionId, rankLevel]
+      );
+      return mapMembership(result.rows[0]);
+    } catch (cause) {
+      throw new DatabaseError("assignMember failed", cause);
+    }
   }
 
   async removeMember(accountId: number) {
