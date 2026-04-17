@@ -1,12 +1,58 @@
 (() => {
+  // client_src/shared/browser-manager.ts
+  function createBrowserState() {
+    return {
+      browser: null,
+      isReady: false,
+      pendingActions: [],
+      readyProbe: null
+    };
+  }
+  function initBrowser(state, options) {
+    if (state.browser) return;
+    state.browser = mp.browsers.new(options.htmlPath);
+    state.browser.active = options.active ?? false;
+  }
+  function stopReadyProbe(state) {
+    if (!state.readyProbe) return;
+    clearInterval(state.readyProbe);
+    state.readyProbe = null;
+  }
+  function startReadyProbe(state, appName, options) {
+    stopReadyProbe(state);
+    const windowKey = (options == null ? void 0 : options.windowReadyKey) ?? `${appName}App`;
+    state.readyProbe = setInterval(() => {
+      if (!state.browser || state.isReady) {
+        stopReadyProbe(state);
+        return;
+      }
+      state.browser.execute(`
+      if (window.${windowKey} && !window.__${appName}ReadyNotified) {
+        window.__${appName}ReadyNotified = true;
+        if (typeof mp !== "undefined") {
+          mp.trigger("cef:${appName}:ready");
+        }
+      }
+    `);
+    }, 300);
+  }
+  function flushPending(state) {
+    if (!state.browser || !state.isReady) return;
+    while (state.pendingActions.length > 0) {
+      state.browser.execute(state.pendingActions.shift());
+    }
+  }
+  function executeInBrowser(state, js) {
+    if (!state.browser || !state.isReady) {
+      state.pendingActions.push(js);
+      return;
+    }
+    state.browser.execute(js);
+  }
+
   // client_src/orga/index.ts
-  var state = {
-    browser: null,
-    isReady: false,
-    isOpen: false,
-    pendingActions: [],
-    readyProbe: null
-  };
+  var browserState = createBrowserState();
+  var isOpen = false;
   var KEY_F6 = 117;
   function getFactionId() {
     try {
@@ -15,71 +61,29 @@
       return 0;
     }
   }
-  function flushPending() {
-    if (!state.browser || !state.isReady) {
-      return;
-    }
-    while (state.pendingActions.length > 0) {
-      state.browser.execute(state.pendingActions.shift());
-    }
-  }
-  function executeOrga(js) {
-    if (!state.browser || !state.isReady) {
-      state.pendingActions.push(js);
-      return;
-    }
-    state.browser.execute(js);
-  }
-  function stopReadyProbe() {
-    if (!state.readyProbe) {
-      return;
-    }
-    clearInterval(state.readyProbe);
-    state.readyProbe = null;
-  }
-  function startReadyProbe() {
-    stopReadyProbe();
-    state.readyProbe = setInterval(() => {
-      if (!state.browser || state.isReady) {
-        stopReadyProbe();
-        return;
-      }
-      state.browser.execute(`
-      if (window.orgaApp && !window.__orgaReadyNotified) {
-        window.__orgaReadyNotified = true;
-        if (typeof mp !== "undefined") {
-          mp.trigger("cef:orga:ready");
-        }
-      }
-    `);
-    }, 300);
-  }
   function ensureBrowser() {
-    if (state.browser) {
-      return;
-    }
-    state.browser = mp.browsers.new("package://orga/orga.html");
-    state.browser.active = false;
-    startReadyProbe();
+    if (browserState.browser) return;
+    initBrowser(browserState, { htmlPath: "package://orga/orga.html", active: false });
+    startReadyProbe(browserState, "orga");
   }
   function closeMenu() {
-    if (!state.browser) {
+    if (!browserState.browser) {
       return;
     }
-    state.isOpen = false;
-    state.browser.active = false;
+    isOpen = false;
+    browserState.browser.active = false;
     mp.gui.cursor.show(false, false);
     mp.events.call("client:chat:authState", true);
     mp.events.call("client:hud:authState", true);
-    executeOrga("window.orgaApp && window.orgaApp.close();");
+    executeInBrowser(browserState, "window.orgaApp && window.orgaApp.close();");
   }
   function openMenu() {
     if (getFactionId() <= 0) {
       return;
     }
     ensureBrowser();
-    state.isOpen = true;
-    state.browser.active = true;
+    isOpen = true;
+    browserState.browser.active = true;
     mp.gui.cursor.show(true, true);
     mp.events.call("client:chat:authState", false);
     mp.events.call("client:hud:authState", false);
@@ -92,31 +96,32 @@
     openMenu();
   });
   mp.events.add("cef:orga:ready", () => {
-    state.isReady = true;
-    stopReadyProbe();
-    flushPending();
+    if (browserState.isReady) return;
+    browserState.isReady = true;
+    stopReadyProbe(browserState);
+    flushPending(browserState);
   });
   mp.events.add("client:orga:open", (...args) => {
     const [payload] = args;
     ensureBrowser();
-    state.isOpen = true;
-    state.browser.active = true;
+    isOpen = true;
+    browserState.browser.active = true;
     mp.gui.cursor.show(true, true);
     mp.events.call("client:chat:authState", false);
     mp.events.call("client:hud:authState", false);
-    executeOrga(`window.orgaApp && window.orgaApp.open(${JSON.stringify(payload || "{}")});`);
+    executeInBrowser(browserState, `window.orgaApp && window.orgaApp.open(${JSON.stringify(payload || "{}")});`);
   });
   mp.events.add("cef:orga:close", () => {
     closeMenu();
   });
   mp.events.add("client:orga:setCatalog", (rawCatalog) => {
-    executeOrga(`window.orgaApp && window.orgaApp.setCatalog(${JSON.stringify(rawCatalog)});`);
+    executeInBrowser(browserState, `window.orgaApp && window.orgaApp.setCatalog(${JSON.stringify(rawCatalog)});`);
   });
   mp.events.add("client:orga:updateVehicles", (rawVehicles, newBalance) => {
-    executeOrga(`window.orgaApp && window.orgaApp.updateVehicles(${JSON.stringify(rawVehicles)}, ${newBalance});`);
+    executeInBrowser(browserState, `window.orgaApp && window.orgaApp.updateVehicles(${JSON.stringify(rawVehicles)}, ${newBalance});`);
   });
   mp.events.add("client:orga:updateVehiclesOnly", (rawVehicles) => {
-    executeOrga(`window.orgaApp && window.orgaApp.updateVehiclesOnly(${JSON.stringify(rawVehicles)});`);
+    executeInBrowser(browserState, `window.orgaApp && window.orgaApp.updateVehiclesOnly(${JSON.stringify(rawVehicles)});`);
   });
   mp.events.add("cef:orga:setRank", (...args) => {
     const [accountId, rankLevel] = args;
@@ -166,19 +171,19 @@
     mp.events.callRemote("server:orga:getCatalog");
   });
   mp.keys.bind(KEY_F6, true, () => {
-    if (state.isOpen) {
+    if (isOpen) {
       closeMenu();
       return;
     }
     openMenu();
   });
   mp.keys.bind(27, true, () => {
-    if (state.isOpen) {
+    if (isOpen) {
       closeMenu();
     }
   });
   mp.events.add("render", () => {
-    if (state.isOpen && getFactionId() <= 0) {
+    if (isOpen && getFactionId() <= 0) {
       closeMenu();
     }
   });

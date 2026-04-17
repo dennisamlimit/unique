@@ -4,8 +4,7 @@ import {
   createBrowserState,
   initBrowser,
   executeInBrowser,
-  flushPending,
-  stopReadyProbe
+  flushPending
 } from "../shared/browser-manager.js";
 
 const browserState = createBrowserState();

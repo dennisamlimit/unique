@@ -51,126 +51,127 @@
     return JSON.stringify(currentTheme);
   }
 
-  // client_src/chat/index.ts
-  var state = {
-    browser: null,
-    chatOpen: false,
-    currentMode: "ic",
-    isAuthenticated: false,
-    isReady: false,
-    pendingActions: [],
-    readyProbe: null
-  };
-  loadUiTheme();
-  function pushTheme() {
-    executeChat(`window.chatApp && window.chatApp.setTheme(${getUiThemeJson()});`);
+  // client_src/shared/browser-manager.ts
+  function createBrowserState() {
+    return {
+      browser: null,
+      isReady: false,
+      pendingActions: [],
+      readyProbe: null
+    };
   }
-  function flushPending() {
-    if (!state.browser || !state.isReady) {
-      return;
-    }
+  function initBrowser(state, options) {
+    if (state.browser) return;
+    state.browser = mp.browsers.new(options.htmlPath);
+    state.browser.active = options.active ?? false;
+  }
+  function stopReadyProbe(state) {
+    if (!state.readyProbe) return;
+    clearInterval(state.readyProbe);
+    state.readyProbe = null;
+  }
+  function startReadyProbe(state, appName, options) {
+    stopReadyProbe(state);
+    const windowKey = (options == null ? void 0 : options.windowReadyKey) ?? `${appName}App`;
+    state.readyProbe = setInterval(() => {
+      if (!state.browser || state.isReady) {
+        stopReadyProbe(state);
+        return;
+      }
+      state.browser.execute(`
+      if (window.${windowKey} && !window.__${appName}ReadyNotified) {
+        window.__${appName}ReadyNotified = true;
+        if (typeof mp !== "undefined") {
+          mp.trigger("cef:${appName}:ready");
+        }
+      }
+    `);
+    }, 300);
+  }
+  function flushPending(state) {
+    if (!state.browser || !state.isReady) return;
     while (state.pendingActions.length > 0) {
-      const action = state.pendingActions.shift();
-      state.browser.execute(action);
+      state.browser.execute(state.pendingActions.shift());
     }
   }
-  function executeChat(js) {
+  function executeInBrowser(state, js) {
     if (!state.browser || !state.isReady) {
       state.pendingActions.push(js);
       return;
     }
     state.browser.execute(js);
   }
-  function stopReadyProbe() {
-    if (!state.readyProbe) {
-      return;
-    }
-    clearInterval(state.readyProbe);
-    state.readyProbe = null;
-  }
-  function startReadyProbe() {
-    stopReadyProbe();
-    state.readyProbe = setInterval(() => {
-      if (!state.browser || state.isReady) {
-        stopReadyProbe();
-        return;
-      }
-      state.browser.execute(`
-      if (window.chatApp && !window.__chatReadyNotified) {
-        window.__chatReadyNotified = true;
-        if (typeof mp !== "undefined") {
-          mp.trigger("cef:chat:ready");
-        }
-      }
-    `);
-    }, 300);
+
+  // client_src/chat/index.ts
+  var browserState = createBrowserState();
+  var chatOpen = false;
+  var currentMode = "ic";
+  var isAuthenticated = false;
+  loadUiTheme();
+  function pushTheme() {
+    executeInBrowser(browserState, `window.chatApp && window.chatApp.setTheme(${getUiThemeJson()});`);
   }
   function createChatBrowser() {
-    if (state.browser) {
-      return;
-    }
-    state.browser = mp.browsers.new("package://chat/chat.html");
-    state.browser.active = true;
-    startReadyProbe();
+    if (browserState.browser) return;
+    initBrowser(browserState, { htmlPath: "package://chat/chat.html", active: true });
+    startReadyProbe(browserState, "chat");
   }
   function openChat() {
-    if (!state.browser || state.chatOpen || !state.isAuthenticated) {
+    if (!browserState.browser || chatOpen || !isAuthenticated) {
       return;
     }
-    state.chatOpen = true;
-    state.browser.active = true;
+    chatOpen = true;
+    browserState.browser.active = true;
     mp.gui.cursor.show(true, true);
     mp.events.call("client:chat:inputOpen", true);
-    executeChat(`window.chatApp && window.chatApp.openInput(${JSON.stringify(state.currentMode)});`);
+    executeInBrowser(browserState, `window.chatApp && window.chatApp.openInput(${JSON.stringify(currentMode)});`);
   }
   function closeChat() {
-    if (!state.browser) {
+    if (!browserState.browser) {
       return;
     }
-    const wasOpen = state.chatOpen;
-    state.chatOpen = false;
-    state.browser.active = true;
+    const wasOpen = chatOpen;
+    chatOpen = false;
+    browserState.browser.active = true;
     if (wasOpen) {
       mp.gui.cursor.show(false, false);
     }
     mp.events.call("client:chat:inputOpen", false);
-    executeChat("window.chatApp && window.chatApp.closeInput();");
+    executeInBrowser(browserState, "window.chatApp && window.chatApp.closeInput();");
   }
   createChatBrowser();
   mp.events.add("cef:chat:ready", () => {
-    if (state.isReady) {
-      return;
-    }
-    state.isReady = true;
-    stopReadyProbe();
-    flushPending();
+    if (browserState.isReady) return;
+    browserState.isReady = true;
+    stopReadyProbe(browserState);
+    flushPending(browserState);
     pushTheme();
-    executeChat(`window.chatApp && window.chatApp.setVisible(${JSON.stringify(state.isAuthenticated)});`);
+    executeInBrowser(browserState, `window.chatApp && window.chatApp.setVisible(${JSON.stringify(isAuthenticated)});`);
   });
   mp.events.add("client:chat:authState", (...args) => {
     const [stateValue] = args;
-    state.isAuthenticated = !!stateValue;
-    if (!state.isAuthenticated) {
+    isAuthenticated = !!stateValue;
+    if (!isAuthenticated) {
       closeChat();
     }
-    executeChat(`window.chatApp && window.chatApp.setVisible(${JSON.stringify(state.isAuthenticated)});`);
+    executeInBrowser(browserState, `window.chatApp && window.chatApp.setVisible(${JSON.stringify(isAuthenticated)});`);
   });
   mp.keys.bind(84, true, () => {
     openChat();
   });
   mp.keys.bind(27, true, () => {
-    if (!state.chatOpen) {
+    if (!chatOpen) {
       return;
     }
     closeChat();
   });
   mp.events.add("client:chat:addMessage", (...args) => {
     const [type, sender, message] = args;
-    executeChat(`window.chatApp && window.chatApp.addMessage(${JSON.stringify(type)}, ${JSON.stringify(sender)}, ${JSON.stringify(message)});`);
+    executeInBrowser(browserState, `window.chatApp && window.chatApp.addMessage(${JSON.stringify(type)}, ${JSON.stringify(sender)}, ${JSON.stringify(message)});`);
   });
   mp.events.add("cef:chat:setMode", (...args) => {
     const [mode] = args;
-    state.currentMode = mode;
+    currentMode = mode;
   });
   mp.events.add("cef:chat:submit", (...args) => {
     const [mode, text] = args;

@@ -51,66 +51,70 @@
     return JSON.stringify(currentTheme);
   }
 
-  // client_src/hud/index.ts
-  var state = {
-    browser: null,
-    isAuthenticated: false,
-    isReady: false,
-    pendingActions: [],
-    readyProbe: null,
-    tickInterval: null,
-    speedoInterval: null
-  };
-  loadUiTheme();
-  function pushTheme() {
-    executeHud(`window.hudApp && window.hudApp.setTheme(${getUiThemeJson()});`);
+  // client_src/shared/browser-manager.ts
+  function createBrowserState() {
+    return {
+      browser: null,
+      isReady: false,
+      pendingActions: [],
+      readyProbe: null
+    };
   }
-  function flushPending() {
-    if (!state.browser || !state.isReady) {
-      return;
-    }
+  function initBrowser(state, options) {
+    if (state.browser) return;
+    state.browser = mp.browsers.new(options.htmlPath);
+    state.browser.active = options.active ?? false;
+  }
+  function stopReadyProbe(state) {
+    if (!state.readyProbe) return;
+    clearInterval(state.readyProbe);
+    state.readyProbe = null;
+  }
+  function startReadyProbe(state, appName, options) {
+    stopReadyProbe(state);
+    const windowKey = (options == null ? void 0 : options.windowReadyKey) ?? `${appName}App`;
+    state.readyProbe = setInterval(() => {
+      if (!state.browser || state.isReady) {
+        stopReadyProbe(state);
+        return;
+      }
+      state.browser.execute(`
+      if (window.${windowKey} && !window.__${appName}ReadyNotified) {
+        window.__${appName}ReadyNotified = true;
+        if (typeof mp !== "undefined") {
+          mp.trigger("cef:${appName}:ready");
+        }
+      }
+    `);
+    }, 300);
+  }
+  function flushPending(state) {
+    if (!state.browser || !state.isReady) return;
     while (state.pendingActions.length > 0) {
       state.browser.execute(state.pendingActions.shift());
     }
   }
-  function executeHud(js) {
+  function executeInBrowser(state, js) {
     if (!state.browser || !state.isReady) {
       state.pendingActions.push(js);
       return;
     }
     state.browser.execute(js);
   }
-  function stopReadyProbe() {
-    if (!state.readyProbe) {
-      return;
-    }
-    clearInterval(state.readyProbe);
-    state.readyProbe = null;
-  }
-  function startReadyProbe() {
-    stopReadyProbe();
-    state.readyProbe = setInterval(() => {
-      if (!state.browser || state.isReady) {
-        stopReadyProbe();
-        return;
-      }
-      state.browser.execute(`
-      if (window.hudApp && !window.__hudReadyNotified) {
-        window.__hudReadyNotified = true;
-        if (typeof mp !== "undefined") {
-          mp.trigger("cef:hud:ready");
-        }
-      }
-    `);
-    }, 300);
+
+  // client_src/hud/index.ts
+  var browserState = createBrowserState();
+  var isAuthenticated = false;
+  var tickInterval = null;
+  var speedoInterval = null;
+  loadUiTheme();
+  function pushTheme() {
+    executeInBrowser(browserState, `window.hudApp && window.hudApp.setTheme(${getUiThemeJson()});`);
   }
   function createHudBrowser() {
-    if (state.browser) {
-      return;
-    }
-    state.browser = mp.browsers.new("package://hud/hud.html");
-    state.browser.active = true;
-    startReadyProbe();
+    if (browserState.browser) return;
+    initBrowser(browserState, { htmlPath: "package://hud/hud.html", active: true });
+    startReadyProbe(browserState, "hud");
   }
   function getHeadingLabel(heading) {
     if (heading < 45 || heading >= 315) return "N";
@@ -150,7 +154,7 @@
     }
   }
   function hideNativeHudParts() {
-    if (!state.isAuthenticated) {
+    if (!isAuthenticated) {
       return;
     }
     try {
@@ -180,26 +184,26 @@
     }
   }
   function updateHud() {
-    if (!state.isAuthenticated || !state.browser || !state.isReady) {
+    if (!isAuthenticated || !browserState.browser || !browserState.isReady) {
       return;
     }
     try {
       const position = mp.players.local.position;
       const zoneName = getZoneName(position);
       const heading = typeof mp.players.local.getHeading === "function" ? mp.players.local.getHeading() : 0;
-      executeHud(`window.hudApp && window.hudApp.updateLocation(${JSON.stringify(zoneName)}, ${JSON.stringify("")}, ${JSON.stringify("")}, ${JSON.stringify(getHeadingLabel(heading))});`);
-      executeHud(`window.hudApp && window.hudApp.updateStats(${JSON.stringify(getAccountId())}, ${JSON.stringify(getOnlineCount())}, ${JSON.stringify(getCashValue())}, ${JSON.stringify(getBankCashValue())});`);
+      executeInBrowser(browserState, `window.hudApp && window.hudApp.updateLocation(${JSON.stringify(zoneName)}, ${JSON.stringify("")}, ${JSON.stringify("")}, ${JSON.stringify(getHeadingLabel(heading))});`);
+      executeInBrowser(browserState, `window.hudApp && window.hudApp.updateStats(${JSON.stringify(getAccountId())}, ${JSON.stringify(getOnlineCount())}, ${JSON.stringify(getCashValue())}, ${JSON.stringify(getBankCashValue())});`);
     } catch (error) {
     }
   }
   function updateSpeedometer() {
-    if (!state.isAuthenticated || !state.browser || !state.isReady) {
+    if (!isAuthenticated || !browserState.browser || !browserState.isReady) {
       return;
     }
     const player = mp.players.local;
     const vehicle = player.vehicle;
     if (!vehicle) {
-      executeHud("window.hudApp && window.hudApp.updateSpeedometer(null);");
+      executeInBrowser(browserState, "window.hudApp && window.hudApp.updateSpeedometer(null);");
       return;
     }
     try {
@@ -230,26 +234,26 @@
         healthPercent,
         headlightsOn
       };
-      executeHud(`window.hudApp && window.hudApp.updateSpeedometer(${JSON.stringify(data)});`);
+      executeInBrowser(browserState, `window.hudApp && window.hudApp.updateSpeedometer(${JSON.stringify(data)});`);
     } catch (error) {
-      executeHud(`console.error("HUD Speedo Update Error: ${error instanceof Error ? error.message : String(error)}");`);
+      executeInBrowser(browserState, `console.error("HUD Speedo Update Error: ${error instanceof Error ? error.message : String(error)}");`);
     }
   }
   function startHudTick() {
-    if (state.tickInterval) {
+    if (tickInterval) {
       return;
     }
-    state.tickInterval = setInterval(updateHud, 700);
-    state.speedoInterval = setInterval(updateSpeedometer, 100);
+    tickInterval = setInterval(updateHud, 700);
+    speedoInterval = setInterval(updateSpeedometer, 100);
   }
   function stopHudTick() {
-    if (state.tickInterval) {
-      clearInterval(state.tickInterval);
-      state.tickInterval = null;
+    if (tickInterval) {
+      clearInterval(tickInterval);
+      tickInterval = null;
     }
-    if (state.speedoInterval) {
-      clearInterval(state.speedoInterval);
-      state.speedoInterval = null;
+    if (speedoInterval) {
+      clearInterval(speedoInterval);
+      speedoInterval = null;
     }
   }
   mp.events.add("playerReady", () => {
@@ -260,21 +264,21 @@
     hideNativeHudParts();
   });
   mp.events.add("cef:hud:ready", () => {
-    if (state.isReady) {
+    if (browserState.isReady) {
       return;
     }
-    state.isReady = true;
-    stopReadyProbe();
-    flushPending();
+    browserState.isReady = true;
+    stopReadyProbe(browserState);
+    flushPending(browserState);
     pushTheme();
-    executeHud(`window.hudApp && window.hudApp.setVisible(${JSON.stringify(state.isAuthenticated)});`);
+    executeInBrowser(browserState, `window.hudApp && window.hudApp.setVisible(${JSON.stringify(isAuthenticated)});`);
     updateHud();
   });
   mp.events.add("client:hud:authState", (...args) => {
     const [authState] = args;
-    state.isAuthenticated = !!authState;
-    executeHud(`window.hudApp && window.hudApp.setVisible(${JSON.stringify(state.isAuthenticated)});`);
-    if (state.isAuthenticated) {
+    isAuthenticated = !!authState;
+    executeInBrowser(browserState, `window.hudApp && window.hudApp.setVisible(${JSON.stringify(isAuthenticated)});`);
+    if (isAuthenticated) {
       startHudTick();
       updateHud();
     } else {
@@ -283,7 +287,7 @@
   });
   mp.events.add("client:hud:notify", (...args) => {
     const [type, title, message] = args;
-    executeHud(`window.hudApp && window.hudApp.addNotification(${JSON.stringify(type)}, ${JSON.stringify(title)}, ${JSON.stringify(message)});`);
+    executeInBrowser(browserState, `window.hudApp && window.hudApp.addNotification(${JSON.stringify(type)}, ${JSON.stringify(title)}, ${JSON.stringify(message)});`);
   });
   mp.events.add("client:adminJail:show", (...args) => {
     const [rawData] = args;
@@ -293,25 +297,25 @@
     } catch (error) {
       data = {};
     }
-    executeHud(`window.hudApp && window.hudApp.showJail(${JSON.stringify(data)});`);
+    executeInBrowser(browserState, `window.hudApp && window.hudApp.showJail(${JSON.stringify(data)});`);
   });
   mp.events.add("client:adminJail:hide", () => {
-    executeHud("window.hudApp && window.hudApp.hideJail();");
+    executeInBrowser(browserState, "window.hudApp && window.hudApp.hideJail();");
   });
   mp.events.add("client:tickets:hudData", (...args) => {
     const [payload] = args;
-    executeHud(`window.hudApp && window.hudApp.setAdminTickets(${JSON.stringify(payload || '{"visible":false,"openCount":0,"tickets":[]}')});`);
+    executeInBrowser(browserState, `window.hudApp && window.hudApp.setAdminTickets(${JSON.stringify(payload || '{"visible":false,"openCount":0,"tickets":[]}')});`);
   });
   mp.events.add("client:tickets:playerHudData", (...args) => {
     const [payload] = args;
-    executeHud(`window.hudApp && window.hudApp.setPlayerTicket(${JSON.stringify(payload || '{"visible":false,"ticket":null}')});`);
+    executeInBrowser(browserState, `window.hudApp && window.hudApp.setPlayerTicket(${JSON.stringify(payload || '{"visible":false,"ticket":null}')});`);
   });
   mp.events.add("client:tickets:mute", (...args) => {
     const [payload] = args;
-    executeHud(`window.hudApp && window.hudApp.showTicketMute(${JSON.stringify(payload || "{}")});`);
+    executeInBrowser(browserState, `window.hudApp && window.hudApp.showTicketMute(${JSON.stringify(payload || "{}")});`);
   });
   mp.events.add("client:tickets:muteClear", () => {
-    executeHud("window.hudApp && window.hudApp.hideTicketMute();");
+    executeInBrowser(browserState, "window.hudApp && window.hudApp.hideTicketMute();");
   });
   mp.events.add("client:uiTheme:sync", () => {
     pushTheme();

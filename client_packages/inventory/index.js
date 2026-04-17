@@ -1,76 +1,73 @@
 (() => {
+  // client_src/shared/browser-manager.ts
+  function createBrowserState() {
+    return {
+      browser: null,
+      isReady: false,
+      pendingActions: [],
+      readyProbe: null
+    };
+  }
+  function initBrowser(state, options) {
+    if (state.browser) return;
+    state.browser = mp.browsers.new(options.htmlPath);
+    state.browser.active = options.active ?? false;
+  }
+  function executeInBrowser(state, js) {
+    if (!state.browser || !state.isReady) {
+      state.pendingActions.push(js);
+      return;
+    }
+    state.browser.execute(js);
+  }
+
   // client_src/inventory/index.ts
+  var browserState = createBrowserState();
   var inventoryOpen = false;
-  var inventoryBrowser = null;
-  var isInventoryReady = false;
   var pendingOpenData = null;
   var INVENTORY_URL = "package://inventory/inventory.html";
-  mp.gui.chat.push("!{#EAB308}V1: Inventory Script geladen.");
+  function ensureBrowser() {
+    if (browserState.browser) return;
+    initBrowser(browserState, { htmlPath: INVENTORY_URL, active: false });
+  }
   function toggleInventory() {
     const cursorVisible = mp.gui.cursor.visible;
-    mp.gui.chat.push(`!{#EAB308}[DEBUG] toggleInventory: open=${inventoryOpen}, cursor=${cursorVisible}`);
+    if (cursorVisible && !inventoryOpen) return;
     inventoryOpen = !inventoryOpen;
-    mp.gui.chat.push(`!{#EAB308}[DEBUG] Neuer Status: ${inventoryOpen}`);
     if (inventoryOpen) {
-      const charName = mp.players.local.getVariable("CHARACTER_NAME") || "Unknown Player";
+      const charName = String(mp.players.local.getVariable("CHARACTER_NAME") ?? "Unknown Player");
       const health = mp.players.local.getHealth();
-      mp.gui.chat.push(`!{#EAB308}[DEBUG] Char: ${charName}, Health: ${health}`);
-      const openData = {
-        name: charName,
-        health,
-        inventory: []
-      };
-      if (!inventoryBrowser) {
-        mp.gui.chat.push("!{#EAB308}[DEBUG] Erstelle Browser...");
-        mp.gui.chat.push(`!{#EAB308}[DEBUG] URL: ${INVENTORY_URL}`);
-        inventoryBrowser = mp.browsers.new(INVENTORY_URL);
-        if (!inventoryBrowser) {
-          mp.gui.chat.push("!{#EF4444}[CRITICAL] Browser konnte NICHT erstellt werden!");
-        } else {
-          inventoryBrowser.active = true;
-          inventoryBrowser.order = 255;
-          mp.gui.chat.push("!{#22C55E}[DEBUG] Browser-Objekt erstellt (Active=true, Order=255)");
-        }
-        isInventoryReady = false;
-        pendingOpenData = openData;
-      } else if (!isInventoryReady) {
-        mp.gui.chat.push("!{#EAB308}[DEBUG] Browser l\xE4dt noch, Daten geparkt.");
+      const openData = { name: charName, health, inventory: [] };
+      ensureBrowser();
+      if (!browserState.isReady) {
         pendingOpenData = openData;
       } else {
-        mp.gui.chat.push("!{#EAB308}[DEBUG] Rufe .show im Browser auf.");
-        inventoryBrowser.execute(`window.inventoryApp.show(${JSON.stringify(openData)})`);
+        executeInBrowser(browserState, `window.inventoryApp.show(${JSON.stringify(openData)})`);
       }
       mp.events.callRemote("server:inventory:requestUpdate");
       mp.gui.cursor.show(true, true);
       mp.game.ui.displayRadar(false);
     } else {
-      if (inventoryBrowser && isInventoryReady) {
-        inventoryBrowser.execute(`window.inventoryApp.hide()`);
-      }
+      executeInBrowser(browserState, `window.inventoryApp.hide()`);
       mp.gui.cursor.show(false, false);
       mp.game.ui.displayRadar(true);
     }
   }
-  mp.gui.chat.push("!{#EAB308}[DEBUG] Binde Taste 'I'.");
   mp.keys.bind(73, true, () => {
-    mp.gui.chat.push("!{#EAB308}[DEBUG] Taste 'I' gedr\xFCckt.");
     toggleInventory();
   });
   mp.events.add("client:cmd:inv", () => {
-    mp.gui.chat.push("!{#EAB308}[DEBUG] Kommando /inv aufgerufen.");
     toggleInventory();
   });
   mp.events.add("client:inventory:ready", () => {
-    mp.gui.chat.push("!{#22C55E}[DEBUG] CEF Inventory Ready!");
-    isInventoryReady = true;
-    if (inventoryBrowser && pendingOpenData) {
-      mp.gui.chat.push("!{#EAB308}[DEBUG] F\xFChre geparktes .show aus.");
-      inventoryBrowser.execute(`window.inventoryApp.show(${JSON.stringify(pendingOpenData)})`);
+    if (browserState.isReady) return;
+    browserState.isReady = true;
+    if (pendingOpenData) {
+      executeInBrowser(browserState, `window.inventoryApp.show(${JSON.stringify(pendingOpenData)})`);
       pendingOpenData = null;
     }
   });
   mp.events.add("client:inventory:close", () => {
-    mp.gui.chat.push("!{#EAB308}[DEBUG] CEF Event: close");
     if (inventoryOpen) {
       inventoryOpen = false;
       mp.gui.cursor.show(false, false);
@@ -78,30 +75,26 @@
     }
   });
   mp.events.add("client:inventory:useItem", (uid) => {
-    if (typeof uid !== "string" || uid.length === 0) {
-      return;
-    }
+    if (typeof uid !== "string" || uid.length === 0) return;
     mp.events.callRemote("server:inventory:useItem", uid);
   });
   mp.events.add("client:inventory:moveItem", (uid, targetSlot) => {
-    if (typeof uid !== "string" || uid.length === 0 || !Number.isInteger(targetSlot)) {
-      return;
-    }
+    if (typeof uid !== "string" || uid.length === 0 || !Number.isInteger(targetSlot)) return;
     mp.events.callRemote("server:inventory:moveItem", uid, targetSlot);
   });
   mp.events.add("client:inventory:update", (inventoryJson) => {
-    if (inventoryBrowser && inventoryOpen) {
-      inventoryBrowser.execute(`window.inventoryApp.updateInventory(${inventoryJson})`);
+    if (inventoryOpen) {
+      executeInBrowser(browserState, `window.inventoryApp.updateInventory(${inventoryJson})`);
     }
   });
   mp.events.add("client:inventory:updateStatus", (health) => {
-    if (inventoryBrowser && inventoryOpen) {
-      inventoryBrowser.execute(`window.inventoryApp.updateStatus(${health})`);
+    if (inventoryOpen) {
+      executeInBrowser(browserState, `window.inventoryApp.updateStatus(${health})`);
     }
   });
   mp.events.add("client:inventory:updateEquipState", (uid, equipped) => {
-    if (inventoryBrowser && inventoryOpen) {
-      inventoryBrowser.execute(`window.inventoryApp.updateEquipState(${JSON.stringify(uid)}, ${JSON.stringify(equipped)})`);
+    if (inventoryOpen) {
+      executeInBrowser(browserState, `window.inventoryApp.updateEquipState(${JSON.stringify(uid)}, ${JSON.stringify(equipped)})`);
     }
   });
 })();

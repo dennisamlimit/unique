@@ -51,17 +51,63 @@
     return JSON.stringify(currentTheme);
   }
 
+  // client_src/shared/browser-manager.ts
+  function createBrowserState() {
+    return {
+      browser: null,
+      isReady: false,
+      pendingActions: [],
+      readyProbe: null
+    };
+  }
+  function initBrowser(state, options) {
+    if (state.browser) return;
+    state.browser = mp.browsers.new(options.htmlPath);
+    state.browser.active = options.active ?? false;
+  }
+  function stopReadyProbe(state) {
+    if (!state.readyProbe) return;
+    clearInterval(state.readyProbe);
+    state.readyProbe = null;
+  }
+  function startReadyProbe(state, appName, options) {
+    stopReadyProbe(state);
+    const windowKey = (options == null ? void 0 : options.windowReadyKey) ?? `${appName}App`;
+    state.readyProbe = setInterval(() => {
+      if (!state.browser || state.isReady) {
+        stopReadyProbe(state);
+        return;
+      }
+      state.browser.execute(`
+      if (window.${windowKey} && !window.__${appName}ReadyNotified) {
+        window.__${appName}ReadyNotified = true;
+        if (typeof mp !== "undefined") {
+          mp.trigger("cef:${appName}:ready");
+        }
+      }
+    `);
+    }, 300);
+  }
+  function flushPending(state) {
+    if (!state.browser || !state.isReady) return;
+    while (state.pendingActions.length > 0) {
+      state.browser.execute(state.pendingActions.shift());
+    }
+  }
+  function executeInBrowser(state, js) {
+    if (!state.browser || !state.isReady) {
+      state.pendingActions.push(js);
+      return;
+    }
+    state.browser.execute(js);
+  }
+
   // client_src/admin/index.ts
-  var state = {
-    browser: null,
-    isReady: false,
-    isOpen: false,
-    pendingActions: [],
-    readyProbe: null
-  };
+  var browserState = createBrowserState();
+  var isOpen = false;
   loadUiTheme();
   function pushTheme() {
-    executeAdmin(`window.adminApp && window.adminApp.setTheme(${getUiThemeJson()});`);
+    executeInBrowser(browserState, `window.adminApp && window.adminApp.setTheme(${getUiThemeJson()});`);
   }
   var KEY_F3 = 114;
   function getAdminLevel() {
@@ -114,63 +160,21 @@
       };
     });
   }
-  function flushPending() {
-    if (!state.browser || !state.isReady) {
-      return;
-    }
-    while (state.pendingActions.length > 0) {
-      state.browser.execute(state.pendingActions.shift());
-    }
-  }
-  function executeAdmin(js) {
-    if (!state.browser || !state.isReady) {
-      state.pendingActions.push(js);
-      return;
-    }
-    state.browser.execute(js);
-  }
-  function stopReadyProbe() {
-    if (!state.readyProbe) {
-      return;
-    }
-    clearInterval(state.readyProbe);
-    state.readyProbe = null;
-  }
-  function startReadyProbe() {
-    stopReadyProbe();
-    state.readyProbe = setInterval(() => {
-      if (!state.browser || state.isReady) {
-        stopReadyProbe();
-        return;
-      }
-      state.browser.execute(`
-      if (window.adminApp && !window.__adminReadyNotified) {
-        window.__adminReadyNotified = true;
-        if (typeof mp !== "undefined") {
-          mp.trigger("cef:admin:ready");
-        }
-      }
-    `);
-    }, 300);
-  }
   function ensureBrowser() {
-    if (state.browser) {
-      return;
-    }
-    state.browser = mp.browsers.new("package://admin/admin.html");
-    state.browser.active = false;
-    startReadyProbe();
+    if (browserState.browser) return;
+    initBrowser(browserState, { htmlPath: "package://admin/admin.html", active: false });
+    startReadyProbe(browserState, "admin");
   }
   function closeAdminMenu() {
-    if (!state.browser) {
+    if (!browserState.browser) {
       return;
     }
-    state.isOpen = false;
-    state.browser.active = false;
+    isOpen = false;
+    browserState.browser.active = false;
     mp.gui.cursor.show(false, false);
     mp.events.call("client:chat:authState", true);
     mp.events.call("client:hud:authState", true);
-    executeAdmin("window.adminApp && window.adminApp.close();");
+    executeInBrowser(browserState, "window.adminApp && window.adminApp.close();");
   }
   function openAdminMenu() {
     const level = getAdminLevel();
@@ -178,12 +182,12 @@
       return;
     }
     ensureBrowser();
-    state.isOpen = true;
-    state.browser.active = true;
+    isOpen = true;
+    browserState.browser.active = true;
     mp.events.call("client:chat:authState", false);
     mp.events.call("client:hud:authState", false);
     mp.gui.cursor.show(true, true);
-    executeAdmin(`window.adminApp && window.adminApp.open(${JSON.stringify(level)}, ${JSON.stringify(collectPlayers())});`);
+    executeInBrowser(browserState, `window.adminApp && window.adminApp.open(${JSON.stringify(level)}, ${JSON.stringify(collectPlayers())});`);
     mp.events.callRemote("server:admin:requestFactionData");
     mp.events.callRemote("server:admin:getCommandList");
     if (level >= 5) {
@@ -192,7 +196,7 @@
     mp.events.callRemote("server:admin:tickets:request");
   }
   function toggleAdminMenu() {
-    if (state.isOpen) {
+    if (isOpen) {
       closeAdminMenu();
       return;
     }
@@ -202,12 +206,10 @@
     ensureBrowser();
   });
   mp.events.add("cef:admin:ready", () => {
-    if (state.isReady) {
-      return;
-    }
-    state.isReady = true;
-    stopReadyProbe();
-    flushPending();
+    if (browserState.isReady) return;
+    browserState.isReady = true;
+    stopReadyProbe(browserState);
+    flushPending(browserState);
     pushTheme();
   });
   mp.events.add("client:uiTheme:sync", () => {
@@ -220,31 +222,31 @@
     closeAdminMenu();
   });
   mp.events.add("render", () => {
-    if (state.isOpen && (!isAdminModeEnabled() || getAdminLevel() <= 0)) {
+    if (isOpen && (!isAdminModeEnabled() || getAdminLevel() <= 0)) {
       closeAdminMenu();
     }
   });
   mp.events.add("client:admin:setFactions", (...args) => {
     const [payload] = args;
-    executeAdmin(`window.adminApp && window.adminApp.setFactions(${JSON.stringify(payload || "[]")});`);
+    executeInBrowser(browserState, `window.adminApp && window.adminApp.setFactions(${JSON.stringify(payload || "[]")});`);
   });
   mp.events.add("client:admin:receiveCommands", (payload) => {
-    executeAdmin(`window.adminApp && window.adminApp.setCommands(${JSON.stringify(payload)});`);
+    executeInBrowser(browserState, `window.adminApp && window.adminApp.setCommands(${JSON.stringify(payload)});`);
   });
   mp.events.add("client:admin:receiveLogs", (payload) => {
-    executeAdmin(`window.adminApp && window.adminApp.setLogs(${JSON.stringify(payload)});`);
+    executeInBrowser(browserState, `window.adminApp && window.adminApp.setLogs(${JSON.stringify(payload)});`);
   });
   mp.events.add("client:admin:setTickets", (...args) => {
     const [payload] = args;
-    executeAdmin(`window.adminApp && window.adminApp.setTickets(${JSON.stringify(payload || "[]")});`);
+    executeInBrowser(browserState, `window.adminApp && window.adminApp.setTickets(${JSON.stringify(payload || "[]")});`);
   });
   mp.events.add("client:admin:setTicketInsight", (...args) => {
     const [payload] = args;
-    executeAdmin(`window.adminApp && window.adminApp.setTicketInsight(${JSON.stringify(payload || "{}")});`);
+    executeInBrowser(browserState, `window.adminApp && window.adminApp.setTicketInsight(${JSON.stringify(payload || "{}")});`);
   });
   mp.events.add("client:admin:setTicketPlayerHistory", (...args) => {
     const [payload] = args;
-    executeAdmin(`window.adminApp && window.adminApp.setTicketPlayerHistory(${JSON.stringify(payload || "{}")});`);
+    executeInBrowser(browserState, `window.adminApp && window.adminApp.setTicketPlayerHistory(${JSON.stringify(payload || "{}")});`);
   });
   mp.events.add("cef:admin:createFaction", (...args) => {
     const [type, shortName, name, colorHex, mapIconId] = args;

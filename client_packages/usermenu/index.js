@@ -62,77 +62,87 @@
     return JSON.stringify(currentTheme);
   }
 
-  // client_src/usermenu/index.ts
-  var state = {
-    browser: null,
-    isReady: false,
-    isOpen: false,
-    chatInputOpen: false,
-    cefInputFocused: false,
-    pendingActions: [],
-    readyProbe: null
-  };
-  var KEY_M = 77;
-  loadUiTheme();
-  function pushTheme() {
-    executeMenu(`window.usermenuApp && window.usermenuApp.setTheme(${getUiThemeJson()});`);
+  // client_src/shared/browser-manager.ts
+  function createBrowserState() {
+    return {
+      browser: null,
+      isReady: false,
+      pendingActions: [],
+      readyProbe: null
+    };
   }
-  function flushPending() {
+  function initBrowser(state, options) {
+    if (state.browser) return;
+    state.browser = mp.browsers.new(options.htmlPath);
+    state.browser.active = options.active ?? false;
+  }
+  function stopReadyProbe(state) {
+    if (!state.readyProbe) return;
+    clearInterval(state.readyProbe);
+    state.readyProbe = null;
+  }
+  function startReadyProbe(state, appName, options) {
+    stopReadyProbe(state);
+    const windowKey = (options == null ? void 0 : options.windowReadyKey) ?? `${appName}App`;
+    state.readyProbe = setInterval(() => {
+      if (!state.browser || state.isReady) {
+        stopReadyProbe(state);
+        return;
+      }
+      state.browser.execute(`
+      if (window.${windowKey} && !window.__${appName}ReadyNotified) {
+        window.__${appName}ReadyNotified = true;
+        if (typeof mp !== "undefined") {
+          mp.trigger("cef:${appName}:ready");
+        }
+      }
+    `);
+    }, 300);
+  }
+  function flushPending(state) {
     if (!state.browser || !state.isReady) return;
     while (state.pendingActions.length > 0) {
       state.browser.execute(state.pendingActions.shift());
     }
   }
-  function executeMenu(js) {
+  function executeInBrowser(state, js) {
     if (!state.browser || !state.isReady) {
       state.pendingActions.push(js);
       return;
     }
     state.browser.execute(js);
   }
-  function stopReadyProbe() {
-    if (!state.readyProbe) return;
-    clearInterval(state.readyProbe);
-    state.readyProbe = null;
-  }
-  function startReadyProbe() {
-    stopReadyProbe();
-    state.readyProbe = setInterval(() => {
-      if (!state.browser || state.isReady) {
-        stopReadyProbe();
-        return;
-      }
-      state.browser.execute(`
-      if (window.usermenuApp && !window.__usermenuReadyNotified) {
-        window.__usermenuReadyNotified = true;
-        if (typeof mp !== "undefined") {
-          mp.trigger("cef:usermenu:ready");
-        }
-      }
-    `);
-    }, 300);
+
+  // client_src/usermenu/index.ts
+  var browserState = createBrowserState();
+  var isOpen = false;
+  var chatInputOpen = false;
+  var cefInputFocused = false;
+  var KEY_M = 77;
+  loadUiTheme();
+  function pushTheme() {
+    executeInBrowser(browserState, `window.usermenuApp && window.usermenuApp.setTheme(${getUiThemeJson()});`);
   }
   function ensureBrowser() {
-    if (state.browser) return;
-    state.browser = mp.browsers.new("package://usermenu/usermenu.html");
-    state.browser.active = false;
-    startReadyProbe();
+    if (browserState.browser) return;
+    initBrowser(browserState, { htmlPath: "package://usermenu/usermenu.html", active: false });
+    startReadyProbe(browserState, "usermenu");
   }
   function closeMenu() {
-    if (!state.browser) return;
-    state.isOpen = false;
-    state.browser.active = false;
+    if (!browserState.browser) return;
+    isOpen = false;
+    browserState.browser.active = false;
     mp.gui.cursor.show(false, false);
     mp.events.call("client:chat:authState", true);
     mp.events.call("client:hud:authState", true);
-    executeMenu("window.usermenuApp && window.usermenuApp.close();");
+    executeInBrowser(browserState, "window.usermenuApp && window.usermenuApp.close();");
   }
   function openMenu() {
     const accountId = Number(mp.players.local.getVariable("ACCOUNT_ID") ?? 0);
     if (accountId <= 0) return;
     ensureBrowser();
-    state.isOpen = true;
-    state.browser.active = true;
+    isOpen = true;
+    browserState.browser.active = true;
     mp.gui.cursor.show(true, true);
     mp.events.call("client:chat:authState", false);
     mp.events.call("client:hud:authState", false);
@@ -143,23 +153,24 @@
     ensureBrowser();
   });
   mp.events.add("cef:usermenu:ready", () => {
-    state.isReady = true;
-    stopReadyProbe();
-    flushPending();
+    if (browserState.isReady) return;
+    browserState.isReady = true;
+    stopReadyProbe(browserState);
+    flushPending(browserState);
     pushTheme();
   });
   mp.events.add("client:chat:inputOpen", (...args) => {
-    state.chatInputOpen = !!args[0];
+    chatInputOpen = !!args[0];
   });
   mp.events.add("client:usermenu:open", (...args) => {
     const [payload] = args;
     ensureBrowser();
-    state.isOpen = true;
-    state.browser.active = true;
+    isOpen = true;
+    browserState.browser.active = true;
     mp.gui.cursor.show(true, true);
     mp.events.call("client:chat:authState", false);
     mp.events.call("client:hud:authState", false);
-    executeMenu(`window.usermenuApp && window.usermenuApp.open(${payload || "{}"});`);
+    executeInBrowser(browserState, `window.usermenuApp && window.usermenuApp.open(${payload || "{}"});`);
     pushTheme();
   });
   mp.events.add("cef:usermenu:close", () => {
@@ -173,7 +184,7 @@
   });
   mp.events.add("client:usermenu:setTickets", (...args) => {
     const [payload] = args;
-    executeMenu(`window.usermenuApp && window.usermenuApp.setTickets(${JSON.stringify(payload || '{"allowedPrefixes":[],"tickets":[]}')});`);
+    executeInBrowser(browserState, `window.usermenuApp && window.usermenuApp.setTickets(${JSON.stringify(payload || '{"allowedPrefixes":[],"tickets":[]}')});`);
   });
   mp.events.add("cef:usermenu:requestTickets", () => {
     mp.events.callRemote("server:tickets:requestMine");
@@ -187,7 +198,7 @@
     mp.events.callRemote("server:tickets:reply", ticketId, message);
   });
   mp.events.add("cef:usermenu:inputFocus", (...args) => {
-    state.cefInputFocused = !!args[0];
+    cefInputFocused = !!args[0];
   });
   mp.events.add("cef:usermenu:updateTheme", (...args) => {
     const [payload] = args;
@@ -204,15 +215,15 @@
     pushTheme();
   });
   mp.keys.bind(KEY_M, true, () => {
-    if (state.chatInputOpen || state.cefInputFocused) return;
-    if (mp.gui.cursor.visible && !state.isOpen) return;
-    if (state.isOpen) {
+    if (chatInputOpen || cefInputFocused) return;
+    if (mp.gui.cursor.visible && !isOpen) return;
+    if (isOpen) {
       closeMenu();
       return;
     }
     openMenu();
   });
   mp.keys.bind(27, true, () => {
-    if (state.isOpen) closeMenu();
+    if (isOpen) closeMenu();
   });
 })();

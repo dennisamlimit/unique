@@ -1,15 +1,63 @@
 (() => {
+  // client_src/shared/browser-manager.ts
+  function createBrowserState() {
+    return {
+      browser: null,
+      isReady: false,
+      pendingActions: [],
+      readyProbe: null
+    };
+  }
+  function initBrowser(state2, options) {
+    if (state2.browser) return;
+    state2.browser = mp.browsers.new(options.htmlPath);
+    state2.browser.active = options.active ?? false;
+  }
+  function stopReadyProbe(state2) {
+    if (!state2.readyProbe) return;
+    clearInterval(state2.readyProbe);
+    state2.readyProbe = null;
+  }
+  function startReadyProbe(state2, appName, options) {
+    stopReadyProbe(state2);
+    const windowKey = (options == null ? void 0 : options.windowReadyKey) ?? `${appName}App`;
+    state2.readyProbe = setInterval(() => {
+      if (!state2.browser || state2.isReady) {
+        stopReadyProbe(state2);
+        return;
+      }
+      state2.browser.execute(`
+      if (window.${windowKey} && !window.__${appName}ReadyNotified) {
+        window.__${appName}ReadyNotified = true;
+        if (typeof mp !== "undefined") {
+          mp.trigger("cef:${appName}:ready");
+        }
+      }
+    `);
+    }, 300);
+  }
+  function flushPending(state2) {
+    if (!state2.browser || !state2.isReady) return;
+    while (state2.pendingActions.length > 0) {
+      state2.browser.execute(state2.pendingActions.shift());
+    }
+  }
+  function executeInBrowser(state2, js) {
+    if (!state2.browser || !state2.isReady) {
+      state2.pendingActions.push(js);
+      return;
+    }
+    state2.browser.execute(js);
+  }
+
   // client_src/auth/index.ts
+  var browserState = createBrowserState();
   var state = {
-    authBrowser: null,
     currentCam: null,
     nextCam: null,
     authVisible: false,
     switchTimer: null,
     camState: 0,
-    isReady: false,
-    pendingActions: [],
-    readyProbe: null,
     lastCharactersJson: null
   };
   var creatorState = {
@@ -68,51 +116,9 @@
     }
   ];
   function ensureBrowser() {
-    if (state.authBrowser) {
-      return;
-    }
-    state.authBrowser = mp.browsers.new("package://auth/auth.html");
-    state.authBrowser.active = true;
-    startReadyProbe();
-  }
-  function executeAuth(js) {
-    if (!state.authBrowser || !state.isReady) {
-      state.pendingActions.push(js);
-      return;
-    }
-    state.authBrowser.execute(js);
-  }
-  function flushPending() {
-    if (!state.authBrowser || !state.isReady) {
-      return;
-    }
-    while (state.pendingActions.length > 0) {
-      state.authBrowser.execute(state.pendingActions.shift());
-    }
-  }
-  function stopReadyProbe() {
-    if (!state.readyProbe) {
-      return;
-    }
-    clearInterval(state.readyProbe);
-    state.readyProbe = null;
-  }
-  function startReadyProbe() {
-    stopReadyProbe();
-    state.readyProbe = setInterval(() => {
-      if (!state.authBrowser || state.isReady) {
-        stopReadyProbe();
-        return;
-      }
-      state.authBrowser.execute(`
-      if (window.authApp && !window.__authReadyNotified) {
-        window.__authReadyNotified = true;
-        if (typeof mp !== "undefined") {
-          mp.trigger("cef:auth:ready");
-        }
-      }
-    `);
-    }, 300);
+    if (browserState.browser) return;
+    initBrowser(browserState, { htmlPath: "package://auth/auth.html", active: true });
+    startReadyProbe(browserState, "auth");
   }
   function createCam(name, data) {
     const cam = mp.cameras.new(name, data.pos, new mp.Vector3(0, 0, 0), data.fov);
@@ -210,8 +216,8 @@
     if (!state.authVisible) {
       return;
     }
-    if (state.authBrowser) {
-      state.authBrowser.active = true;
+    if (browserState.browser) {
+      browserState.browser.active = true;
     }
     mp.gui.cursor.show(true, true);
   }
@@ -394,23 +400,21 @@
     }, 250);
   });
   mp.events.add("cef:auth:ready", () => {
-    if (state.isReady) {
-      return;
-    }
-    state.isReady = true;
-    stopReadyProbe();
-    flushPending();
+    if (browserState.isReady) return;
+    browserState.isReady = true;
+    stopReadyProbe(browserState);
+    flushPending(browserState);
   });
   mp.events.add("client:auth:show", () => {
     ensureBrowser();
     state.authVisible = true;
-    state.authBrowser.active = true;
+    browserState.browser.active = true;
     mp.players.local.freezePosition(true);
     mp.players.local.setAlpha(0);
     mp.game.ui.displayHud(false);
     mp.game.ui.displayRadar(false);
     startCinematicCam();
-    executeAuth("window.authApp && window.authApp.show();");
+    executeInBrowser(browserState, "window.authApp && window.authApp.show();");
     mp.events.call("client:chat:authState", false);
     mp.events.call("client:hud:authState", false);
     ensureAuthCursor();
@@ -426,7 +430,7 @@
     mp.game.ui.displayRadar(true);
     stopCinematicCam();
     stopCreatorCamera();
-    executeAuth("window.authApp && window.authApp.hide();");
+    executeInBrowser(browserState, "window.authApp && window.authApp.hide();");
     mp.events.call("client:chat:authState", true);
     mp.events.call("client:hud:authState", true);
     hideAuthCursor();
@@ -434,31 +438,31 @@
   mp.events.add("client:auth:showCreator", () => {
     ensureBrowser();
     state.authVisible = true;
-    state.authBrowser.active = true;
+    browserState.browser.active = true;
     mp.game.ui.displayHud(false);
     mp.game.ui.displayRadar(false);
     mp.gui.chat.activate(false);
     startCreatorCamera();
-    executeAuth("window.authApp && window.authApp.showCreator();");
+    executeInBrowser(browserState, "window.authApp && window.authApp.showCreator();");
     mp.events.call("client:chat:authState", false);
     mp.events.call("client:hud:authState", false);
     ensureAuthCursor();
   });
   mp.events.add("client:auth:result", (...args) => {
     const [success, message] = args;
-    executeAuth(`window.authApp && window.authApp.setResult(${JSON.stringify(success)}, ${JSON.stringify(message)});`);
+    executeInBrowser(browserState, `window.authApp && window.authApp.setResult(${JSON.stringify(success)}, ${JSON.stringify(message)});`);
     ensureAuthCursor();
   });
   mp.events.add("client:charselect:result", (...args) => {
     const [success, message] = args;
-    executeAuth(`window.authApp && window.authApp.setResult(${JSON.stringify(success)}, ${JSON.stringify(message)});`);
+    executeInBrowser(browserState, `window.authApp && window.authApp.setResult(${JSON.stringify(success)}, ${JSON.stringify(message)});`);
     ensureAuthCursor();
   });
   mp.events.add("client:charselect:show", (...args) => {
     const [charactersJson] = args;
     ensureBrowser();
     state.authVisible = true;
-    state.authBrowser.active = true;
+    browserState.browser.active = true;
     state.lastCharactersJson = charactersJson;
     stopCinematicCam();
     stopCreatorCamera();
@@ -467,7 +471,7 @@
     mp.game.ui.displayHud(false);
     mp.game.ui.displayRadar(false);
     mp.gui.chat.activate(false);
-    executeAuth(`window.authApp && window.authApp.showCharSelect(${JSON.stringify(charactersJson)});`);
+    executeInBrowser(browserState, `window.authApp && window.authApp.showCharSelect(${JSON.stringify(charactersJson)});`);
     mp.events.call("client:chat:authState", false);
     mp.events.call("client:hud:authState", false);
     ensureAuthCursor();
@@ -497,7 +501,7 @@
   });
   mp.events.add("cef:creator:notify", (...args) => {
     const [message] = args;
-    executeAuth(`window.authApp && window.authApp.setResult(false, ${JSON.stringify(message)});`);
+    executeInBrowser(browserState, `window.authApp && window.authApp.setResult(false, ${JSON.stringify(message)});`);
     ensureAuthCursor();
   });
   mp.events.add("cef:creator:finish", (...args) => {
@@ -507,7 +511,7 @@
   });
   mp.events.add("client:creator:result", (...args) => {
     const [success, message] = args;
-    executeAuth(`window.authApp && window.authApp.setResult(${JSON.stringify(success)}, ${JSON.stringify(message)});`);
+    executeInBrowser(browserState, `window.authApp && window.authApp.setResult(${JSON.stringify(success)}, ${JSON.stringify(message)});`);
     ensureAuthCursor();
   });
   mp.events.add("client:creator:apply", (...args) => {
@@ -521,7 +525,7 @@
     const [rawBanData] = args;
     ensureBrowser();
     state.authVisible = true;
-    state.authBrowser.active = true;
+    browserState.browser.active = true;
     stopCinematicCam();
     stopCreatorCamera();
     mp.players.local.freezePosition(true);
@@ -537,7 +541,7 @@
     } catch (error) {
       banData = { reason: "Kein Grund angegeben." };
     }
-    executeAuth(`window.authApp && window.authApp.showBanned(${JSON.stringify(banData)});`);
+    executeInBrowser(browserState, `window.authApp && window.authApp.showBanned(${JSON.stringify(banData)});`);
     ensureAuthCursor();
     setTimeout(() => {
       mp.events.callRemote("server:auth:banDisconnect");
@@ -547,7 +551,7 @@
     const [message] = args;
     ensureBrowser();
     state.authVisible = true;
-    state.authBrowser.active = true;
+    browserState.browser.active = true;
     stopCinematicCam();
     stopCreatorCamera();
     mp.players.local.freezePosition(true);
@@ -555,7 +559,7 @@
     mp.game.ui.displayHud(false);
     mp.game.ui.displayRadar(false);
     mp.gui.chat.activate(false);
-    executeAuth(`window.authApp && window.authApp.showSpawn(${JSON.stringify(message || "")});`);
+    executeInBrowser(browserState, `window.authApp && window.authApp.showSpawn(${JSON.stringify(message || "")});`);
     mp.events.call("client:chat:authState", false);
     mp.events.call("client:hud:authState", false);
     ensureAuthCursor();
@@ -566,7 +570,7 @@
     mp.players.local.setAlpha(255);
     mp.game.ui.displayHud(true);
     mp.game.ui.displayRadar(true);
-    executeAuth("window.authApp && window.authApp.hide();");
+    executeInBrowser(browserState, "window.authApp && window.authApp.hide();");
     hideAuthCursor();
   });
   mp.events.add("client:spawn:resolveGround", () => {
@@ -575,7 +579,7 @@
   });
   mp.events.add("client:spawn:result", (...args) => {
     const [success, message] = args;
-    executeAuth(`window.authApp && window.authApp.setResult(${JSON.stringify(success)}, ${JSON.stringify(message)});`);
+    executeInBrowser(browserState, `window.authApp && window.authApp.setResult(${JSON.stringify(success)}, ${JSON.stringify(message)});`);
     ensureAuthCursor();
   });
   mp.events.add("cef:spawn:select", (...args) => {
