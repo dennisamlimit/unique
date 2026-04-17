@@ -1,20 +1,16 @@
 /// <reference path="../ragemp-client.d.ts" />
+import {
+  createBrowserState,
+  initBrowser,
+  executeInBrowser,
+  flushPending,
+  startReadyProbe,
+  stopReadyProbe,
+  type BrowserState
+} from "../shared/browser-manager.js";
 
-interface OrgaState {
-  browser: Mp.Browser | null;
-  isReady: boolean;
-  isOpen: boolean;
-  pendingActions: string[];
-  readyProbe: ReturnType<typeof setInterval> | null;
-}
-
-const state: OrgaState = {
-  browser: null,
-  isReady: false,
-  isOpen: false,
-  pendingActions: [],
-  readyProbe: null
-};
+const browserState: BrowserState = createBrowserState();
+let isOpen = false;
 
 const KEY_F6 = 0x75;
 
@@ -26,74 +22,23 @@ function getFactionId() {
   }
 }
 
-function flushPending() {
-  if (!state.browser || !state.isReady) {
-    return;
-  }
-
-  while (state.pendingActions.length > 0) {
-    state.browser.execute(state.pendingActions.shift()!);
-  }
-}
-
-function executeOrga(js: string) {
-  if (!state.browser || !state.isReady) {
-    state.pendingActions.push(js);
-    return;
-  }
-
-  state.browser.execute(js);
-}
-
-function stopReadyProbe() {
-  if (!state.readyProbe) {
-    return;
-  }
-
-  clearInterval(state.readyProbe);
-  state.readyProbe = null;
-}
-
-function startReadyProbe() {
-  stopReadyProbe();
-  state.readyProbe = setInterval(() => {
-    if (!state.browser || state.isReady) {
-      stopReadyProbe();
-      return;
-    }
-
-    state.browser.execute(`
-      if (window.orgaApp && !window.__orgaReadyNotified) {
-        window.__orgaReadyNotified = true;
-        if (typeof mp !== "undefined") {
-          mp.trigger("cef:orga:ready");
-        }
-      }
-    `);
-  }, 300);
-}
-
 function ensureBrowser() {
-  if (state.browser) {
-    return;
-  }
-
-  state.browser = mp.browsers.new("package://orga/orga.html");
-  state.browser.active = false;
-  startReadyProbe();
+  if (browserState.browser) return;
+  initBrowser(browserState, { htmlPath: "package://orga/orga.html", active: false });
+  startReadyProbe(browserState, "orga");
 }
 
 function closeMenu() {
-  if (!state.browser) {
+  if (!browserState.browser) {
     return;
   }
 
-  state.isOpen = false;
-  state.browser.active = false;
+  isOpen = false;
+  browserState.browser.active = false;
   mp.gui.cursor.show(false, false);
   mp.events.call("client:chat:authState", true);
   mp.events.call("client:hud:authState", true);
-  executeOrga("window.orgaApp && window.orgaApp.close();");
+  executeInBrowser(browserState, "window.orgaApp && window.orgaApp.close();");
 }
 
 function openMenu() {
@@ -102,8 +47,8 @@ function openMenu() {
   }
 
   ensureBrowser();
-  state.isOpen = true;
-  state.browser!.active = true;
+  isOpen = true;
+  browserState.browser!.active = true;
   mp.gui.cursor.show(true, true);
   mp.events.call("client:chat:authState", false);
   mp.events.call("client:hud:authState", false);
@@ -119,20 +64,21 @@ mp.events.add("client:orga:requestOpen", () => {
 });
 
 mp.events.add("cef:orga:ready", () => {
-  state.isReady = true;
-  stopReadyProbe();
-  flushPending();
+  if (browserState.isReady) return;
+  browserState.isReady = true;
+  stopReadyProbe(browserState);
+  flushPending(browserState);
 });
 
 mp.events.add("client:orga:open", (...args: unknown[]) => {
   const [payload] = args as [string];
   ensureBrowser();
-  state.isOpen = true;
-  state.browser!.active = true;
+  isOpen = true;
+  browserState.browser!.active = true;
   mp.gui.cursor.show(true, true);
   mp.events.call("client:chat:authState", false);
   mp.events.call("client:hud:authState", false);
-  executeOrga(`window.orgaApp && window.orgaApp.open(${JSON.stringify(payload || "{}")});`);
+  executeInBrowser(browserState, `window.orgaApp && window.orgaApp.open(${JSON.stringify(payload || "{}")});`);
 });
 
 mp.events.add("cef:orga:close", () => {
@@ -140,15 +86,15 @@ mp.events.add("cef:orga:close", () => {
 });
 
 mp.events.add("client:orga:setCatalog", (rawCatalog: string) => {
-  executeOrga(`window.orgaApp && window.orgaApp.setCatalog(${JSON.stringify(rawCatalog)});`);
+  executeInBrowser(browserState, `window.orgaApp && window.orgaApp.setCatalog(${JSON.stringify(rawCatalog)});`);
 });
 
 mp.events.add("client:orga:updateVehicles", (rawVehicles: string, newBalance: number) => {
-  executeOrga(`window.orgaApp && window.orgaApp.updateVehicles(${JSON.stringify(rawVehicles)}, ${newBalance});`);
+  executeInBrowser(browserState, `window.orgaApp && window.orgaApp.updateVehicles(${JSON.stringify(rawVehicles)}, ${newBalance});`);
 });
 
 mp.events.add("client:orga:updateVehiclesOnly", (rawVehicles: string) => {
-  executeOrga(`window.orgaApp && window.orgaApp.updateVehiclesOnly(${JSON.stringify(rawVehicles)});`);
+  executeInBrowser(browserState, `window.orgaApp && window.orgaApp.updateVehiclesOnly(${JSON.stringify(rawVehicles)});`);
 });
 
 mp.events.add("cef:orga:setRank", (...args: unknown[]) => {
@@ -212,7 +158,7 @@ mp.events.add("server:orga:getCatalog", () => {
 });
 
 mp.keys.bind(KEY_F6, true, () => {
-  if (state.isOpen) {
+  if (isOpen) {
     closeMenu();
     return;
   }
@@ -221,13 +167,13 @@ mp.keys.bind(KEY_F6, true, () => {
 });
 
 mp.keys.bind(0x1B, true, () => {
-  if (state.isOpen) {
+  if (isOpen) {
     closeMenu();
   }
 });
 
 mp.events.add("render", () => {
-  if (state.isOpen && getFactionId() <= 0) {
+  if (isOpen && getFactionId() <= 0) {
     closeMenu();
   }
 });
