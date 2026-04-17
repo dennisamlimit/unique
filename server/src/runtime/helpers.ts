@@ -1,4 +1,5 @@
-export type PlayerMp = any;
+import type { PlayerMp } from "./player-types.js";
+export type { PlayerMp } from "./player-types.js";
 
 export const HIDDEN_LOGIN_POSITION = { x: 402.87, y: -997.81, z: -99.0 };
 export const DEFAULT_SPAWN = { x: -75.24, y: -818.95, z: 326.18, rotZ: 160, dimension: 0 };
@@ -60,7 +61,7 @@ export function setHeading(player: PlayerMp, rotZ: number) {
     return;
   }
 
-  player.rotation = vector3(0, 0, rotZ);
+  player.rotation = vector3(0, 0, rotZ) as { x: number; y: number; z: number };
 }
 
 export function getArmour(player: PlayerMp) {

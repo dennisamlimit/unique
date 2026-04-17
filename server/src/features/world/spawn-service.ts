@@ -47,7 +47,7 @@ export class SpawnService {
   async apply(player: PlayerMp) {
     const spawn = await this.getSpawn();
     player.dimension = spawn.dimension;
-    player.position = vector3(spawn.x, spawn.y, spawn.z);
+    player.position = vector3(spawn.x, spawn.y, spawn.z) as { x: number; y: number; z: number };
     setHeading(player, spawn.rotZ);
   }
 }
