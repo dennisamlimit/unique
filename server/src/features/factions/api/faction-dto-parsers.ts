@@ -11,10 +11,7 @@ import type {
   SetFactionSpawnDto
 } from "./faction-dtos.js";
 import type { FactionType } from "../faction.js";
-
-function normalizeString(value: unknown) {
-  return typeof value === "string" ? value.trim() : "";
-}
+import { normalizeString } from "../../../shared/normalize.js";
 
 export function parseCreateFactionDto(parts: string[], args: string): CreateFactionDto | null {
   const type = normalizeString(parts[1]).toLowerCase() as FactionType;
