@@ -8,7 +8,6 @@ export class InventoryService {
         private repository: InventoryRepository,
         private templateRepository: ItemTemplateRepository
     ) {
-        console.log("[InventoryService] Initializing...");
         this.registerEvents();
         this.registerAdminCommands();
     }
@@ -19,7 +18,6 @@ export class InventoryService {
             for (const t of templates) {
                 inventoryScript.registerTemplate(t);
             }
-            console.log(`[InventoryService] Loaded ${templates.length} item templates from DB.`);
         } catch (error) {
             console.error("[InventoryService] Failed to load item templates:", error);
         }
@@ -121,7 +119,6 @@ export class InventoryService {
         try {
             const data = await this.repository.getByCharacterId(characterId);
             inventoryScript.loadPlayerInventory(player, data);
-            console.log(`[InventoryService] Loaded inventory for Character ${characterId} / Player ${player.name}`);
         } catch (error) {
             console.error(`[InventoryService] Failed to load inventory for Character ${characterId}:`, error);
         }
@@ -134,7 +131,6 @@ export class InventoryService {
         try {
             const data = inventoryScript.savePlayerInventory(player);
             await this.repository.upsert(charId, data);
-            console.log(`[InventoryService] Saved inventory for Character ${charId}`);
         } catch (error) {
             console.error(`[InventoryService] Failed to save inventory for Character ${charId}:`, error);
         }
