@@ -1,89 +1,31 @@
 /// <reference path="../ragemp-client.d.ts" />
 import { getUiThemeJson, loadUiTheme } from "../ui-theme";
+import {
+  createBrowserState,
+  initBrowser,
+  executeInBrowser,
+  flushPending,
+  startReadyProbe,
+  stopReadyProbe,
+  type BrowserState
+} from "../shared/browser-manager.js";
 
 
-interface HudState {
-  browser: Mp.Browser | null;
-  isAuthenticated: boolean;
-  isReady: boolean;
-  pendingActions: string[];
-  readyProbe: ReturnType<typeof setInterval> | null;
-  tickInterval: ReturnType<typeof setInterval> | null;
-  speedoInterval: ReturnType<typeof setInterval> | null;
-}
-
-const state: HudState = {
-  browser: null,
-  isAuthenticated: false,
-  isReady: false,
-  pendingActions: [],
-  readyProbe: null,
-  tickInterval: null,
-  speedoInterval: null
-};
+const browserState: BrowserState = createBrowserState();
+let isAuthenticated = false;
+let tickInterval: ReturnType<typeof setInterval> | null = null;
+let speedoInterval: ReturnType<typeof setInterval> | null = null;
 
 loadUiTheme();
 
 function pushTheme() {
-  executeHud(`window.hudApp && window.hudApp.setTheme(${getUiThemeJson()});`);
-}
-
-function flushPending(): void {
-  if (!state.browser || !state.isReady) {
-    return;
-  }
-
-  while (state.pendingActions.length > 0) {
-    state.browser.execute(state.pendingActions.shift()!);
-  }
-}
-
-function executeHud(js: string): void {
-  if (!state.browser || !state.isReady) {
-    state.pendingActions.push(js);
-    return;
-  }
-
-  state.browser.execute(js);
-}
-
-function stopReadyProbe(): void {
-  if (!state.readyProbe) {
-    return;
-  }
-
-  clearInterval(state.readyProbe);
-  state.readyProbe = null;
-}
-
-function startReadyProbe(): void {
-  stopReadyProbe();
-
-  state.readyProbe = setInterval(() => {
-    if (!state.browser || state.isReady) {
-      stopReadyProbe();
-      return;
-    }
-
-    state.browser.execute(`
-      if (window.hudApp && !window.__hudReadyNotified) {
-        window.__hudReadyNotified = true;
-        if (typeof mp !== "undefined") {
-          mp.trigger("cef:hud:ready");
-        }
-      }
-    `);
-  }, 300);
+  executeInBrowser(browserState, `window.hudApp && window.hudApp.setTheme(${getUiThemeJson()});`);
 }
 
 function createHudBrowser(): void {
-  if (state.browser) {
-    return;
-  }
-
-  state.browser = mp.browsers.new("package://hud/hud.html");
-  state.browser.active = true;
-  startReadyProbe();
+  if (browserState.browser) return;
+  initBrowser(browserState, { htmlPath: "package://hud/hud.html", active: true });
+  startReadyProbe(browserState, "hud");
 }
 
 function getHeadingLabel(heading: number): string {
@@ -129,7 +71,7 @@ function getBankCashValue(): number {
 }
 
 function hideNativeHudParts(): void {
-  if (!state.isAuthenticated) {
+  if (!isAuthenticated) {
     return;
   }
 
@@ -140,7 +82,7 @@ function hideNativeHudParts(): void {
           mp.game.audio.setUserRadioControlEnabled(false);
           mp.game.audio.setMobileRadioEnabledDuringExitedVehicles(false);
       }
-      
+
       mp.game.invoke("0x4CA036C0F08B9364", "OFF");
       mp.game.invoke("0x19F21E63AE6EBB4D", false);
   } catch (e) { /* silent suppress audio error */ }
@@ -164,7 +106,7 @@ function getZoneName(position: Mp.Vector3): string {
 }
 
 function updateHud(): void {
-  if (!state.isAuthenticated || !state.browser || !state.isReady) {
+  if (!isAuthenticated || !browserState.browser || !browserState.isReady) {
     return;
   }
 
@@ -175,15 +117,15 @@ function updateHud(): void {
       ? mp.players.local.getHeading()
       : 0;
 
-    executeHud(`window.hudApp && window.hudApp.updateLocation(${JSON.stringify(zoneName)}, ${JSON.stringify("")}, ${JSON.stringify("")}, ${JSON.stringify(getHeadingLabel(heading))});`);
-    executeHud(`window.hudApp && window.hudApp.updateStats(${JSON.stringify(getAccountId())}, ${JSON.stringify(getOnlineCount())}, ${JSON.stringify(getCashValue())}, ${JSON.stringify(getBankCashValue())});`);
+    executeInBrowser(browserState, `window.hudApp && window.hudApp.updateLocation(${JSON.stringify(zoneName)}, ${JSON.stringify("")}, ${JSON.stringify("")}, ${JSON.stringify(getHeadingLabel(heading))});`);
+    executeInBrowser(browserState, `window.hudApp && window.hudApp.updateStats(${JSON.stringify(getAccountId())}, ${JSON.stringify(getOnlineCount())}, ${JSON.stringify(getCashValue())}, ${JSON.stringify(getBankCashValue())});`);
   } catch (error) {
     // Prevent timer fatal error if any native call fails.
   }
 }
 
 function updateSpeedometer(): void {
-  if (!state.isAuthenticated || !state.browser || !state.isReady) {
+  if (!isAuthenticated || !browserState.browser || !browserState.isReady) {
     return;
   }
 
@@ -191,7 +133,7 @@ function updateSpeedometer(): void {
   const vehicle = player.vehicle;
 
   if (!vehicle) {
-    executeHud("window.hudApp && window.hudApp.updateSpeedometer(null);");
+    executeInBrowser(browserState, "window.hudApp && window.hudApp.updateSpeedometer(null);");
     return;
   }
 
@@ -201,7 +143,7 @@ function updateSpeedometer(): void {
     const gear = vehicle.gear || 0;
     const engineOn = typeof vehicle.getIsEngineRunning === "function" ? !!vehicle.getIsEngineRunning() : !!vehicle.engine;
     const locked = !!vehicle.getVariable("IS_LOCKED");
-    
+
     // Fuel & Health from variables (synced by server)
     const fuel = Number(vehicle.getVariable("FUEL") ?? 100);
     const maxFuel = Number(vehicle.getVariable("MAX_FUEL") ?? 100);
@@ -228,30 +170,30 @@ function updateSpeedometer(): void {
       headlightsOn
     };
 
-    executeHud(`window.hudApp && window.hudApp.updateSpeedometer(${JSON.stringify(data)});`);
+    executeInBrowser(browserState, `window.hudApp && window.hudApp.updateSpeedometer(${JSON.stringify(data)});`);
   } catch (error) {
     // Log once or occasionally to CEF console to avoid flood but still alert developers
-    executeHud(`console.error("HUD Speedo Update Error: ${error instanceof Error ? error.message : String(error)}");`);
+    executeInBrowser(browserState, `console.error("HUD Speedo Update Error: ${error instanceof Error ? error.message : String(error)}");`);
   }
 }
 
 function startHudTick(): void {
-  if (state.tickInterval) {
+  if (tickInterval) {
     return;
   }
 
-  state.tickInterval = setInterval(updateHud, 700);
-  state.speedoInterval = setInterval(updateSpeedometer, 100);
+  tickInterval = setInterval(updateHud, 700);
+  speedoInterval = setInterval(updateSpeedometer, 100);
 }
 
 function stopHudTick(): void {
-  if (state.tickInterval) {
-    clearInterval(state.tickInterval);
-    state.tickInterval = null;
+  if (tickInterval) {
+    clearInterval(tickInterval);
+    tickInterval = null;
   }
-  if (state.speedoInterval) {
-    clearInterval(state.speedoInterval);
-    state.speedoInterval = null;
+  if (speedoInterval) {
+    clearInterval(speedoInterval);
+    speedoInterval = null;
   }
 }
 
@@ -265,24 +207,24 @@ mp.events.add("render", () => {
 });
 
 mp.events.add("cef:hud:ready", () => {
-  if (state.isReady) {
+  if (browserState.isReady) {
     return;
   }
 
-  state.isReady = true;
-  stopReadyProbe();
-  flushPending();
+  browserState.isReady = true;
+  stopReadyProbe(browserState);
+  flushPending(browserState);
   pushTheme();
-  executeHud(`window.hudApp && window.hudApp.setVisible(${JSON.stringify(state.isAuthenticated)});`);
+  executeInBrowser(browserState, `window.hudApp && window.hudApp.setVisible(${JSON.stringify(isAuthenticated)});`);
   updateHud();
 });
 
 mp.events.add("client:hud:authState", (...args: unknown[]) => {
   const [authState] = args;
-  state.isAuthenticated = !!authState;
-  executeHud(`window.hudApp && window.hudApp.setVisible(${JSON.stringify(state.isAuthenticated)});`);
+  isAuthenticated = !!authState;
+  executeInBrowser(browserState, `window.hudApp && window.hudApp.setVisible(${JSON.stringify(isAuthenticated)});`);
 
-  if (state.isAuthenticated) {
+  if (isAuthenticated) {
     startHudTick();
     updateHud();
   } else {
@@ -292,7 +234,7 @@ mp.events.add("client:hud:authState", (...args: unknown[]) => {
 
 mp.events.add("client:hud:notify", (...args: unknown[]) => {
   const [type, title, message] = args as [string, string, string];
-  executeHud(`window.hudApp && window.hudApp.addNotification(${JSON.stringify(type)}, ${JSON.stringify(title)}, ${JSON.stringify(message)});`);
+  executeInBrowser(browserState, `window.hudApp && window.hudApp.addNotification(${JSON.stringify(type)}, ${JSON.stringify(title)}, ${JSON.stringify(message)});`);
 });
 
 mp.events.add("client:adminJail:show", (...args: unknown[]) => {
@@ -304,30 +246,30 @@ mp.events.add("client:adminJail:show", (...args: unknown[]) => {
     data = {};
   }
 
-  executeHud(`window.hudApp && window.hudApp.showJail(${JSON.stringify(data)});`);
+  executeInBrowser(browserState, `window.hudApp && window.hudApp.showJail(${JSON.stringify(data)});`);
 });
 
 mp.events.add("client:adminJail:hide", () => {
-  executeHud("window.hudApp && window.hudApp.hideJail();");
+  executeInBrowser(browserState, "window.hudApp && window.hudApp.hideJail();");
 });
 
 mp.events.add("client:tickets:hudData", (...args: unknown[]) => {
   const [payload] = args as [string];
-  executeHud(`window.hudApp && window.hudApp.setAdminTickets(${JSON.stringify(payload || "{\"visible\":false,\"openCount\":0,\"tickets\":[]}")});`);
+  executeInBrowser(browserState, `window.hudApp && window.hudApp.setAdminTickets(${JSON.stringify(payload || "{\"visible\":false,\"openCount\":0,\"tickets\":[]}")});`);
 });
 
 mp.events.add("client:tickets:playerHudData", (...args: unknown[]) => {
   const [payload] = args as [string];
-  executeHud(`window.hudApp && window.hudApp.setPlayerTicket(${JSON.stringify(payload || "{\"visible\":false,\"ticket\":null}")});`);
+  executeInBrowser(browserState, `window.hudApp && window.hudApp.setPlayerTicket(${JSON.stringify(payload || "{\"visible\":false,\"ticket\":null}")});`);
 });
 
 mp.events.add("client:tickets:mute", (...args: unknown[]) => {
   const [payload] = args as [string];
-  executeHud(`window.hudApp && window.hudApp.showTicketMute(${JSON.stringify(payload || "{}")});`);
+  executeInBrowser(browserState, `window.hudApp && window.hudApp.showTicketMute(${JSON.stringify(payload || "{}")});`);
 });
 
 mp.events.add("client:tickets:muteClear", () => {
-  executeHud("window.hudApp && window.hudApp.hideTicketMute();");
+  executeInBrowser(browserState, "window.hudApp && window.hudApp.hideTicketMute();");
 });
 
 mp.events.add("client:uiTheme:sync", () => {
