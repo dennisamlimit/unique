@@ -4,20 +4,12 @@
   RegisterAccountDto,
   SavePlayerStateDto
 } from "./account-dtos.js";
+import { normalizeString, normalizeOptionalString } from "../../shared/normalize.js";
 
 type PlayerIdentitySource = {
   socialClubId: string | null;
   socialClubName: string | null;
 };
-
-function normalizeString(value: unknown) {
-  return typeof value === "string" ? value.trim() : "";
-}
-
-function normalizeOptionalString(value: unknown) {
-  const normalized = normalizeString(value);
-  return normalized.length > 0 ? normalized : null;
-}
 
 export function parseRegisterAccountDto(
   raw: { email: unknown; password: unknown; repeatPassword: unknown },
