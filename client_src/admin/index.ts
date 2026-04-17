@@ -1,5 +1,14 @@
 /// <reference path="../ragemp-client.d.ts" />
 import { getUiThemeJson, loadUiTheme } from "../ui-theme";
+import {
+  createBrowserState,
+  initBrowser,
+  executeInBrowser,
+  flushPending,
+  startReadyProbe,
+  stopReadyProbe,
+  type BrowserState
+} from "../shared/browser-manager.js";
 
 
 interface PlayerInfo {
@@ -11,26 +20,13 @@ interface PlayerInfo {
   adminMode: boolean;
 }
 
-interface AdminState {
-  browser: Mp.Browser | null;
-  isReady: boolean;
-  isOpen: boolean;
-  pendingActions: string[];
-  readyProbe: ReturnType<typeof setInterval> | null;
-}
-
-const state: AdminState = {
-  browser: null,
-  isReady: false,
-  isOpen: false,
-  pendingActions: [],
-  readyProbe: null
-};
+const browserState: BrowserState = createBrowserState();
+let isOpen = false;
 
 loadUiTheme();
 
 function pushTheme() {
-  executeAdmin(`window.adminApp && window.adminApp.setTheme(${getUiThemeJson()});`);
+  executeInBrowser(browserState, `window.adminApp && window.adminApp.setTheme(${getUiThemeJson()});`);
 }
 
 const KEY_F3 = 0x72;
@@ -96,75 +92,23 @@ function collectPlayers(): PlayerInfo[] {
   });
 }
 
-function flushPending(): void {
-  if (!state.browser || !state.isReady) {
-    return;
-  }
-
-  while (state.pendingActions.length > 0) {
-    state.browser.execute(state.pendingActions.shift()!);
-  }
-}
-
-function executeAdmin(js: string): void {
-  if (!state.browser || !state.isReady) {
-    state.pendingActions.push(js);
-    return;
-  }
-
-  state.browser.execute(js);
-}
-
-function stopReadyProbe(): void {
-  if (!state.readyProbe) {
-    return;
-  }
-
-  clearInterval(state.readyProbe);
-  state.readyProbe = null;
-}
-
-function startReadyProbe(): void {
-  stopReadyProbe();
-
-  state.readyProbe = setInterval(() => {
-    if (!state.browser || state.isReady) {
-      stopReadyProbe();
-      return;
-    }
-
-    state.browser.execute(`
-      if (window.adminApp && !window.__adminReadyNotified) {
-        window.__adminReadyNotified = true;
-        if (typeof mp !== "undefined") {
-          mp.trigger("cef:admin:ready");
-        }
-      }
-    `);
-  }, 300);
-}
-
 function ensureBrowser(): void {
-  if (state.browser) {
-    return;
-  }
-
-  state.browser = mp.browsers.new("package://admin/admin.html");
-  state.browser.active = false;
-  startReadyProbe();
+  if (browserState.browser) return;
+  initBrowser(browserState, { htmlPath: "package://admin/admin.html", active: false });
+  startReadyProbe(browserState, "admin");
 }
 
 function closeAdminMenu(): void {
-  if (!state.browser) {
+  if (!browserState.browser) {
     return;
   }
 
-  state.isOpen = false;
-  state.browser.active = false;
+  isOpen = false;
+  browserState.browser.active = false;
   mp.gui.cursor.show(false, false);
   mp.events.call("client:chat:authState", true);
   mp.events.call("client:hud:authState", true);
-  executeAdmin("window.adminApp && window.adminApp.close();");
+  executeInBrowser(browserState, "window.adminApp && window.adminApp.close();");
 }
 
 function openAdminMenu(): void {
@@ -174,13 +118,13 @@ function openAdminMenu(): void {
   }
 
   ensureBrowser();
-  state.isOpen = true;
-  state.browser!.active = true;
+  isOpen = true;
+  browserState.browser!.active = true;
   mp.events.call("client:chat:authState", false);
   mp.events.call("client:hud:authState", false);
   mp.gui.cursor.show(true, true);
-  executeAdmin(`window.adminApp && window.adminApp.open(${JSON.stringify(level)}, ${JSON.stringify(collectPlayers())});`);
-  
+  executeInBrowser(browserState, `window.adminApp && window.adminApp.open(${JSON.stringify(level)}, ${JSON.stringify(collectPlayers())});`);
+
   // Data requests
   mp.events.callRemote("server:admin:requestFactionData");
   mp.events.callRemote("server:admin:getCommandList");
@@ -191,7 +135,7 @@ function openAdminMenu(): void {
 }
 
 function toggleAdminMenu(): void {
-  if (state.isOpen) {
+  if (isOpen) {
     closeAdminMenu();
     return;
   }
@@ -204,13 +148,10 @@ mp.events.add("playerReady", () => {
 });
 
 mp.events.add("cef:admin:ready", () => {
-  if (state.isReady) {
-    return;
-  }
-
-  state.isReady = true;
-  stopReadyProbe();
-  flushPending();
+  if (browserState.isReady) return;
+  browserState.isReady = true;
+  stopReadyProbe(browserState);
+  flushPending(browserState);
   pushTheme();
 });
 
@@ -227,37 +168,37 @@ mp.events.add("cef:admin:close", () => {
 });
 
 mp.events.add("render", () => {
-  if (state.isOpen && (!isAdminModeEnabled() || getAdminLevel() <= 0)) {
+  if (isOpen && (!isAdminModeEnabled() || getAdminLevel() <= 0)) {
     closeAdminMenu();
   }
 });
 
 mp.events.add("client:admin:setFactions", (...args: unknown[]) => {
   const [payload] = args as [string];
-  executeAdmin(`window.adminApp && window.adminApp.setFactions(${JSON.stringify(payload || "[]")});`);
+  executeInBrowser(browserState, `window.adminApp && window.adminApp.setFactions(${JSON.stringify(payload || "[]")});`);
 });
 
 mp.events.add("client:admin:receiveCommands", (payload: string) => {
-    executeAdmin(`window.adminApp && window.adminApp.setCommands(${JSON.stringify(payload)});`);
+    executeInBrowser(browserState, `window.adminApp && window.adminApp.setCommands(${JSON.stringify(payload)});`);
 });
 
 mp.events.add("client:admin:receiveLogs", (payload: string) => {
-    executeAdmin(`window.adminApp && window.adminApp.setLogs(${JSON.stringify(payload)});`);
+    executeInBrowser(browserState, `window.adminApp && window.adminApp.setLogs(${JSON.stringify(payload)});`);
 });
 
 mp.events.add("client:admin:setTickets", (...args: unknown[]) => {
   const [payload] = args as [string];
-  executeAdmin(`window.adminApp && window.adminApp.setTickets(${JSON.stringify(payload || "[]")});`);
+  executeInBrowser(browserState, `window.adminApp && window.adminApp.setTickets(${JSON.stringify(payload || "[]")});`);
 });
 
 mp.events.add("client:admin:setTicketInsight", (...args: unknown[]) => {
   const [payload] = args as [string];
-  executeAdmin(`window.adminApp && window.adminApp.setTicketInsight(${JSON.stringify(payload || "{}")});`);
+  executeInBrowser(browserState, `window.adminApp && window.adminApp.setTicketInsight(${JSON.stringify(payload || "{}")});`);
 });
 
 mp.events.add("client:admin:setTicketPlayerHistory", (...args: unknown[]) => {
   const [payload] = args as [string];
-  executeAdmin(`window.adminApp && window.adminApp.setTicketPlayerHistory(${JSON.stringify(payload || "{}")});`);
+  executeInBrowser(browserState, `window.adminApp && window.adminApp.setTicketPlayerHistory(${JSON.stringify(payload || "{}")});`);
 });
 
 mp.events.add("cef:admin:createFaction", (...args: unknown[]) => {
