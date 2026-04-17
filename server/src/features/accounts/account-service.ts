@@ -4,15 +4,7 @@ import type { Account } from "./account.js";
 import { AccountRepository } from "./account-repository.js";
 import { SpawnService } from "../world/spawn-service.js";
 import type { CompleteCharacterDto, CreateAccountDto, SavePlayerStateDto } from "./api/account-dtos.js";
-
-function normalizeName(input: string) {
-  const value = input.trim().toLowerCase();
-  return value.charAt(0).toUpperCase() + value.slice(1);
-}
-
-function normalizeOptional(input?: string | null) {
-  return input && input.trim() ? input.trim() : null;
-}
+import { normalizeOptionalString, normalizeName } from "../../shared/normalize.js";
 
 function hashPassword(password: string, salt: string) {
   return createHash("sha256").update(`${salt}:${password}`).digest("hex");
@@ -98,8 +90,8 @@ export class AccountService {
       lastName: "Erstellen",
       email: dto.email.trim(),
       phoneNumber: null,
-      socialClubName: normalizeOptional(dto.socialClubName),
-      socialClubId: normalizeOptional(dto.socialClubId),
+      socialClubName: normalizeOptionalString(dto.socialClubName),
+      socialClubId: normalizeOptionalString(dto.socialClubId),
       passwordHash: hashPassword(dto.password, salt),
       passwordSalt: salt,
       characterCreated: false,
@@ -143,7 +135,7 @@ export class AccountService {
       return account;
     }
 
-    return this.repository.updateSocialClub(account.accountId, normalizeOptional(name), socialClubId);
+    return this.repository.updateSocialClub(account.accountId, normalizeOptionalString(name), socialClubId);
   }
 
   async setBanState(accountId: number, banned: boolean, reason: string | null, expiresAt?: string | null, adminName?: string | null, adminAccountId?: number | null) {
@@ -166,7 +158,7 @@ export class AccountService {
   }
 
   async savePlayerState(accountId: number, state: SavePlayerStateDto) {
-    const customizationJson = normalizeOptional(state.customizationJson);
+    const customizationJson = normalizeOptionalString(state.customizationJson);
     const result = await this.repository.updateState(accountId, {
       cash: clampMoney(state.cash),
       bankCash: clampMoney(state.bankCash),
