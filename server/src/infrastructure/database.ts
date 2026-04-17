@@ -297,6 +297,18 @@ export async function initializeDatabase() {
       );
     `);
 
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS item_templates (
+        key TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        description TEXT,
+        weight FLOAT NOT NULL DEFAULT 0,
+        type INTEGER NOT NULL DEFAULT 0,
+        metadata JSONB NOT NULL DEFAULT '{}',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+
     // Add seed data if empty
     const catalogCountResult = await client.query("SELECT COUNT(*) FROM vehicle_catalog");
     if (parseInt(catalogCountResult.rows[0].count) === 0) {
@@ -570,6 +582,58 @@ export async function initializeDatabase() {
     `);
     // --- END PHONE TABLES ---
 
+    // Seed Item Templates
+    await seedItemTemplates(client);
+
     client.release();
   }
+}
+
+async function seedItemTemplates(client: any) {
+  const countResult = await client.query("SELECT COUNT(*) FROM item_templates");
+  if (parseInt(countResult.rows[0].count) > 10) return; // Already seeded
+
+  console.log("[Database] Seeding item templates...");
+
+  const baseItems = [
+    ['bread', 'Brot', 'Ein frisches Baguette.', 0.2, 1, { categoryIcon: 'food_category.png' }],
+    ['water', 'Wasser', 'Eine 0.5L Flasche Wasser.', 0.5, 1, { categoryIcon: 'water_category.png' }],
+    ['phone', 'Smartphone', 'Ein modernes Smartphone.', 0.1, 0, { categoryIcon: 'phone_category.png' }]
+  ];
+
+  for (const [key, name, desc, weight, type, meta] of baseItems) {
+    await client.query(
+      "INSERT INTO item_templates (key, name, description, weight, type, metadata) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (key) DO NOTHING",
+      [key, name, desc, weight, type, JSON.stringify(meta)]
+    );
+  }
+
+  // Seed Clothing (Components 1, 4, 6, 11)
+  const clothingConfigs = [
+    { component: 1, label: 'Maske', category: 'mask' },
+    { component: 4, label: 'Hose', category: 'legs' },
+    { component: 6, label: 'Schuhe', category: 'shoes' },
+    { component: 11, label: 'Oberteil', category: 'tops' }
+  ];
+
+  for (const config of clothingConfigs) {
+    for (let draw = 0; draw < 50; draw++) {
+      const key = `cloth_${config.component}_${draw}`;
+      const name = `Standard ${config.label} #${draw}`;
+      const metadata = {
+        component: config.component,
+        drawable: draw,
+        texture: 0,
+        categoryIcon: `${config.category}_category.png`,
+        requiredTorso: config.component === 11 ? 15 : undefined
+      };
+
+      await client.query(
+        "INSERT INTO item_templates (key, name, description, weight, type, metadata) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (key) DO NOTHING",
+        [key, name, '', 0.5, 3, JSON.stringify(metadata)]
+      );
+    }
+  }
+
+  console.log("[Database] Seeded ~200 item templates successfully.");
 }

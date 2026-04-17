@@ -5,6 +5,7 @@ export interface InventoryEntry {
     uid: string;
     key: string;
     amount: number;
+    slot: number;
     data: any;
 }
 
@@ -166,6 +167,7 @@ function cloneInventoryEntry(item: InventoryEntry): InventoryEntry {
         uid: item.uid,
         key: item.key,
         amount: item.amount,
+        slot: item.slot,
         data: cloneData(item.data)
     };
 }
@@ -359,6 +361,10 @@ function canAddAmountToStack(stack: InventoryEntry, amount: number) {
     return !!stack && isPositiveInt(amount) && stack.amount <= MAX_STACK_AMOUNT - amount;
 }
 
+function isValidSlotIndex(slot: any) {
+    return Number.isInteger(slot) && slot >= 0 && slot < DEFAULT_MAX_INVENTORY_SLOTS;
+}
+
 export class InventoryScript extends EventEmitter {
     _items: Record<string, ItemDefinition> = Object.create(null);
     _globalUids: Map<string, any> = new Map();
@@ -374,6 +380,81 @@ export class InventoryScript extends EventEmitter {
         return this.getItem(key);
     }
 
+    // Template Management
+    registerTemplate(template: any) {
+        const itemKey = template.key;
+        this._items[itemKey] = Object.freeze({
+            name: template.name,
+            description: template.description,
+            weight: template.weight,
+            type: template.type,
+            metadata: template.metadata,
+            onUse: (player: any, uid: string, key: string, data: any) => {
+                if (template.type === 3) { // ItemType.CLOTHING
+                    this.toggleEquip(player, uid, key, data);
+                }
+            }
+        });
+        this.emit("itemDefined", itemKey, template.name, template.description);
+    }
+
+    getTemplates() {
+        const map = new Map<string, any>();
+        for (const key in this._items) {
+            map.set(key, { ...this._items[key], key });
+        }
+        return map;
+    }
+
+    toggleEquip(player: any, uid: string, key: string, data: any) {
+        const template = this._items[key];
+        if (!template || !template.metadata) return;
+
+        const isEquipped = !!data.equipped;
+        data.equipped = !isEquipped;
+
+        const { component, drawable, texture, requiredTorso } = template.metadata;
+
+        if (data.equipped) {
+            // Equip
+            if (component !== undefined) {
+                player.setClothes(component, drawable, texture, 0);
+            }
+            if (requiredTorso !== undefined) {
+                player.setClothes(3, requiredTorso, 0, 0);
+            }
+            player.outputChatBox(`!{green}${template.name} angezogen.`);
+        } else {
+            // Unequip (Reset to defaults)
+            if (component !== undefined) {
+                // Default IDs: 15 for most tops/legs is "empty", but 0 is safe for many
+                const resetDrawable = (component === 11 || component === 4) ? 15 : 0;
+                player.setClothes(component, resetDrawable, 0, 0);
+            }
+            // Reset Torso to a basic arm ID (usually 15 for males/females)
+            if (requiredTorso !== undefined) {
+                player.setClothes(3, 15, 0, 0);
+            }
+            player.outputChatBox(`!{yellow}${template.name} ausgezogen.`);
+        }
+
+        // Trigger an inventory update to sync the 'equipped' state to the UI
+        player.call("client:inventory:updateEquipState", [uid, data.equipped]);
+    }
+
+    useItem(player: any, uid: string) {
+        const state = getPlayerState(player);
+        const index = state.uidToIndex.get(uid);
+        if (index === undefined) return false;
+
+        const item = state.inventory[index];
+        const definition = this._items[item.key];
+        if (!definition || !definition.onUse) return false;
+
+        definition.onUse(player, item.uid, item.key, item.data, item.amount);
+        return true;
+    }
+
     hasItem(key: string) {
         return isSafeItemKey(key) && hasOwn(this._items, key);
     }
@@ -386,13 +467,14 @@ export class InventoryScript extends EventEmitter {
         return Object.keys(this._items);
     }
 
-    createItemEntry(itemKey: string, amount = 1, data = undefined): InventoryEntry {
+    createItemEntry(itemKey: string, amount = 1, data = undefined, slot = -1): InventoryEntry {
         if (!this.hasItem(itemKey)) throw new Error(`createItemEntry: Unknown item key (${itemKey}).`);
         if (!isPositiveInt(amount) || amount > MAX_STACK_AMOUNT) throw new Error(`createItemEntry: Invalid amount for item (${itemKey}).`);
         return {
             uid: this.generateUniqueUid(),
             key: itemKey,
             amount,
+            slot,
             data: cloneData(data)
         };
     }
@@ -431,7 +513,7 @@ export class InventoryScript extends EventEmitter {
         try { sanitizedData = cloneData(data); } catch (err: any) { return { valid: false, reason: `invalid-data:${err.message}` }; }
 
         seenUids.add(uid);
-        return { valid: true, item: { uid, key, amount, data: sanitizedData } };
+        return { valid: true, item: { uid, key, amount, slot: Number(rawItem.slot ?? -1), data: sanitizedData } };
     }
 
     rebuildOwnerUidRegistry(owner: any, inventory: InventoryEntry[]) {
@@ -451,7 +533,12 @@ export class InventoryScript extends EventEmitter {
         return withTransaction(this, player, () => {
             const state = getPlayerState(player);
             const inventory = state.inventory;
-            const mergeIndex = findMergeTargetIndex(inventory, itemKey, data);
+            
+            // For clothing, we usually don't want to stack, so we check if it's clothing
+            const definition = this._items[itemKey];
+            const isStackable = definition ? (definition as any).type !== 3 : true;
+
+            const mergeIndex = isStackable ? findMergeTargetIndex(inventory, itemKey, data) : -1;
             
             if (mergeIndex !== -1 && canAddAmountToStack(inventory[mergeIndex], amount)) {
                 inventory[mergeIndex].amount += amount;
@@ -468,6 +555,34 @@ export class InventoryScript extends EventEmitter {
         });
     }
 
+    moveItem(player: any, uid: string, targetSlot: number) {
+        if (!isValidUid(uid) || !isValidSlotIndex(targetSlot)) return false;
+
+        return withTransaction(this, player, () => {
+            const state = getPlayerState(player);
+            const sourceIndex = state.uidToIndex.get(uid);
+            if (sourceIndex === undefined) return false;
+
+            const sourceItem = state.inventory[sourceIndex];
+            if (!sourceItem) return false;
+            if (sourceItem.slot === targetSlot) return true;
+
+            const targetIndex = state.inventory.findIndex((item) => item.slot === targetSlot);
+            if (targetIndex === -1) {
+                sourceItem.slot = targetSlot;
+                return true;
+            }
+
+            const targetItem = state.inventory[targetIndex];
+            if (!targetItem) return false;
+
+            const sourceSlot = sourceItem.slot;
+            sourceItem.slot = targetSlot;
+            targetItem.slot = sourceSlot;
+            return true;
+        });
+    }
+
     savePlayerInventory(player: any): InventoryEntry[] {
         return cloneInventory(getPlayerState(player).inventory);
     }
@@ -478,6 +593,18 @@ export class InventoryScript extends EventEmitter {
         state.inventory = sanitized;
         this.rebuildOwnerUidRegistry(player, sanitized);
         rebuildPlayerIndexes(player);
+        
+        // Re-apply visual state for equipped items
+        for (const item of sanitized) {
+            if (item.data && item.data.equipped) {
+                const def = this._items[item.key] as any;
+                if (def && def.type === 3 && def.metadata) {
+                    const { component, drawable, texture, requiredTorso } = def.metadata;
+                    if (component !== undefined) player.setClothes(component, drawable, texture, 0);
+                    if (requiredTorso !== undefined) player.setClothes(3, requiredTorso, 0, 0);
+                }
+            }
+        }
     }
 }
 

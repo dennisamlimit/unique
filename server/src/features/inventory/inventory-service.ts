@@ -1,22 +1,120 @@
-import { inventoryScript } from "./inventory-core.js";
+import { inventoryScript, type InventoryEntry } from "./inventory-core.js";
 import type { InventoryRepository } from "./inventory-repository.js";
+import { ItemTemplateRepository, type ItemTemplate, ItemType } from "./item-template-repository.js";
 import { getVar } from "../../runtime/helpers.js";
 
 export class InventoryService {
-    private characterToInventory = new Map<number, any>();
-
-    constructor(private repository: InventoryRepository) {
-        console.log("[InventoryService] Initialized.");
-        this.registerDefaultItems();
+    constructor(
+        private repository: InventoryRepository,
+        private templateRepository: ItemTemplateRepository
+    ) {
+        console.log("[InventoryService] Initializing...");
+        this.registerEvents();
+        this.registerAdminCommands();
     }
 
-    private registerDefaultItems() {
-        // Starter items for verification
-        inventoryScript.addItem("burger", "Burger", "Ein saftiger Cheeseburger.");
-        inventoryScript.addItem("water", "Wasser", "0.5L Mineralwasser.");
-        inventoryScript.addItem("phone", "Smartphone", "Ein modernes Smartphone.");
-        
-        console.log("[InventoryService] Default items registered.");
+    public async loadTemplates() {
+        try {
+            const templates = await this.templateRepository.getAll();
+            for (const t of templates) {
+                inventoryScript.registerTemplate(t);
+            }
+            console.log(`[InventoryService] Loaded ${templates.length} item templates from DB.`);
+        } catch (error) {
+            console.error("[InventoryService] Failed to load item templates:", error);
+        }
+    }
+
+    private registerEvents() {
+        mp.events.add("server:inventory:requestUpdate", (player: any) => {
+            this.broadcastUpdate(player);
+        });
+
+        mp.events.add("server:inventory:useItem", (player: any, uid: string) => {
+            if (typeof uid !== "string" || uid.length === 0) return;
+
+            const used = inventoryScript.useItem(player, uid);
+            if (used) {
+                this.broadcastUpdate(player);
+            }
+        });
+
+        mp.events.add("server:inventory:moveItem", (player: any, uid: string, targetSlot: number) => {
+            if (typeof uid !== "string" || uid.length === 0 || !Number.isInteger(targetSlot)) return;
+
+            const moved = inventoryScript.moveItem(player, uid, targetSlot);
+            if (moved) {
+                this.broadcastUpdate(player);
+            }
+        });
+    }
+
+    private registerAdminCommands() {
+        // Command to create a basic template
+        // /item:template [key] [name] [weight] [type] [description]
+        mp.events.addCommand("item:template", (player: any, fullText: string, key: string, name: string, weightStr: string, typeStr: string, ...descParts: string[]) => {
+            const adminLevel = Number(getVar(player, "ADMIN_LEVEL", 0));
+            if (adminLevel < 10) return player.outputChatBox("!{red}Zugriff verweigert (Admin Level 10 erforderlich).");
+
+            if (!key || !name || !weightStr || !typeStr) {
+                return player.outputChatBox("!{yellow}Benutzung: /item:template [key] [name] [weight] [type] [description]");
+            }
+
+            const template: ItemTemplate = {
+                key,
+                name,
+                weight: parseFloat(weightStr),
+                type: parseInt(typeStr) as ItemType,
+                description: descParts.join(" ") || "",
+                metadata: {}
+            };
+
+            void this.templateRepository.upsert(template).then(() => {
+                inventoryScript.registerTemplate(template);
+                player.outputChatBox(`!{green}Item Template '${key}' erfolgreich erstellt/aktualisiert.`);
+            });
+        });
+
+        // Command to configure clothing metadata
+        // /item:cloth [key] [component] [drawable] [texture] [torso]
+        mp.events.addCommand("item:cloth", (player: any, fullText: string, key: string, compStr: string, drawStr: string, texStr: string, torsoStr: string) => {
+            const adminLevel = Number(getVar(player, "ADMIN_LEVEL", 0));
+            if (adminLevel < 10) return player.outputChatBox("!{red}Zugriff verweigert.");
+
+            if (!key || !compStr || !drawStr || !texStr) {
+                return player.outputChatBox("!{yellow}Benutzung: /item:cloth [key] [component] [drawable] [texture] [optional:torso]");
+            }
+
+            const templates = inventoryScript.getTemplates();
+            const existing = templates.get(key);
+            if (!existing) return player.outputChatBox("!{red}Item Template nicht gefunden.");
+
+            existing.type = ItemType.CLOTHING;
+            existing.metadata = {
+                ...existing.metadata,
+                component: parseInt(compStr),
+                drawable: parseInt(drawStr),
+                texture: parseInt(texStr),
+                requiredTorso: torsoStr ? parseInt(torsoStr) : undefined
+            };
+
+            void this.templateRepository.upsert(existing).then(() => {
+                inventoryScript.registerTemplate(existing);
+                player.outputChatBox(`!{green}Kleidungs-Daten für '${key}' aktualisiert.`);
+            });
+        });
+
+        // Test command to give item
+        mp.events.addCommand("item:give", (player: any, _, targetId: string, key: string, amount: string) => {
+            const adminLevel = Number(getVar(player, "ADMIN_LEVEL", 0));
+            if (adminLevel < 10) return;
+
+            const target = mp.players.at(parseInt(targetId));
+            if (!target) return player.outputChatBox("Spieler nicht gefunden.");
+
+            this.addItem(target, key, parseInt(amount) || 1);
+            player.outputChatBox(`Item ${key} an ${target.name} gegeben.`);
+        });
     }
 
     async loadPlayerInventory(player: any, characterId: number) {
@@ -43,10 +141,58 @@ export class InventoryService {
     }
 
     async addItem(player: any, itemKey: string, amount = 1, data: any = {}) {
-        return inventoryScript.giveItem(player, itemKey, amount, data);
+        const res = inventoryScript.giveItem(player, itemKey, amount, data);
+        if (res) this.broadcastUpdate(player);
+        return res;
     }
 
-    // Unregister UIDs on disconnect to prevent memory leaks
+    private serializeInventoryForClient(inventory: InventoryEntry[]) {
+        const templates = inventoryScript.getTemplates();
+
+        return inventory.map((item) => {
+            const template = templates.get(item.key);
+            const templateMeta = template?.metadata && typeof template.metadata === "object" ? template.metadata : {};
+            const itemData = item.data && typeof item.data === "object" ? item.data : {};
+
+            return {
+                ...item,
+                displayName: template?.name || item.key,
+                description: template?.description || "",
+                data: {
+                    ...templateMeta,
+                    ...itemData,
+                    categoryIcon: itemData.categoryIcon || templateMeta.categoryIcon,
+                    weight: Number(itemData.weight ?? template?.weight ?? 0),
+                    uiIcon: itemData.uiIcon || this.getUiIcon(templateMeta)
+                }
+            };
+        });
+    }
+
+    private getUiIcon(metadata: any) {
+        const component = Number(metadata?.component ?? -1);
+        switch (component) {
+            case 1:
+                return "mask";
+            case 4:
+                return "legs";
+            case 6:
+                return "shoes";
+            case 11:
+                return "top";
+            default:
+                return "item";
+        }
+    }
+
+    broadcastUpdate(player: any) {
+        const inventory = this.serializeInventoryForClient(inventoryScript.savePlayerInventory(player));
+        player.call("client:inventory:update", [JSON.stringify({ 
+            inventory,
+            name: `${player.name}`,
+        })]);
+    }
+
     cleanupPlayer(player: any) {
         inventoryScript.unregisterOwnerUids(player);
     }

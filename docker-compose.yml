@@ -41,6 +41,9 @@ services:
         condition: service_healthy
     environment:
       DATABASE_URL: postgres://unique:unique@postgres:5432/unique
+    volumes:
+      - ./client_packages:/srv/ragemp-srv/client_packages
+      - ./packages:/srv/ragemp-srv/packages
     ports:
       - "22005:22005/tcp"
       - "22005:22005/udp"

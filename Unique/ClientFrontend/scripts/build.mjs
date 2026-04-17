@@ -1,5 +1,5 @@
 import { build } from "esbuild";
-import { copyFile, mkdir, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, writeFile, cp, stat } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
@@ -21,7 +21,8 @@ const entries = [
   { name: "interaction", entry: resolve(root, "src/interaction/main.jsx"), title: "Unique Interaction" },
   { name: "orga",      entry: resolve(root, "src/orga/main.jsx"),      title: "Unique Organisation" },
   { name: "usermenu", entry: resolve(root, "src/usermenu/main.jsx"), title: "Unique Usermenu" },
-  { name: "wardrobe", entry: resolve(root, "src/wardrobe/main.jsx"), title: "Unique Wardrobe" }
+  { name: "wardrobe", entry: resolve(root, "src/wardrobe/main.jsx"), title: "Unique Wardrobe" },
+  { name: "inventory", entry: resolve(root, "src/inventory/main.jsx"), title: "Unique Inventory" }
 ];
 
 function run(command, args) {
@@ -105,6 +106,16 @@ for (const app of entries) {
   });
 
   await writeFile(resolve(dist, app.name, `${app.name}.html`), htmlFor(app), "utf8");
+
+  // Copy app-internal assets if they exist
+  const appAssets = resolve(root, "src", app.name, "assets");
+  try {
+    await stat(appAssets);
+    await cp(appAssets, resolve(dist, app.name, "assets"), { recursive: true });
+    console.log(`[BUILD] Copied assets for ${app.name}`);
+  } catch (e) {
+    // No app-specific assets folder
+  }
 }
 
 await copyFile(assets.logo, resolve(dist, "shared", "Unique_logo.png"));

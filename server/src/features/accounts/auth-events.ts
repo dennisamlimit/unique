@@ -1,5 +1,5 @@
 import { SpawnService } from "../world/spawn-service.js";
-import { parseCompleteCharacterDto, parseLoginAccountDto, parseRegisterAccountDto } from "./api/account-dto-parsers.js";
+import { parseCompleteCharacterDto, parseLoginAccountDto, parseRegisterAccountDto } from "./account-dto-parsers.js";
 import { validateCompleteCharacterDto, validateLoginAccountDto, validateRegisterAccountDto } from "./account-validators.js";
 import { AccountService } from "./account-service.js";
 import { HIDDEN_LOGIN_POSITION, emitClient, getSocialClubId, getSocialClubName, getVar, setArmour, setHeading, setVar, vector3 } from "../../runtime/helpers.js";
@@ -107,6 +107,7 @@ async function finalizeCharacterSpawn(player: PlayerMp, character: Character, de
   player.setVariable?.("CASH", character.cash);
   player.setVariable?.("BANK_CASH", character.bankCash);
   player.setVariable?.("LOGGED_IN", true);
+  player.setVariable?.("CHARACTER_NAME", `${character.firstName} ${character.lastName}`);
   
   await deps.inventory.loadPlayerInventory(player, character.characterId);
 

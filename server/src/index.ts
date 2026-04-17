@@ -3,7 +3,7 @@ import { registerAuthEvents } from "./features/accounts/auth-events.js";
 import { AccountService } from "./features/accounts/account-service.js";
 import type { Account } from "./features/accounts/account.js";
 import type { SavePlayerStateDto } from "./features/accounts/api/account-dtos.js";
-import { parseSavePlayerStateDto } from "./features/accounts/api/account-dto-parsers.js";
+import { parseSavePlayerStateDto } from "./features/accounts/account-dto-parsers.js";
 import { SpawnService } from "./features/world/spawn-service.js";
 import type { SpawnPointDto } from "./features/world/api/spawn-dtos.js";
 import { FactionService } from "./features/factions/faction-service.js";
@@ -17,6 +17,7 @@ import { CharacterRepository } from "./features/accounts/character-repository.js
 import { parseAccountProfileDto } from "./features/accounts/account-dto-parsers.js";
 import { parseFactionProfileDto } from "./features/factions/faction-dto-parsers.js";
 import { InventoryRepository } from "./features/inventory/inventory-repository.js";
+import { ItemTemplateRepository } from "./features/inventory/item-template-repository.js";
 import { InventoryService } from "./features/inventory/inventory-service.js";
 
 
@@ -154,8 +155,10 @@ const factions = new FactionService();
 const tickets = new TicketService(getPool());
 const adminService = new AdminService(getPool());
 const phone = new PhoneService();
-const inventoryRepo = new InventoryRepository(getPool());
-export const inventoryService = new InventoryService(inventoryRepo);
+const pool = getPool();
+const inventoryRepo = new InventoryRepository(pool);
+const itemTemplateRepo = new ItemTemplateRepository(pool);
+export const inventoryService = new InventoryService(inventoryRepo, itemTemplateRepo);
 const LOCAL_CHAT_RANGE = 20;
 const ADMIN_JAIL_POSITION = { x: 1691.14, y: 2565.66, z: 45.56, rotZ: 180, dimension: 1 };
 const ADMIN_JAIL_RELEASE_POSITION = { x: 1846.64, y: 2585.86, z: 45.67, rotZ: 90, dimension: 1 };
@@ -1279,6 +1282,7 @@ async function onChatSend(player: any, mode: string, text: string) {
 
 async function bootstrap() {
   await initializeDatabase();
+  await inventoryService.loadTemplates();
   
   // Initialize Admin System
   registerAllAdminCommands(adminService, {
