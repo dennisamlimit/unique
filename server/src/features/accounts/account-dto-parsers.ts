@@ -3,7 +3,7 @@
   LoginAccountDto,
   RegisterAccountDto,
   SavePlayerStateDto
-} from "./account-dtos.js";
+} from "./api/account-dtos.js";
 import { normalizeString, normalizeOptionalString } from "../../shared/normalize.js";
 
 type PlayerIdentitySource = {

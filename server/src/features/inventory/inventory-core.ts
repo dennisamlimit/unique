@@ -12,6 +12,9 @@ export interface InventoryEntry {
 export interface ItemDefinition {
     name: string;
     description: string;
+    weight?: number;
+    type?: number;
+    metadata?: Record<string, unknown>;
     onUse?: (player: any, uid: string, key: string, data: any, amount: number) => any;
     nameFunc?: (data: any) => string;
     descFunc?: (data: any) => string;

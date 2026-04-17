@@ -14,8 +14,6 @@ import { TicketService } from "./features/tickets/ticket-service.js";
 import { PhoneService } from "./features/phone/phone-service.js";
 import { registerPhoneEvents } from "./features/phone/phone-events.js";
 import { CharacterRepository } from "./features/accounts/character-repository.js";
-import { parseAccountProfileDto } from "./features/accounts/account-dto-parsers.js";
-import { parseFactionProfileDto } from "./features/factions/faction-dto-parsers.js";
 import { InventoryRepository } from "./features/inventory/inventory-repository.js";
 import { ItemTemplateRepository } from "./features/inventory/item-template-repository.js";
 import { InventoryService } from "./features/inventory/inventory-service.js";
