@@ -1,15 +1,12 @@
 /// <reference path="../ragemp-client.d.ts" />
 import {
   createBrowserState,
-  initBrowser,
+  ensureBrowserInitialized,
   executeInBrowser,
-  flushPending,
-  startReadyProbe,
-  stopReadyProbe,
-  type BrowserState
+  markBrowserReady
 } from "../shared/browser-manager.js";
 
-const browserState: BrowserState = createBrowserState();
+const browserState = createBrowserState();
 let isOpen = false;
 
 const KEY_F6 = 0x75;
@@ -24,8 +21,11 @@ function getFactionId() {
 
 function ensureBrowser() {
   if (browserState.browser) return;
-  initBrowser(browserState, { htmlPath: "package://orga/orga.html", active: false });
-  startReadyProbe(browserState, "orga");
+  ensureBrowserInitialized(browserState, {
+    htmlPath: "package://orga/orga.html",
+    active: false,
+    appName: "orga"
+  });
 }
 
 function closeMenu() {
@@ -64,10 +64,7 @@ mp.events.add("client:orga:requestOpen", () => {
 });
 
 mp.events.add("cef:orga:ready", () => {
-  if (browserState.isReady) return;
-  browserState.isReady = true;
-  stopReadyProbe(browserState);
-  flushPending(browserState);
+  markBrowserReady(browserState);
 });
 
 mp.events.add("client:orga:open", (...args: unknown[]) => {

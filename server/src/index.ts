@@ -17,6 +17,9 @@ import { CharacterRepository } from "./features/accounts/character-repository.js
 import { InventoryRepository } from "./features/inventory/inventory-repository.js";
 import { ItemTemplateRepository } from "./features/inventory/item-template-repository.js";
 import { InventoryService } from "./features/inventory/inventory-service.js";
+import { BankRepository } from "./features/banking/bank-repository.js";
+import { BankingService } from "./features/banking/banking-service.js";
+import { AccountRepository } from "./features/accounts/account-repository.js";
 
 
 // Vehicle Consumption & State Sync
@@ -157,6 +160,10 @@ const pool = getPool();
 const inventoryRepo = new InventoryRepository(pool);
 const itemTemplateRepo = new ItemTemplateRepository(pool);
 export const inventoryService = new InventoryService(inventoryRepo, itemTemplateRepo);
+const accountRepo = new AccountRepository();
+const bankRepo = new BankRepository();
+export const bankingService = new BankingService(accountRepo, bankRepo, phone);
+
 const LOCAL_CHAT_RANGE = 20;
 const ADMIN_JAIL_POSITION = { x: 1691.14, y: 2565.66, z: 45.56, rotZ: 180, dimension: 1 };
 const ADMIN_JAIL_RELEASE_POSITION = { x: 1846.64, y: 2585.86, z: 45.67, rotZ: 90, dimension: 1 };
@@ -393,15 +400,24 @@ function getFactionStoragePermission(storageType: string) {
   return "storage_general";
 }
 
-function applyClothingToPlayer(player: any, clothing: number[][]) {
-  if (!Array.isArray(clothing) || clothing.length < 4) {
-    return;
-  }
+function isFemaleFreemodePlayer(player: any) {
+  return Number(player?.model ?? 0) === mp.joaat("mp_f_freemode_01");
+}
 
-  player.setComponentVariation?.(11, Number(clothing[0]?.[0] ?? 15), Number(clothing[0]?.[1] ?? 0), 0);
-  player.setComponentVariation?.(8, Number(clothing[1]?.[0] ?? 15), Number(clothing[1]?.[1] ?? 0), 0);
-  player.setComponentVariation?.(4, Number(clothing[2]?.[0] ?? 4), Number(clothing[2]?.[1] ?? 0), 0);
-  player.setComponentVariation?.(6, Number(clothing[3]?.[0] ?? 1), Number(clothing[3]?.[1] ?? 0), 0);
+function getDefaultBaseClothing(player: any): number[][] {
+  return isFemaleFreemodePlayer(player)
+    ? [[15, 0], [15, 0], [19, 0], [35, 0]]
+    : [[15, 0], [15, 0], [21, 0], [34, 0]];
+}
+
+function applyClothingToPlayer(player: any, clothing: number[][]) {
+  const defaults = getDefaultBaseClothing(player);
+  const resolved = Array.isArray(clothing) && clothing.length >= 4 ? clothing : defaults;
+
+  player.setComponentVariation?.(11, Number(resolved[0]?.[0] ?? defaults[0][0]), Number(resolved[0]?.[1] ?? defaults[0][1]), 0);
+  player.setComponentVariation?.(8, Number(resolved[1]?.[0] ?? defaults[1][0]), Number(resolved[1]?.[1] ?? defaults[1][1]), 0);
+  player.setComponentVariation?.(4, Number(resolved[2]?.[0] ?? defaults[2][0]), Number(resolved[2]?.[1] ?? defaults[2][1]), 0);
+  player.setComponentVariation?.(6, Number(resolved[3]?.[0] ?? defaults[3][0]), Number(resolved[3]?.[1] ?? defaults[3][1]), 0);
 }
 
 function getFactionVehicleEntityId(vehicle: any) {
@@ -1333,7 +1349,8 @@ async function bootstrap() {
     });
   }, 3 * 60 * 1000);
 
-  registerAuthEvents({ accounts, characterRepository, spawns, factions, phoneService: phone, inventory: inventoryService, logError, systemMessage, syncFactionMapBlips: syncFactionMapBlipsForPlayer });
+  registerAuthEvents({ accounts, characterRepository, spawns, factions, phoneService: phone, inventory: inventoryService, banking: bankingService, logError, systemMessage, syncFactionMapBlips: syncFactionMapBlipsForPlayer });
+
   registerPhoneEvents(phone);
   registerFactionCefEvents({
     factions,
@@ -2522,5 +2539,12 @@ void bootstrap().catch((error) => {
   logError("bootstrap failed", error);
 });
 mp.events.add("playerQuit", (player: PlayerMp) => {
-    inventoryService.cleanupPlayer(player);
+    void (async () => {
+        try {
+            await inventoryService.savePlayerInventory(player);
+            inventoryService.cleanupPlayer(player);
+        } catch (error) {
+            console.error(`[InventoryService] Error saving inventory for ${player.name} on quit:`, error);
+        }
+    })();
 });

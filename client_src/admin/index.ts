@@ -2,12 +2,9 @@
 import { getUiThemeJson, loadUiTheme } from "../ui-theme";
 import {
   createBrowserState,
-  initBrowser,
+  ensureBrowserInitialized,
   executeInBrowser,
-  flushPending,
-  startReadyProbe,
-  stopReadyProbe,
-  type BrowserState
+  markBrowserReady
 } from "../shared/browser-manager.js";
 
 
@@ -20,7 +17,7 @@ interface PlayerInfo {
   adminMode: boolean;
 }
 
-const browserState: BrowserState = createBrowserState();
+const browserState = createBrowserState();
 let isOpen = false;
 
 loadUiTheme();
@@ -94,8 +91,11 @@ function collectPlayers(): PlayerInfo[] {
 
 function ensureBrowser(): void {
   if (browserState.browser) return;
-  initBrowser(browserState, { htmlPath: "package://admin/admin.html", active: false });
-  startReadyProbe(browserState, "admin");
+  ensureBrowserInitialized(browserState, {
+    htmlPath: "package://admin/admin.html",
+    active: false,
+    appName: "admin"
+  });
 }
 
 function closeAdminMenu(): void {
@@ -148,10 +148,7 @@ mp.events.add("playerReady", () => {
 });
 
 mp.events.add("cef:admin:ready", () => {
-  if (browserState.isReady) return;
-  browserState.isReady = true;
-  stopReadyProbe(browserState);
-  flushPending(browserState);
+  if (!markBrowserReady(browserState)) return;
   pushTheme();
 });
 

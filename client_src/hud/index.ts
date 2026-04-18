@@ -2,16 +2,13 @@
 import { getUiThemeJson, loadUiTheme } from "../ui-theme";
 import {
   createBrowserState,
-  initBrowser,
+  ensureBrowserInitialized,
   executeInBrowser,
-  flushPending,
-  startReadyProbe,
-  stopReadyProbe,
-  type BrowserState
+  markBrowserReady
 } from "../shared/browser-manager.js";
 
 
-const browserState: BrowserState = createBrowserState();
+const browserState = createBrowserState();
 let isAuthenticated = false;
 let tickInterval: ReturnType<typeof setInterval> | null = null;
 let speedoInterval: ReturnType<typeof setInterval> | null = null;
@@ -24,8 +21,11 @@ function pushTheme() {
 
 function createHudBrowser(): void {
   if (browserState.browser) return;
-  initBrowser(browserState, { htmlPath: "package://hud/hud.html", active: true });
-  startReadyProbe(browserState, "hud");
+  ensureBrowserInitialized(browserState, {
+    htmlPath: "package://hud/hud.html",
+    active: true,
+    appName: "hud"
+  });
 }
 
 function getHeadingLabel(heading: number): string {
@@ -207,13 +207,9 @@ mp.events.add("render", () => {
 });
 
 mp.events.add("cef:hud:ready", () => {
-  if (browserState.isReady) {
+  if (!markBrowserReady(browserState)) {
     return;
   }
-
-  browserState.isReady = true;
-  stopReadyProbe(browserState);
-  flushPending(browserState);
   pushTheme();
   executeInBrowser(browserState, `window.hudApp && window.hudApp.setVisible(${JSON.stringify(isAuthenticated)});`);
   updateHud();

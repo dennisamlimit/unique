@@ -12,6 +12,7 @@ import {
 } from "./inventoryUtils";
 
 export function useInventoryBridge({
+  onRequestClose,
   visible,
   setVisible,
   setCharName,
@@ -66,14 +67,11 @@ export function useInventoryBridge({
   useEffect(() => {
     const handleKeyDown = (event) => {
       if (event.key === "Escape" && visible) {
-        setVisible(false);
-        if (window.mp) {
-          window.mp.trigger("client:inventory:close");
-        }
+        onRequestClose();
       }
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [visible, setVisible]);
+  }, [onRequestClose, visible]);
 }

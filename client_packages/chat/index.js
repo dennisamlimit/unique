@@ -65,6 +65,13 @@
     state.browser = mp.browsers.new(options.htmlPath);
     state.browser.active = options.active ?? false;
   }
+  function ensureBrowserInitialized(state, options) {
+    initBrowser(state, options);
+    if (options.appName && options.readyProbe !== false) {
+      startReadyProbe(state, options.appName, options.readyProbe || void 0);
+    }
+    return state.browser;
+  }
   function stopReadyProbe(state) {
     if (!state.readyProbe) return;
     clearInterval(state.readyProbe);
@@ -94,6 +101,15 @@
       state.browser.execute(state.pendingActions.shift());
     }
   }
+  function markBrowserReady(state) {
+    if (state.isReady) {
+      return false;
+    }
+    state.isReady = true;
+    stopReadyProbe(state);
+    flushPending(state);
+    return true;
+  }
   function executeInBrowser(state, js) {
     if (!state.browser || !state.isReady) {
       state.pendingActions.push(js);
@@ -113,8 +129,11 @@
   }
   function createChatBrowser() {
     if (browserState.browser) return;
-    initBrowser(browserState, { htmlPath: "package://chat/chat.html", active: true });
-    startReadyProbe(browserState, "chat");
+    ensureBrowserInitialized(browserState, {
+      htmlPath: "package://chat/chat.html",
+      active: true,
+      appName: "chat"
+    });
   }
   function openChat() {
     if (!browserState.browser || chatOpen || !isAuthenticated) {
@@ -141,10 +160,7 @@
   }
   createChatBrowser();
   mp.events.add("cef:chat:ready", () => {
-    if (browserState.isReady) return;
-    browserState.isReady = true;
-    stopReadyProbe(browserState);
-    flushPending(browserState);
+    if (!markBrowserReady(browserState)) return;
     pushTheme();
     executeInBrowser(browserState, `window.chatApp && window.chatApp.setVisible(${JSON.stringify(isAuthenticated)});`);
   });

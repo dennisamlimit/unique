@@ -14,6 +14,13 @@ const trigger = (name, ...args) => {
   }
 };
 
+const FEMALE_CREATOR_CLOTHING = [[15, 0], [15, 0], [19, 0], [35, 0]];
+const MALE_CREATOR_CLOTHING = [[15, 0], [15, 0], [21, 0], [34, 0]];
+
+function getDefaultCreatorClothing(gender) {
+  return Number(gender) === 1 ? FEMALE_CREATOR_CLOTHING : MALE_CREATOR_CLOTHING;
+}
+
 // ─── Shared Components ────────────────────────────────────────────────────────
 
 function StatusBox({ status }) {
@@ -164,7 +171,7 @@ function AuthApp() {
     blendData: [0, 0, 0, 0, 0.5, 0.5],
     hair: [0, 0, 0],
     beard: [0, 0],
-    clothing: [[15, 0], [15, 0], [21, 0], [34, 0]],
+    clothing: getDefaultCreatorClothing(data.gender),
     headOverlays: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
     faceFeatures: Array(20).fill(0)
   });

@@ -50,11 +50,13 @@ export async function initializeDatabase() {
         ban_date TEXT,
         ban_expires_at TEXT,
         ban_admin_name TEXT,
-        ban_admin_account_id INTEGER NOT NULL DEFAULT 0
+        ban_admin_account_id INTEGER NOT NULL DEFAULT 0,
+        iban TEXT UNIQUE
       );
     `);
 
     await client.query("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS ban_admin_account_id INTEGER NOT NULL DEFAULT 0;");
+    await client.query("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS iban TEXT UNIQUE;");
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS server_spawn (
@@ -305,6 +307,19 @@ export async function initializeDatabase() {
         weight FLOAT NOT NULL DEFAULT 0,
         type INTEGER NOT NULL DEFAULT 0,
         metadata JSONB NOT NULL DEFAULT '{}',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS bank_transactions (
+        transaction_id SERIAL PRIMARY KEY,
+        sender_account_id INTEGER REFERENCES accounts(account_id) ON DELETE SET NULL,
+        recipient_account_id INTEGER REFERENCES accounts(account_id) ON DELETE SET NULL,
+        sender_name TEXT,
+        recipient_name TEXT,
+        amount INTEGER NOT NULL,
+        type TEXT NOT NULL,
+        label TEXT,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
     `);

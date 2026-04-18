@@ -23,6 +23,7 @@ type AuthEventDeps = {
   syncFactionMapBlips?: (player: PlayerMp) => Promise<void>;
   phoneService: PhoneService;
   inventory: InventoryService;
+  banking: BankingService;
 };
 
 function buildSpawnPayload(message: string, canUseFactionSpawn: boolean, factionName?: string | null) {
@@ -371,6 +372,21 @@ export function registerAuthEvents(deps: AuthEventDeps) {
         if (customizationJson) {
            emitClient(player, "client:creator:apply", customizationJson);
         }
+
+        // Re-apply equipped items from inventory after customization/spawn
+        // We use a small delay to ensure the client-side customization (which resets clothes) has finished.
+        setTimeout(() => {
+            try {
+                if (mp.players.exists(player)) {
+                    console.log(`[unique][Inventory] Executing delayed re-apply for ${player.name}...`);
+                    deps.inventory.reapplyEquippedItems(player);
+                    console.log(`[unique][Inventory] Delayed re-apply COMPLETED for ${player.name}.`);
+                }
+            } catch (err) {
+                console.error(`[unique][Inventory] EXCEPTION in delayed re-apply for ${player.name}:`, err);
+            }
+        }, 1000);
+
         emitClient(player, "client:chat:authState", true);
         emitClient(player, "client:hud:authState", true);
         deps.systemMessage(
@@ -396,7 +412,15 @@ export function registerAuthEvents(deps: AuthEventDeps) {
             deps.logError("Phone initialization failed during spawn", phoneError);
           }
         })();
-        // --- END PHONE INITIALIZATION ---
+        // --- BANKING INITIALIZATION ---
+        void (async () => {
+          try {
+            await deps.banking.ensureIban(player);
+          } catch (bankError) {
+            deps.logError("Banking IBAN initialization failed during spawn", bankError);
+          }
+        })();
+        // --- END BANKING INITIALIZATION ---
         console.log(`[AUTH-DEBUG] Spawn select completed for ${player.name}: ${normalizedSpawn}`);
       } catch (error) {
         deps.logError("spawn select failed", error);

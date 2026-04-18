@@ -20,21 +20,21 @@ export const INVENTORY_LOCKED_SLOT_SET = new Set(LOCKED_SLOTS);
 
 export const EQUIPMENT_COLUMNS = Object.freeze({
   left: [
-    { icon: "👒", label: "Hat", accepts: "hat" },
-    { icon: "🕶️", label: "Glasses", accepts: "glasses" },
-    { icon: "🧥", label: "Top", accepts: "top" },
-    { icon: "⌚", label: "Watch", accepts: "watch" },
+    { icon: "HT", label: "Hat", accepts: "hat" },
+    { icon: "GL", label: "Glasses", accepts: "glasses" },
+    { icon: "TP", label: "Top", accepts: "top" },
+    { icon: "WT", label: "Watch", accepts: "watch" },
   ],
   right: [
-    { icon: "🎭", label: "Mask", accepts: "mask" },
-    { icon: "👔", label: "Undershirt", accepts: "undershirt" },
-    { icon: "👖", label: "Legs", accepts: "legs" },
-    { icon: "👟", label: "Shoes", accepts: "shoes" },
+    { icon: "MK", label: "Mask", accepts: "mask" },
+    { icon: "US", label: "Undershirt", accepts: "undershirt" },
+    { icon: "LG", label: "Legs", accepts: "legs" },
+    { icon: "SH", label: "Shoes", accepts: "shoes" },
   ],
 });
 
 export const STAT_CONFIG = Object.freeze([
-  { key: "hunger", icon: "🍔", label: "Hunger", colorClass: "glow-yellow" },
-  { key: "thirst", icon: "🥤", label: "Thirst", colorClass: "glow-blue" },
-  { key: "health", icon: "❤️", label: "Health", colorClass: "glow-red" },
+  { key: "hunger", icon: "HU", label: "Hunger", colorClass: "glow-yellow" },
+  { key: "thirst", icon: "TH", label: "Thirst", colorClass: "glow-blue" },
+  { key: "health", icon: "HP", label: "Health", colorClass: "glow-red" },
 ]);

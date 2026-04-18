@@ -16,6 +16,11 @@ export type ReadyProbeOptions = {
   windowReadyKey?: string;
 };
 
+export type ManagedBrowserOptions = BrowserInitOptions & {
+  appName?: string;
+  readyProbe?: ReadyProbeOptions | false;
+};
+
 export function createBrowserState(): BrowserState {
   return {
     browser: null,
@@ -29,6 +34,16 @@ export function initBrowser(state: BrowserState, options: BrowserInitOptions): v
   if (state.browser) return;
   state.browser = mp.browsers.new(options.htmlPath);
   state.browser.active = options.active ?? false;
+}
+
+export function ensureBrowserInitialized(state: BrowserState, options: ManagedBrowserOptions): Mp.Browser {
+  initBrowser(state, options);
+
+  if (options.appName && options.readyProbe !== false) {
+    startReadyProbe(state, options.appName, options.readyProbe || undefined);
+  }
+
+  return state.browser!;
 }
 
 export function stopReadyProbe(state: BrowserState): void {
@@ -66,6 +81,17 @@ export function flushPending(state: BrowserState): void {
   while (state.pendingActions.length > 0) {
     state.browser.execute(state.pendingActions.shift()!);
   }
+}
+
+export function markBrowserReady(state: BrowserState): boolean {
+  if (state.isReady) {
+    return false;
+  }
+
+  state.isReady = true;
+  stopReadyProbe(state);
+  flushPending(state);
+  return true;
 }
 
 export function executeInBrowser(state: BrowserState, js: string): void {

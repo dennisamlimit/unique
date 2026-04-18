@@ -1,17 +1,12 @@
 /// <reference path="../ragemp-client.d.ts" />
-mp.gui.chat.push("!{#EAB308}[PHONE] Script geladen.");
-
 import {
   createBrowserState,
-  initBrowser,
+  ensureBrowserInitialized,
   executeInBrowser,
-  flushPending,
-  startReadyProbe,
-  stopReadyProbe,
-  type BrowserState
+  markBrowserReady
 } from "../shared/browser-manager.js";
 
-const browserState: BrowserState = createBrowserState();
+const browserState = createBrowserState();
 let isOpen = false;
 let chatInputOpen = false;
 
@@ -19,8 +14,12 @@ const KEY_F7 = 0x76;
 
 function ensureBrowser() {
   if (browserState.browser) return;
-  initBrowser(browserState, { htmlPath: "package://phone/index.html", active: false });
-  startReadyProbe(browserState, "phone", { windowReadyKey: "__lbPhoneReady" });
+  ensureBrowserInitialized(browserState, {
+    htmlPath: "package://phone/index.html",
+    active: false,
+    appName: "phone",
+    readyProbe: { windowReadyKey: "__lbPhoneReady" }
+  });
 }
 
 function getPhoneStatePayload() {
@@ -61,15 +60,11 @@ function openPhone() {
   const accountId = Number(mp.players.local.getVariable("ACCOUNT_ID") ?? 0);
   const cursorVisible = mp.gui.cursor.visible;
 
-  mp.gui.chat.push(`!{#EAB308}[PHONE] openPhone called - ID: ${accountId}, isOpen: ${isOpen}, cursor: ${cursorVisible}`);
-
   if (accountId <= 0) {
-    mp.gui.chat.push("!{#EF4444}[PHONE] Abbruch: Keine ACCOUNT_ID vorhanden.");
     return;
   }
   if (isOpen) return;
   if (cursorVisible) {
-    mp.gui.chat.push("!{#EF4444}[PHONE] Abbruch: Cursor ist bereits sichtbar (UI offen?).");
     return;
   }
 
@@ -88,10 +83,7 @@ function openPhone() {
 ensureBrowser();
 
 mp.events.add("cef:phone:ready", () => {
-  if (browserState.isReady) return;
-  browserState.isReady = true;
-  stopReadyProbe(browserState);
-  flushPending(browserState);
+  if (!markBrowserReady(browserState)) return;
   syncPhoneState();
 });
 
@@ -123,7 +115,6 @@ mp.events.add("cef:phone:close", () => {
 });
 
 mp.keys.bind(KEY_F7, true, () => {
-  mp.gui.chat.push(`!{#EAB308}[PHONE] F7 pressed. ChatInputOpen: ${chatInputOpen}`);
   if (chatInputOpen) return;
   if (isOpen) {
     closePhone();

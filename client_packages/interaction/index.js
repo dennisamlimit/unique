@@ -205014,11 +205014,13 @@
     wardrobeOpenPointId: null,
     wardrobeDismissedPointId: null,
     wardrobeCommittedAppearance: null,
-    wardrobePreviewActive: false
+    wardrobePreviewActive: false,
+    targetAtm: null
   };
   var KEY_G = 71;
   var INTERACTION_RANGE = 8;
   var WARDROBE_RANGE = 3.75;
+  var ATM_RANGE = 1.2;
   var MARKER_DRAW_DISTANCE = 35;
   var SCAN_INTERVAL_MS = 100;
   loadUiTheme();
@@ -205113,10 +205115,15 @@
           return;
         }
       }
-      state.targetVehicle = state.targetWardrobe ? null : findVehicleInView();
+      state.targetAtm = state.targetWardrobe ? null : findNearbyAtm();
+      state.targetVehicle = state.targetWardrobe || state.targetAtm ? null : findVehicleInView();
     }
     if (state.targetWardrobe) {
       drawWardrobeHint(state.targetWardrobe);
+      return;
+    }
+    if (state.targetAtm) {
+      drawAtmHint(state.targetAtm);
       return;
     }
     if (state.targetVehicle) {
@@ -205346,6 +205353,28 @@
     });
     return nearest;
   }
+  var ATM_MODELS = [
+    "prop_atm_01",
+    "prop_atm_02",
+    "prop_atm_03",
+    "prop_fleeca_atm"
+  ];
+  function findNearbyAtm() {
+    const player = mp.players.local;
+    const pos = player.position;
+    for (const modelName of ATM_MODELS) {
+      const hash = mp.game.joaat(modelName);
+      const handle = mp.game.object.getClosestObjectOfType(pos.x, pos.y, pos.z, ATM_RANGE, hash, false, false, false);
+      if (handle !== 0) {
+        return {
+          handle,
+          position: mp.game.entity.getCoords(handle, true),
+          model: hash
+        };
+      }
+    }
+    return null;
+  }
   function ensureOverlayBatch() {
     if (state.overlaySupported === false) {
       return null;
@@ -205418,6 +205447,12 @@
     }
     try {
       mp.game.graphics.drawText(`G  ${point.label} (Kleidungskammer)`, [0.5, 0.62], { font: 4, color: [235, 245, 255, 235], scale: [0.34, 0.34], outline: true });
+    } catch (error) {
+    }
+  }
+  function drawAtmHint(obj) {
+    try {
+      mp.game.graphics.drawText("G  Geldautomat (Fleeca Bank)", [0.5, 0.62], { font: 4, color: [235, 245, 255, 235], scale: [0.34, 0.34], outline: true });
     } catch (error) {
     }
   }
@@ -205530,6 +205565,11 @@
     state.targetWardrobe = findNearbyWardrobe();
     if (state.targetWardrobe) {
       openWardrobe();
+      return;
+    }
+    if (state.targetAtm) {
+      mp.gui.chat.push(`!{#F97316}[DEBUG] G-Taste am ATM gedr\xFCckt. Sende Event...`);
+      mp.events.call("client:banking:open");
       return;
     }
     const target = state.targetVehicle || findVehicleInView();

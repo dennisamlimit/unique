@@ -76,6 +76,13 @@
     state.browser = mp.browsers.new(options.htmlPath);
     state.browser.active = options.active ?? false;
   }
+  function ensureBrowserInitialized(state, options) {
+    initBrowser(state, options);
+    if (options.appName && options.readyProbe !== false) {
+      startReadyProbe(state, options.appName, options.readyProbe || void 0);
+    }
+    return state.browser;
+  }
   function stopReadyProbe(state) {
     if (!state.readyProbe) return;
     clearInterval(state.readyProbe);
@@ -105,6 +112,15 @@
       state.browser.execute(state.pendingActions.shift());
     }
   }
+  function markBrowserReady(state) {
+    if (state.isReady) {
+      return false;
+    }
+    state.isReady = true;
+    stopReadyProbe(state);
+    flushPending(state);
+    return true;
+  }
   function executeInBrowser(state, js) {
     if (!state.browser || !state.isReady) {
       state.pendingActions.push(js);
@@ -125,8 +141,11 @@
   }
   function ensureBrowser() {
     if (browserState.browser) return;
-    initBrowser(browserState, { htmlPath: "package://usermenu/usermenu.html", active: false });
-    startReadyProbe(browserState, "usermenu");
+    ensureBrowserInitialized(browserState, {
+      htmlPath: "package://usermenu/usermenu.html",
+      active: false,
+      appName: "usermenu"
+    });
   }
   function closeMenu() {
     if (!browserState.browser) return;
@@ -153,10 +172,7 @@
     ensureBrowser();
   });
   mp.events.add("cef:usermenu:ready", () => {
-    if (browserState.isReady) return;
-    browserState.isReady = true;
-    stopReadyProbe(browserState);
-    flushPending(browserState);
+    if (!markBrowserReady(browserState)) return;
     pushTheme();
   });
   mp.events.add("client:chat:inputOpen", (...args) => {

@@ -1,5 +1,6 @@
 import { EventEmitter } from "events";
 import { randomBytes, randomUUID } from "crypto";
+import { ClothingLib } from "@shared/clothing-lib";
 
 export interface InventoryEntry {
     uid: string;
@@ -29,6 +30,22 @@ const MAX_OBJECT_KEYS = 128;
 const MAX_STRING_LENGTH = 2048;
 const MAX_SERIALIZED_DATA_SIZE = 16 * 1024;
 const DEFAULT_MAX_INVENTORY_SLOTS = 64;
+const DEFAULT_UNEQUIPPED_COMPONENTS = {
+    male: {
+        3: { drawable: 15, texture: 0 },
+        4: { drawable: 21, texture: 0 },
+        6: { drawable: 34, texture: 0 },
+        8: { drawable: 15, texture: 0 },
+        11: { drawable: 15, texture: 0 }
+    },
+    female: {
+        3: { drawable: 15, texture: 0 },
+        4: { drawable: 19, texture: 0 },
+        6: { drawable: 35, texture: 0 },
+        8: { drawable: 15, texture: 0 },
+        11: { drawable: 15, texture: 0 }
+    }
+} as const;
 
 const INTERNAL_SET_INVENTORY = Symbol("inventory.internalSetInventory");
 const INTERNAL_BYPASS_CAPACITY = Symbol("inventory.internalBypassCapacity");
@@ -368,6 +385,17 @@ function isValidSlotIndex(slot: any) {
     return Number.isInteger(slot) && slot >= 0 && slot < DEFAULT_MAX_INVENTORY_SLOTS;
 }
 
+function isFemaleFreemodePlayer(player: any) {
+    return Number(player?.model ?? 0) === mp.joaat("mp_f_freemode_01");
+}
+
+function getDefaultUnequippedComponent(player: any, componentId: number) {
+    const defaults = isFemaleFreemodePlayer(player)
+        ? DEFAULT_UNEQUIPPED_COMPONENTS.female
+        : DEFAULT_UNEQUIPPED_COMPONENTS.male;
+    return defaults[componentId as keyof typeof defaults] ?? { drawable: 0, texture: 0 };
+}
+
 export class InventoryScript extends EventEmitter {
     _items: Record<string, ItemDefinition> = Object.create(null);
     _globalUids: Map<string, any> = new Map();
@@ -409,40 +437,76 @@ export class InventoryScript extends EventEmitter {
         return map;
     }
 
+    private applyItemVisuals(player: any, key: string, equipped: boolean) {
+        const template = this._items[key];
+        if (!template || !template.metadata) return;
+
+        const { component, drawable, texture, requiredTorso } = template.metadata as any;
+        const isMale = player.model === mp.joaat("mp_m_freemode_01");
+        const sex = isMale ? 1 : 2;
+
+        if (equipped) {
+            if (component !== undefined) {
+                player.setClothes(component, drawable, texture, 0);
+            }
+
+            if (component === 11) {
+                const bestTorso = Number(ClothingLib.getBestTorso(sex, Number(drawable)));
+                const torsoDrawable = Number.isInteger(bestTorso) && bestTorso !== -1
+                    ? bestTorso
+                    : Number(requiredTorso ?? 15);
+
+                player.setClothes(3, torsoDrawable, 0, 0);
+            } else if (requiredTorso !== undefined) {
+                player.setClothes(3, requiredTorso, 0, 0);
+            }
+        } else {
+            if (component !== undefined) {
+                const defaults = getDefaultUnequippedComponent(player, Number(component));
+                player.setClothes(component, defaults.drawable, defaults.texture, 0);
+            }
+
+            if (component === 11) {
+                const torsoDefaults = getDefaultUnequippedComponent(player, 3);
+                const undershirtDefaults = getDefaultUnequippedComponent(player, 8);
+                player.setClothes(3, torsoDefaults.drawable, torsoDefaults.texture, 0);
+                player.setClothes(8, undershirtDefaults.drawable, undershirtDefaults.texture, 0);
+            } else if (requiredTorso !== undefined) {
+                const torsoDefaults = getDefaultUnequippedComponent(player, 3);
+                player.setClothes(3, torsoDefaults.drawable, torsoDefaults.texture, 0);
+            }
+        }
+    }
+
     toggleEquip(player: any, uid: string, key: string, data: any) {
         const template = this._items[key];
         if (!template || !template.metadata) return;
 
-        const isEquipped = !!data.equipped;
-        data.equipped = !isEquipped;
+        const state = getPlayerState(player);
+        const index = state.uidToIndex.get(uid);
+        if (index === undefined) return;
 
-        const { component, drawable, texture, requiredTorso } = template.metadata;
+        const item = state.inventory[index];
+        if (!item) return;
 
-        if (data.equipped) {
-            // Equip
-            if (component !== undefined) {
-                player.setClothes(component, drawable, texture, 0);
-            }
-            if (requiredTorso !== undefined) {
-                player.setClothes(3, requiredTorso, 0, 0);
-            }
+        if (!item.data || typeof item.data !== "object" || Array.isArray(item.data)) {
+            item.data = {};
+        }
+
+        const itemData = item.data;
+        const isEquipped = !!itemData.equipped;
+        itemData.equipped = !isEquipped;
+
+        this.applyItemVisuals(player, key, itemData.equipped);
+
+        if (itemData.equipped) {
             player.outputChatBox(`!{green}${template.name} angezogen.`);
         } else {
-            // Unequip (Reset to defaults)
-            if (component !== undefined) {
-                // Default IDs: 15 for most tops/legs is "empty", but 0 is safe for many
-                const resetDrawable = (component === 11 || component === 4) ? 15 : 0;
-                player.setClothes(component, resetDrawable, 0, 0);
-            }
-            // Reset Torso to a basic arm ID (usually 15 for males/females)
-            if (requiredTorso !== undefined) {
-                player.setClothes(3, 15, 0, 0);
-            }
             player.outputChatBox(`!{yellow}${template.name} ausgezogen.`);
         }
 
         // Trigger an inventory update to sync the 'equipped' state to the UI
-        player.call("client:inventory:updateEquipState", [uid, data.equipped]);
+        player.call("client:inventory:updateEquipState", [uid, itemData.equipped]);
     }
 
     useItem(player: any, uid: string) {
@@ -590,6 +654,17 @@ export class InventoryScript extends EventEmitter {
         return cloneInventory(getPlayerState(player).inventory);
     }
 
+    reapplyEquippedItems(player: any) {
+        const state = getPlayerState(player);
+        if (!state || !Array.isArray(state.inventory)) return;
+
+        for (const item of state.inventory) {
+            if (item.data && item.data.equipped) {
+                this.applyItemVisuals(player, item.key, true);
+            }
+        }
+    }
+
     loadPlayerInventory(player: any, inventory: any[]) {
         const { inventory: sanitized } = this.sanitizeInventory(inventory, player);
         const state = getPlayerState(player);
@@ -600,12 +675,7 @@ export class InventoryScript extends EventEmitter {
         // Re-apply visual state for equipped items
         for (const item of sanitized) {
             if (item.data && item.data.equipped) {
-                const def = this._items[item.key] as any;
-                if (def && def.type === 3 && def.metadata) {
-                    const { component, drawable, texture, requiredTorso } = def.metadata;
-                    if (component !== undefined) player.setClothes(component, drawable, texture, 0);
-                    if (requiredTorso !== undefined) player.setClothes(3, requiredTorso, 0, 0);
-                }
+                this.applyItemVisuals(player, item.key, true);
             }
         }
     }

@@ -1,10 +1,9 @@
 /// <reference path="../ragemp-client.d.ts" />
-import { getUiThemeJson } from "../ui-theme.js";
 import {
   createBrowserState,
-  initBrowser,
+  ensureBrowserInitialized,
   executeInBrowser,
-  flushPending
+  markBrowserReady
 } from "../shared/browser-manager.js";
 
 const browserState = createBrowserState();
@@ -15,13 +14,21 @@ const INVENTORY_URL = "package://inventory/inventory.html";
 
 function ensureBrowser(): void {
   if (browserState.browser) return;
-  initBrowser(browserState, { htmlPath: INVENTORY_URL, active: false });
-  // Kein startReadyProbe — inventory CEF triggert client:inventory:ready direkt
+  ensureBrowserInitialized(browserState, {
+    htmlPath: INVENTORY_URL,
+    active: false,
+    appName: "inventory"
+  });
 }
 
 function toggleInventory(): void {
   const cursorVisible = mp.gui.cursor.visible;
-  if (cursorVisible && !inventoryOpen) return;
+  mp.gui.chat.push(`!{#F97316}[DEBUG] Inventory Toggle - Cursor: ${cursorVisible}, Open: ${inventoryOpen}`);
+  
+  if (cursorVisible && !inventoryOpen) {
+    mp.gui.chat.push(`!{#F97316}[DEBUG] Toggle blocked: Cursor is visible elsewhere.`);
+    return;
+  }
 
   inventoryOpen = !inventoryOpen;
 
@@ -31,10 +38,13 @@ function toggleInventory(): void {
     const openData = { name: charName, health, inventory: [] as unknown[] };
 
     ensureBrowser();
+    browserState.browser!.active = true;
 
     if (!browserState.isReady) {
+      mp.gui.chat.push(`!{#F97316}[DEBUG] Browser not ready - queueing data.`);
       pendingOpenData = openData;
     } else {
+      mp.gui.chat.push(`!{#F97316}[DEBUG] Executing browser show.`);
       executeInBrowser(browserState, `window.inventoryApp.show(${JSON.stringify(openData)})`);
     }
 
@@ -43,6 +53,9 @@ function toggleInventory(): void {
     mp.game.ui.displayRadar(false);
   } else {
     executeInBrowser(browserState, `window.inventoryApp.hide()`);
+    if (browserState.browser) {
+      browserState.browser.active = false;
+    }
     mp.gui.cursor.show(false, false);
     mp.game.ui.displayRadar(true);
   }
@@ -56,18 +69,23 @@ mp.events.add("client:cmd:inv", () => {
   toggleInventory();
 });
 
-mp.events.add("client:inventory:ready", () => {
-  if (browserState.isReady) return;
-  browserState.isReady = true;
+function handleInventoryReady(): void {
+  if (!markBrowserReady(browserState)) return;
   if (pendingOpenData) {
     executeInBrowser(browserState, `window.inventoryApp.show(${JSON.stringify(pendingOpenData)})`);
     pendingOpenData = null;
   }
-});
+}
+
+mp.events.add("client:inventory:ready", handleInventoryReady);
+mp.events.add("cef:inventory:ready", handleInventoryReady);
 
 mp.events.add("client:inventory:close", () => {
   if (inventoryOpen) {
     inventoryOpen = false;
+    if (browserState.browser) {
+      browserState.browser.active = false;
+    }
     mp.gui.cursor.show(false, false);
     mp.game.ui.displayRadar(true);
   }

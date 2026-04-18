@@ -24,6 +24,7 @@ mp.events.add("client:manager:initAll", () => {
     require("dl/index.js"); mp.gui.chat.push("!{#F97316}[TRACE] DL Geladen");
     require("fingerpointing/index.js"); mp.gui.chat.push("!{#F97316}[TRACE] Finger Geladen");
     require("inventory/index.js"); mp.gui.chat.push("!{#F97316}[TRACE] Inventory Geladen");
+    require("banking/index.js"); mp.gui.chat.push("!{#F97316}[TRACE] Banking Geladen");
     require("admin_utils.js"); mp.gui.chat.push("!{#F97316}[TRACE] AdminUtils Geladen");
 
     mp.gui.chat.push("!{#F97316}[TRACE] Alle Systeme erfolgreich geladen.");

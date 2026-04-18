@@ -16,6 +16,17 @@ export type Account = {
   posX: number;
   posY: number;
   posZ: number;
+  origin: string | null;
+  customizationJson: string | null;
+  adminLevel: number;
+  cash: number;
+  bankCash: number;
+  health: number;
+  armor: number;
+  dimension: number;
+  posX: number;
+  posY: number;
+  posZ: number;
   rotZ: number;
   isBanned: boolean;
   banReason: string | null;
@@ -23,4 +34,5 @@ export type Account = {
   banExpiresAt: string | null;
   banAdminName: string | null;
   banAdminAccountId: number;
+  iban: string | null;
 };

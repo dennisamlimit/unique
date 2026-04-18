@@ -65,6 +65,13 @@
     state.browser = mp.browsers.new(options.htmlPath);
     state.browser.active = options.active ?? false;
   }
+  function ensureBrowserInitialized(state, options) {
+    initBrowser(state, options);
+    if (options.appName && options.readyProbe !== false) {
+      startReadyProbe(state, options.appName, options.readyProbe || void 0);
+    }
+    return state.browser;
+  }
   function stopReadyProbe(state) {
     if (!state.readyProbe) return;
     clearInterval(state.readyProbe);
@@ -94,6 +101,15 @@
       state.browser.execute(state.pendingActions.shift());
     }
   }
+  function markBrowserReady(state) {
+    if (state.isReady) {
+      return false;
+    }
+    state.isReady = true;
+    stopReadyProbe(state);
+    flushPending(state);
+    return true;
+  }
   function executeInBrowser(state, js) {
     if (!state.browser || !state.isReady) {
       state.pendingActions.push(js);
@@ -113,8 +129,11 @@
   }
   function createHudBrowser() {
     if (browserState.browser) return;
-    initBrowser(browserState, { htmlPath: "package://hud/hud.html", active: true });
-    startReadyProbe(browserState, "hud");
+    ensureBrowserInitialized(browserState, {
+      htmlPath: "package://hud/hud.html",
+      active: true,
+      appName: "hud"
+    });
   }
   function getHeadingLabel(heading) {
     if (heading < 45 || heading >= 315) return "N";
@@ -264,12 +283,9 @@
     hideNativeHudParts();
   });
   mp.events.add("cef:hud:ready", () => {
-    if (browserState.isReady) {
+    if (!markBrowserReady(browserState)) {
       return;
     }
-    browserState.isReady = true;
-    stopReadyProbe(browserState);
-    flushPending(browserState);
     pushTheme();
     executeInBrowser(browserState, `window.hudApp && window.hudApp.setVisible(${JSON.stringify(isAuthenticated)});`);
     updateHud();

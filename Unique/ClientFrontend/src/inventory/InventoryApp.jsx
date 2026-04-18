@@ -12,7 +12,15 @@ const InventoryApp = () => {
   const [inventory, setInventory] = useState([]);
   const [weight, setWeight] = useState(DEFAULT_WEIGHT);
 
+  const requestCloseInventory = () => {
+    setVisible(false);
+    if (window.mp) {
+      window.mp.trigger("client:inventory:close");
+    }
+  };
+
   useInventoryBridge({
+    onRequestClose: requestCloseInventory,
     visible,
     setVisible,
     setCharName,
@@ -20,13 +28,6 @@ const InventoryApp = () => {
     setInventory,
     setWeight,
   });
-
-  const closeInventory = () => {
-    setVisible(false);
-    if (window.mp) {
-      window.mp.trigger("client:inventory:close");
-    }
-  };
 
   const useItem = (item) => {
     if (window.mp) {
@@ -49,7 +50,7 @@ const InventoryApp = () => {
       stats={stats}
       inventory={inventory}
       weight={weight}
-      onClose={closeInventory}
+      onClose={requestCloseInventory}
       onUseItem={useItem}
       onMoveItem={moveItem}
     />

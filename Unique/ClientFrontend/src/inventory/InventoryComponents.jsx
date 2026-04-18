@@ -1,7 +1,6 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useMemo, useState } from "react";
 import {
   BACKPACK_SLOTS,
-  EQUIPMENT_COLUMNS,
   LOCKED_SLOTS,
   POCKET_SLOTS,
   QUICK_SLOT_NUMBERS,
@@ -10,13 +9,36 @@ import {
 } from "./inventoryConfig";
 import {
   clampPercent,
-  findItemBySlot,
   getItemIcon,
   getItemImageCandidates,
   getItemLabel,
 } from "./inventoryUtils";
+import { useInventoryDrag } from "./useInventoryDrag";
 
-const DRAG_THRESHOLD = 6;
+const SIDEBAR_TOOLS = [
+  { icon: "BP", label: "Inventory", active: true },
+  { icon: "CH", label: "Character" },
+  { icon: "VH", label: "Vehicle" },
+  { icon: "ST", label: "Settings" },
+];
+
+const EQUIPMENT_TILES = [
+  { label: "Maske", icon: "MK", accepts: "mask" },
+  { label: "Brille", icon: "GL", accepts: "glasses" },
+  { label: "Kopfbedeckung", icon: "HT", accepts: "hat" },
+  { label: "Ohrringe", icon: "OR" },
+  { label: "Hemd", icon: "TP", accepts: "top" },
+  { label: "Koerperruestung", icon: "AR" },
+  { label: "Accessoires", icon: "AC" },
+  { label: "Uhr", icon: "WT", accepts: "watch" },
+  { label: "Waffe", icon: "WF" },
+  { label: "Munition", icon: "AM" },
+  { label: "Hose", icon: "LG", accepts: "legs" },
+  { label: "Handschuhe", icon: "HG" },
+  { label: "Rucksack", icon: "BP" },
+  { label: "Schuhe", icon: "SH", accepts: "shoes" },
+  { label: "Telefon", icon: "PH" },
+];
 
 function ItemImage({ item }) {
   const [candidateIndex, setCandidateIndex] = useState(0);
@@ -56,30 +78,46 @@ function DragGhost({ item, x, y }) {
   if (!item) return null;
 
   return (
-    <div
-      className="inventory-drag-ghost"
-      style={{
-        left: x,
-        top: y,
-      }}
-    >
+    <div className="inventory-drag-ghost" style={{ left: x, top: y }}>
       <div className="inventory-drag-ghost-card">
         <ItemImage item={item} />
-        <div className="inventory-drag-ghost-label">{getItemLabel(item)}</div>
+        <div className="inventory-drag-ghost-copy">
+          <strong>{getItemLabel(item)}</strong>
+          <span>x{item.amount ?? 1}</span>
+        </div>
       </div>
     </div>
   );
 }
 
+function QuickSlot({ number, item }) {
+  return (
+    <div className="inventory-quick-slot">
+      <button type="button" className="inventory-quick-slot-shell">
+        {item ? <ItemImage item={item} /> : <span className="inventory-quick-slot-plus">+</span>}
+      </button>
+      <span className="inventory-quick-slot-index">{number}</span>
+    </div>
+  );
+}
+
+function SidebarToolButton({ icon, label, active }) {
+  return (
+    <button type="button" className={`inventory-tool-button ${active ? "active" : ""}`.trim()} title={label}>
+      <span>{icon}</span>
+    </button>
+  );
+}
+
 function InventorySlot({
   slot,
-  inventory,
+  item,
   locked = false,
   dragState,
   onHoverTarget,
   onPickupItem,
+  slotLabel,
 }) {
-  const item = findItemBySlot(inventory, slot);
   const equipped = !!item?.data?.equipped;
   const dragActive = dragState?.item?.uid === item?.uid;
   const canReceiveDrop = !!dragState?.active && !locked;
@@ -87,7 +125,7 @@ function InventorySlot({
   return (
     <button
       type="button"
-      className={`inv-slot ${locked ? "locked" : ""} ${equipped ? "equipped" : ""} ${dragActive ? "dragging" : ""} ${canReceiveDrop ? "drop-ready" : ""}`}
+      className={`inventory-slot ${locked ? "locked" : ""} ${equipped ? "equipped" : ""} ${dragActive ? "dragging" : ""} ${canReceiveDrop ? "drop-ready" : ""}`.trim()}
       title={item ? getItemLabel(item) : undefined}
       onMouseDown={(event) => {
         if (!item || locked || event.button !== 0) return;
@@ -103,109 +141,131 @@ function InventorySlot({
         onHoverTarget(null);
       }}
     >
-      {item && (
+      {slotLabel ? <span className="inventory-slot-index">{slotLabel}</span> : null}
+      {item ? (
         <>
-          <div className="inv-slot-amount">x{item.amount}</div>
+          <div className="inventory-slot-amount">x{item.amount}</div>
           <ItemImage item={item} />
-          <div className="inv-slot-label">{getItemLabel(item)}</div>
+          <div className="inventory-slot-label">{getItemLabel(item)}</div>
         </>
+      ) : (
+        <span className="inventory-slot-empty">{locked ? "LOCK" : "+"}</span>
       )}
-      {locked && <div className="slot-lock-icon">🔒</div>}
     </button>
   );
 }
 
-function SlotGrid({
+function InventoryGrid({
   slots,
-  inventory,
+  itemsBySlot,
   dragState,
   onHoverTarget,
   onPickupItem,
   locked = false,
   className,
+  showSlotNumbers = false,
+  slotOffset = 0,
 }) {
   return (
-    <div className={`grid-slots ${className || ""}`.trim()}>
-      {slots.map((slot) => (
+    <div className={`inventory-grid ${className || ""}`.trim()}>
+      {slots.map((slot, index) => (
         <InventorySlot
           key={slot}
           slot={slot}
-          inventory={inventory}
+          item={itemsBySlot.get(slot) ?? null}
           locked={locked}
           dragState={dragState}
           onHoverTarget={onHoverTarget}
           onPickupItem={onPickupItem}
+          slotLabel={showSlotNumbers ? String(index + 1 + slotOffset) : null}
         />
       ))}
     </div>
   );
 }
 
-function WeightBadge({ icon, current, max }) {
+function EquipmentTile({ tile, item, dragState, onHoverTarget }) {
+  const acceptsDrop = !!tile.accepts && !!dragState?.item && dragState.item?.data?.uiIcon === tile.accepts;
+  const hasDrag = !!dragState?.active;
+
   return (
-    <div className="weight-badge">
-      <span className="weight-icon">{icon}</span>
-      <span className="weight-value">{current.toFixed(1)}</span>
-      <span className="weight-max">/ {max.toFixed(1)} KG.</span>
+    <div
+      className={`inventory-equip-tile ${item ? "filled" : ""} ${acceptsDrop ? "active" : ""} ${hasDrag && !acceptsDrop ? "inactive" : ""}`.trim()}
+      title={item ? getItemLabel(item) : tile.label}
+      onMouseEnter={() => {
+        if (!acceptsDrop) return;
+        onHoverTarget({ type: "equip", accepts: tile.accepts });
+      }}
+      onMouseLeave={() => {
+        if (!dragState?.active) return;
+        onHoverTarget(null);
+      }}
+    >
+      <div className="inventory-equip-icon-wrap">
+        {item ? <ItemImage item={item} /> : <span className="inventory-equip-icon">{tile.icon}</span>}
+      </div>
+      <span className="inventory-equip-label">{item ? getItemLabel(item) : tile.label}</span>
     </div>
   );
 }
 
-function EquipmentColumn({ items, className, inventory, dragState, onHoverTarget }) {
+function SectionHeader({ title, badge, count }) {
   return (
-    <div className={className}>
-      {items.map((item) => {
-        const matchingItem = inventory.find(
-          (entry) => entry?.data?.uiIcon === item.accepts && entry?.data?.equipped
-        );
-        const canAcceptDraggedItem = !!dragState?.item && dragState.item?.data?.uiIcon === item.accepts;
-        const dragInProgress = !!dragState?.active;
+    <div className="inventory-section-header">
+      <div className="inventory-section-title-wrap">
+        <h3>{title}</h3>
+        {badge ? <span className="inventory-section-badge">{badge}</span> : null}
+      </div>
+      {count ? <span className="inventory-section-count">{count}</span> : null}
+    </div>
+  );
+}
 
-        return (
-          <div
-            key={item.label}
-            className={`equip-slot ${canAcceptDraggedItem ? "equip-slot-active" : ""} ${matchingItem ? "equip-slot-filled" : ""} ${dragInProgress && !canAcceptDraggedItem ? "equip-slot-inactive" : ""}`}
-            title={matchingItem ? getItemLabel(matchingItem) : item.label}
-            onMouseEnter={() => {
-              if (!canAcceptDraggedItem) return;
-              onHoverTarget({ type: "equip", accepts: item.accepts });
-            }}
-            onMouseLeave={() => {
-              if (!dragState?.active) return;
-              onHoverTarget(null);
-            }}
-          >
-            <div className="equip-slot-icon">{item.icon}</div>
-            <div className="equip-slot-label">{matchingItem ? getItemLabel(matchingItem) : item.label}</div>
+function WeightBar({ current, max }) {
+  const safeMax = max > 0 ? max : 1;
+  const percent = Math.max(0, Math.min(100, (current / safeMax) * 100));
+
+  return (
+    <div className="inventory-weight-bar">
+      <div className="inventory-weight-icon">WG</div>
+      <div className="inventory-weight-copy">
+        <span>Rucksack-Gewicht</span>
+        <div className="inventory-weight-track">
+          <div className="inventory-weight-fill" style={{ width: `${percent}%` }} />
+        </div>
+      </div>
+      <div className="inventory-weight-values">
+        <strong>{current.toFixed(1)}</strong>
+        <span>/ {max.toFixed(1)} KG</span>
+      </div>
+    </div>
+  );
+}
+
+function HelperHint() {
+  return (
+    <div className="inventory-helper-hint">
+      <div className="inventory-helper-mouse">MS</div>
+      <div>
+        <strong>Ziehe einen Gegenstand hierher,</strong>
+        <span>um ihn zu verschieben</span>
+      </div>
+    </div>
+  );
+}
+
+function StatStack({ stats }) {
+  return (
+    <div className="inventory-stat-stack">
+      {STAT_CONFIG.map((stat) => (
+        <div key={stat.key} className={`inventory-stat-pill ${stat.colorClass}`}>
+          <span className="inventory-stat-pill-icon">{stat.icon}</span>
+          <div>
+            <span className="inventory-stat-pill-label">{stat.label}</span>
+            <strong className="inventory-stat-pill-value">{clampPercent(stats[stat.key])}%</strong>
           </div>
-        );
-      })}
-    </div>
-  );
-}
-
-function StatCircle({ value, colorClass, icon, label }) {
-  const radius = 26;
-  const circumference = 2 * Math.PI * radius;
-  const strokeOffset = circumference * (1 - clampPercent(value) / 100);
-
-  return (
-    <div className={`stat-circle-group ${colorClass}`} title={`${label}: ${clampPercent(value)}%`}>
-      <svg className="circle-progress-svg" width="60" height="60">
-        <circle cx="30" cy="30" r={radius} stroke="rgba(255,255,255,0.05)" strokeWidth="3" fill="none" />
-        <circle
-          cx="30"
-          cy="30"
-          r={radius}
-          stroke="currentColor"
-          strokeWidth="3"
-          fill="none"
-          strokeDasharray={circumference}
-          strokeDashoffset={strokeOffset}
-          strokeLinecap="round"
-        />
-      </svg>
-      <div className="stat-icon-inner">{icon}</div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -220,195 +280,162 @@ export function InventoryLayout({
   onUseItem,
   onMoveItem,
 }) {
-  const [dragState, setDragState] = useState(null);
-  const [hoverTarget, setHoverTarget] = useState(null);
+  const { activeDropLabel, dragState, pickupItem, setHoverTarget } = useInventoryDrag({
+    visible,
+    onUseItem,
+    onMoveItem,
+  });
 
-  useEffect(() => {
-    if (!visible || !dragState) return undefined;
+  const itemsBySlot = useMemo(() => {
+    const nextMap = new Map();
 
-    const handleMouseMove = (event) => {
-      const deltaX = event.clientX - dragState.startX;
-      const deltaY = event.clientY - dragState.startY;
-      const distance = Math.hypot(deltaX, deltaY);
-
-      setDragState((current) => {
-        if (!current) return current;
-        return {
-          ...current,
-          x: event.clientX,
-          y: event.clientY,
-          active: current.active || distance > DRAG_THRESHOLD,
-        };
-      });
-    };
-
-    const handleMouseUp = () => {
-      if (!dragState) return;
-
-      if (!dragState.active) {
-        onUseItem(dragState.item);
-      } else if (hoverTarget?.type === "slot") {
-        onMoveItem(dragState.item.uid, hoverTarget.slot);
-      } else if (hoverTarget?.type === "equip" && dragState.item?.data?.uiIcon === hoverTarget.accepts) {
-        onUseItem(dragState.item);
+    inventory.forEach((item) => {
+      if (item?.slot != null) {
+        nextMap.set(item.slot, item);
       }
-
-      setDragState(null);
-      setHoverTarget(null);
-    };
-
-    window.addEventListener("mousemove", handleMouseMove);
-    window.addEventListener("mouseup", handleMouseUp);
-
-    return () => {
-      window.removeEventListener("mousemove", handleMouseMove);
-      window.removeEventListener("mouseup", handleMouseUp);
-    };
-  }, [dragState, hoverTarget, onMoveItem, onUseItem, visible]);
-
-  const activeDropLabel = dragState?.item?.data?.uiIcon
-    ? [...EQUIPMENT_COLUMNS.left, ...EQUIPMENT_COLUMNS.right].find((slot) => slot.accepts === dragState.item.data.uiIcon)?.label ?? null
-    : null;
-
-  const pickupItem = (item, event) => {
-    setDragState({
-      item,
-      startX: event.clientX,
-      startY: event.clientY,
-      x: event.clientX,
-      y: event.clientY,
-      active: false,
     });
-    setHoverTarget(null);
-  };
+
+    return nextMap;
+  }, [inventory]);
+
+  const equippedByIcon = useMemo(() => {
+    const nextMap = new Map();
+
+    inventory.forEach((item) => {
+      if (item?.data?.equipped && item?.data?.uiIcon) {
+        nextMap.set(item.data.uiIcon, item);
+      }
+    });
+
+    return nextMap;
+  }, [inventory]);
 
   return (
     <div className="inventory-overlay" style={{ display: visible ? "flex" : "none" }}>
-      <div className="paradox-branding">
-        <div className="paradox-logo">PARADOX</div>
-        <div className="paradox-sub">DESIGN BY</div>
-      </div>
+      <div className="inventory-background-shade" />
 
-      <div className="inv-controls-hint">
-        <div className="control-item">
-          <span>Drag items to slots or outfit</span>
-          <div className="control-key">🖱️</div>
-        </div>
-        <button type="button" className="control-item control-button" onClick={onClose}>
-          <span>Close inventory</span>
-          <div className="control-key">ESC</div>
-        </button>
-      </div>
-
-      {dragState?.active && activeDropLabel && (
-        <div className="drag-hint-banner">
+      {dragState?.active && activeDropLabel ? (
+        <div className="inventory-drag-banner">
           Drop on <strong>{activeDropLabel}</strong>
         </div>
-      )}
+      ) : null}
 
-      {dragState?.active && (
-        <DragGhost item={dragState.item} x={dragState.x} y={dragState.y} />
-      )}
+      {dragState?.active ? <DragGhost item={dragState.item} x={dragState.x} y={dragState.y} /> : null}
 
-      <div className="inventory-container">
-        <div className="inv-quick-access">
-          {QUICK_SLOT_NUMBERS.map((number) => (
-            <div key={number} className="quick-slot">
-              <div className="inv-slot quick-slot-shell">
-                <div className="quick-slot-dummy" />
+      <div className="inventory-shell">
+        <aside className="inventory-sidebar">
+          <div className="inventory-quick-panel">
+            <div className="inventory-quick-head">Quick Slots</div>
+            <div className="inventory-quick-list">
+              {QUICK_SLOT_NUMBERS.map((number, index) => (
+                <QuickSlot
+                  key={number}
+                  number={number}
+                  item={itemsBySlot.get(QUICK_SLOT_OFFSET + index) ?? null}
+                />
+              ))}
+            </div>
+          </div>
+
+          <div className="inventory-tool-rail">
+            {SIDEBAR_TOOLS.map((tool) => (
+              <SidebarToolButton key={tool.label} icon={tool.icon} label={tool.label} active={tool.active} />
+            ))}
+          </div>
+
+          <StatStack stats={stats} />
+        </aside>
+
+        <main className="inventory-center">
+          <div className="inventory-topbar">
+            <WeightBar current={weight.current} max={weight.max} />
+            <div className="inventory-topbar-actions">
+              <button type="button" className="inventory-craft-button">
+                Herstellung
+                <span>Neu</span>
+              </button>
+              <button type="button" className="inventory-close-button" onClick={onClose}>
+                Schliessen
+              </button>
+            </div>
+          </div>
+
+          <section className="inventory-board">
+            <div className="inventory-board-head">
+              <div>
+                <p className="inventory-character-name">{charName}</p>
               </div>
-              <div className="quick-slot-index">{number}</div>
             </div>
-          ))}
-          <div className="quick-slot-label">QUICK ACCESS</div>
-        </div>
 
-        <div className="inv-main-grids">
-          <section className="inv-panel">
-            <div className="inv-section-title">
-              <span>POCKETS</span>
-              <WeightBadge icon="📦" current={Math.min(weight.current, 5)} max={5} />
-            </div>
-            <SlotGrid
-              slots={POCKET_SLOTS}
-              inventory={inventory}
-              dragState={dragState}
-              onHoverTarget={setHoverTarget}
-              onPickupItem={pickupItem}
-              className="slot-grid-pockets"
-            />
-          </section>
-
-          <section className="inv-panel">
-            <div className="inv-section-title">
-              <span>BACKPACK</span>
-              <WeightBadge icon="🎒" current={weight.current} max={weight.max} />
-            </div>
-            <div className="backpack-grid-stack">
-              <SlotGrid
-                slots={BACKPACK_SLOTS}
-                inventory={inventory}
+            <section className="inventory-section">
+              <SectionHeader title="Taschen" count={`${POCKET_SLOTS.length} / ${POCKET_SLOTS.length}`} />
+              <InventoryGrid
+                slots={POCKET_SLOTS}
+                itemsBySlot={itemsBySlot}
                 dragState={dragState}
                 onHoverTarget={setHoverTarget}
                 onPickupItem={pickupItem}
-                className="slot-grid-backpack"
+                className="inventory-grid-pockets"
+                showSlotNumbers
               />
-              <SlotGrid
+            </section>
+
+            <section className="inventory-section">
+              <SectionHeader title="Rucksack" badge="Level 3" count={`${BACKPACK_SLOTS.length} / ${BACKPACK_SLOTS.length}`} />
+              <InventoryGrid
+                slots={BACKPACK_SLOTS}
+                itemsBySlot={itemsBySlot}
+                dragState={dragState}
+                onHoverTarget={setHoverTarget}
+                onPickupItem={pickupItem}
+                className="inventory-grid-backpack"
+              />
+              <InventoryGrid
                 slots={LOCKED_SLOTS}
-                inventory={inventory}
+                itemsBySlot={itemsBySlot}
                 dragState={dragState}
                 onHoverTarget={setHoverTarget}
                 onPickupItem={pickupItem}
                 locked
-                className="slot-grid-backpack"
+                className="inventory-grid-backpack inventory-grid-locked"
               />
-            </div>
+            </section>
           </section>
-        </div>
 
-        <div className="inv-character-section">
-          <svg className="silhouette-clean" viewBox="0 0 300 700" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path
-              d="M150 50C165 50 175 60 175 80C175 100 165 110 150 110C135 110 125 100 125 80C125 60 135 50 150 50ZM150 120C175 120 200 140 210 170V280L190 650H110L90 280V170C100 140 125 120 150 120Z"
-              stroke="currentColor"
-              strokeWidth="2"
-            />
-          </svg>
+          <HelperHint />
+        </main>
 
-          <div className="equip-slots-container">
-            <EquipmentColumn
-              items={EQUIPMENT_COLUMNS.left}
-              className="equip-grid-left"
-              inventory={inventory}
-              dragState={dragState}
-              onHoverTarget={setHoverTarget}
-            />
-            <EquipmentColumn
-              items={EQUIPMENT_COLUMNS.right}
-              className="equip-grid-right"
-              inventory={inventory}
-              dragState={dragState}
-              onHoverTarget={setHoverTarget}
-            />
+        <section className="inventory-equipment-panel">
+          <div className="inventory-equipment-head">
+            <p>Ausrustung</p>
+            <span>Outfit</span>
           </div>
 
-          <div className="char-info-vertical">
-            <div className="char-label-v">YOUR CHARACTER</div>
-            <div className="char-name-v">{charName}</div>
-          </div>
-        </div>
+          <div className="inventory-equipment-layout">
+            <div className="inventory-equipment-grid">
+              {EQUIPMENT_TILES.map((tile) => (
+                <EquipmentTile
+                  key={tile.label}
+                  tile={tile}
+                  item={tile.accepts ? equippedByIcon.get(tile.accepts) ?? null : null}
+                  dragState={dragState}
+                  onHoverTarget={setHoverTarget}
+                />
+              ))}
+            </div>
 
-        <div className="inv-status-col">
-          {STAT_CONFIG.map((stat) => (
-            <StatCircle
-              key={stat.key}
-              value={stats[stat.key]}
-              colorClass={stat.colorClass}
-              icon={stat.icon}
-              label={stat.label}
-            />
-          ))}
-        </div>
+            <div className="inventory-silhouette-panel">
+              <div className="inventory-silhouette">
+                <div className="silhouette-head" />
+                <div className="silhouette-torso" />
+                <div className="silhouette-arm left" />
+                <div className="silhouette-arm right" />
+                <div className="silhouette-leg left" />
+                <div className="silhouette-leg right" />
+              </div>
+            </div>
+          </div>
+        </section>
       </div>
     </div>
   );

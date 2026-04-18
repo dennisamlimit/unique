@@ -32,6 +32,7 @@ type RawAccountRow = {
   ban_expires_at: string | null;
   ban_admin_name: string | null;
   ban_admin_account_id: number;
+  iban: string | null;
 };
 
 function mapRowToAccount(row: RawAccountRow): Account {
@@ -64,7 +65,8 @@ function mapRowToAccount(row: RawAccountRow): Account {
     banDate: row.ban_date,
     banExpiresAt: row.ban_expires_at,
     banAdminName: row.ban_admin_name,
-    banAdminAccountId: row.ban_admin_account_id
+    banAdminAccountId: row.ban_admin_account_id,
+    iban: row.iban
   };
 }
 
@@ -122,18 +124,16 @@ export class AccountRepository {
           first_name, last_name, email, social_club_name, social_club_id, password_hash, password_salt,
           character_created, birth_date, origin, customization_json, admin_level, cash, bank_cash,
           health, armor, dimension, pos_x, pos_y, pos_z, rot_z, is_banned, ban_reason, ban_date,
-          ban_expires_at, ban_admin_name, ban_admin_account_id, phone_number
+          ban_expires_at, ban_admin_name, ban_admin_account_id, phone_number, iban
         ) VALUES (
-          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28
+          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29
         ) RETURNING *
       `,
         [
-          account.firstName, account.lastName, account.email, account.socialClubName, account.socialClubId,
-          account.passwordHash, account.passwordSalt, account.characterCreated, account.birthDate,
           account.origin, account.customizationJson, account.adminLevel, account.cash, account.bankCash,
           account.health, account.armor, account.dimension, account.posX, account.posY, account.posZ,
           account.rotZ, account.isBanned, account.banReason, account.banDate, account.banExpiresAt,
-          account.banAdminName, account.banAdminAccountId, account.phoneNumber
+          account.banAdminName, account.banAdminAccountId, account.phoneNumber, account.iban
         ]
       );
       return mapRowToAccount(result.rows[0]);
@@ -225,6 +225,24 @@ export class AccountRepository {
       return result.rows.length > 0 ? mapRowToAccount(result.rows[0]) : null;
     } catch (cause) {
       throw new DatabaseError("getByName failed", cause);
+    }
+  }
+
+  async getByIban(iban: string) {
+    try {
+      const result = await getPool().query("SELECT * FROM accounts WHERE iban = $1 LIMIT 1", [iban]);
+      return result.rows.length > 0 ? mapRowToAccount(result.rows[0]) : null;
+    } catch (cause) {
+      throw new DatabaseError("getByIban failed", cause);
+    }
+  }
+
+  async updateIban(accountId: number, iban: string) {
+    try {
+      const result = await getPool().query("UPDATE accounts SET iban = $1 WHERE account_id = $2 RETURNING *", [iban, accountId]);
+      return result.rows.length > 0 ? mapRowToAccount(result.rows[0]) : null;
+    } catch (cause) {
+      throw new DatabaseError("updateIban failed", cause);
     }
   }
 

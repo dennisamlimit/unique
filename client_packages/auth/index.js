@@ -13,6 +13,13 @@
     state2.browser = mp.browsers.new(options.htmlPath);
     state2.browser.active = options.active ?? false;
   }
+  function ensureBrowserInitialized(state2, options) {
+    initBrowser(state2, options);
+    if (options.appName && options.readyProbe !== false) {
+      startReadyProbe(state2, options.appName, options.readyProbe || void 0);
+    }
+    return state2.browser;
+  }
   function stopReadyProbe(state2) {
     if (!state2.readyProbe) return;
     clearInterval(state2.readyProbe);
@@ -42,6 +49,15 @@
       state2.browser.execute(state2.pendingActions.shift());
     }
   }
+  function markBrowserReady(state2) {
+    if (state2.isReady) {
+      return false;
+    }
+    state2.isReady = true;
+    stopReadyProbe(state2);
+    flushPending(state2);
+    return true;
+  }
   function executeInBrowser(state2, js) {
     if (!state2.browser || !state2.isReady) {
       state2.pendingActions.push(js);
@@ -65,6 +81,9 @@
     cam: null,
     camStart: null
   };
+  var FEMALE_FREEMODE_MODEL = mp.game.joaat("mp_f_freemode_01");
+  var MALE_DEFAULT_CLOTHING = [[15, 0], [15, 0], [21, 0], [34, 0]];
+  var FEMALE_DEFAULT_CLOTHING = [[15, 0], [15, 0], [19, 0], [35, 0]];
   var cinematicCams = [
     // Downtown LS skyline from the east
     {
@@ -117,8 +136,11 @@
   ];
   function ensureBrowser() {
     if (browserState.browser) return;
-    initBrowser(browserState, { htmlPath: "package://auth/auth.html", active: true });
-    startReadyProbe(browserState, "auth");
+    ensureBrowserInitialized(browserState, {
+      htmlPath: "package://auth/auth.html",
+      active: true,
+      appName: "auth"
+    });
   }
   function createCam(name, data) {
     const cam = mp.cameras.new(name, data.pos, new mp.Vector3(0, 0, 0), data.fov);
@@ -230,6 +252,17 @@
     pos.x = pos.x + dist * Math.cos(radians);
     return pos;
   }
+  function getDefaultCreatorClothingForModel(model) {
+    return model === FEMALE_FREEMODE_MODEL ? FEMALE_DEFAULT_CLOTHING : MALE_DEFAULT_CLOTHING;
+  }
+  function applyDefaultCreatorClothing(player) {
+    const defaults = getDefaultCreatorClothingForModel(Number(player.model));
+    player.setComponentVariation(11, Number(defaults[0][0]), Number(defaults[0][1]), 0);
+    player.setComponentVariation(3, 15, 0, 0);
+    player.setComponentVariation(8, Number(defaults[1][0]), Number(defaults[1][1]), 0);
+    player.setComponentVariation(4, Number(defaults[2][0]), Number(defaults[2][1]), 0);
+    player.setComponentVariation(6, Number(defaults[3][0]), Number(defaults[3][1]), 0);
+  }
   function setCreatorCamera(flag) {
     if (!creatorState.cam || !creatorState.camStart) {
       return;
@@ -264,9 +297,7 @@
     mp.game.cam.renderScriptCams(true, false, 500, true, false);
     player.freezePosition(true);
     player.setAlpha(255);
-    player.setComponentVariation(11, 15, 0, 0);
-    player.setComponentVariation(3, 15, 0, 0);
-    player.setComponentVariation(8, 15, 0, 0);
+    applyDefaultCreatorClothing(player);
   }
   function stopCreatorCamera() {
     creatorState.opened = false;
@@ -383,6 +414,8 @@
         player.setComponentVariation(8, Number(character.clothing[1][0]), Number(character.clothing[1][1]), 0);
         player.setComponentVariation(4, Number(character.clothing[2][0]), Number(character.clothing[2][1]), 0);
         player.setComponentVariation(6, Number(character.clothing[3][0]), Number(character.clothing[3][1]), 0);
+      } else {
+        applyDefaultCreatorClothing(player);
       }
       if (Array.isArray(character.headOverlays)) {
         [0, 2, 3, 4, 5, 6, 7, 8, 9, 10].forEach((overlayId, index) => {
@@ -400,10 +433,7 @@
     }, 250);
   });
   mp.events.add("cef:auth:ready", () => {
-    if (browserState.isReady) return;
-    browserState.isReady = true;
-    stopReadyProbe(browserState);
-    flushPending(browserState);
+    markBrowserReady(browserState);
   });
   mp.events.add("client:auth:show", () => {
     ensureBrowser();

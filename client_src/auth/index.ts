@@ -2,12 +2,9 @@
 
 import {
   createBrowserState,
-  initBrowser,
+  ensureBrowserInitialized,
   executeInBrowser,
-  flushPending,
-  startReadyProbe,
-  stopReadyProbe,
-  type BrowserState
+  markBrowserReady
 } from "../shared/browser-manager.js";
 
 interface AuthState {
@@ -31,7 +28,7 @@ interface CinematicCam {
   fov: number;
 }
 
-const browserState: BrowserState = createBrowserState();
+const browserState = createBrowserState();
 const state: AuthState = {
   currentCam: null,
   nextCam: null,
@@ -46,6 +43,10 @@ const creatorState: CreatorState = {
   cam: null,
   camStart: null
 };
+
+const FEMALE_FREEMODE_MODEL = mp.game.joaat("mp_f_freemode_01");
+const MALE_DEFAULT_CLOTHING: number[][] = [[15, 0], [15, 0], [21, 0], [34, 0]];
+const FEMALE_DEFAULT_CLOTHING: number[][] = [[15, 0], [15, 0], [19, 0], [35, 0]];
 
 const cinematicCams: CinematicCam[] = [
   // Downtown LS skyline from the east
@@ -100,8 +101,11 @@ const cinematicCams: CinematicCam[] = [
 
 function ensureBrowser(): void {
   if (browserState.browser) return;
-  initBrowser(browserState, { htmlPath: "package://auth/auth.html", active: true });
-  startReadyProbe(browserState, "auth");
+  ensureBrowserInitialized(browserState, {
+    htmlPath: "package://auth/auth.html",
+    active: true,
+    appName: "auth"
+  });
 }
 
 function createCam(name: string, data: CinematicCam): any {
@@ -225,6 +229,19 @@ function getCameraOffset(pos: Mp.Vector3, angle: number, dist: number): Mp.Vecto
   return pos;
 }
 
+function getDefaultCreatorClothingForModel(model: number): number[][] {
+  return model === FEMALE_FREEMODE_MODEL ? FEMALE_DEFAULT_CLOTHING : MALE_DEFAULT_CLOTHING;
+}
+
+function applyDefaultCreatorClothing(player: any): void {
+  const defaults = getDefaultCreatorClothingForModel(Number(player.model));
+  player.setComponentVariation(11, Number(defaults[0][0]), Number(defaults[0][1]), 0);
+  player.setComponentVariation(3, 15, 0, 0);
+  player.setComponentVariation(8, Number(defaults[1][0]), Number(defaults[1][1]), 0);
+  player.setComponentVariation(4, Number(defaults[2][0]), Number(defaults[2][1]), 0);
+  player.setComponentVariation(6, Number(defaults[3][0]), Number(defaults[3][1]), 0);
+}
+
 function setCreatorCamera(flag: number): void {
   if (!creatorState.cam || !creatorState.camStart) {
     return;
@@ -266,9 +283,7 @@ function startCreatorCamera(): void {
 
   player.freezePosition(true);
   player.setAlpha(255);
-  player.setComponentVariation(11, 15, 0, 0);
-  player.setComponentVariation(3, 15, 0, 0);
-  player.setComponentVariation(8, 15, 0, 0);
+  applyDefaultCreatorClothing(player);
 }
 
 function stopCreatorCamera(): void {
@@ -404,6 +419,8 @@ function applyCreatorData(characterJson: string): void {
       player.setComponentVariation(8, Number(character.clothing[1][0]), Number(character.clothing[1][1]), 0);
       player.setComponentVariation(4, Number(character.clothing[2][0]), Number(character.clothing[2][1]), 0);
       player.setComponentVariation(6, Number(character.clothing[3][0]), Number(character.clothing[3][1]), 0);
+    } else {
+      applyDefaultCreatorClothing(player);
     }
 
     if (Array.isArray(character.headOverlays)) {
@@ -425,10 +442,7 @@ mp.events.add("playerReady", () => {
 });
 
 mp.events.add("cef:auth:ready", () => {
-  if (browserState.isReady) return;
-  browserState.isReady = true;
-  stopReadyProbe(browserState);
-  flushPending(browserState);
+  markBrowserReady(browserState);
 });
 
 mp.events.add("client:auth:show", () => {

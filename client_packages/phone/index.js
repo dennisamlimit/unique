@@ -13,6 +13,13 @@
     state.browser = mp.browsers.new(options.htmlPath);
     state.browser.active = options.active ?? false;
   }
+  function ensureBrowserInitialized(state, options) {
+    initBrowser(state, options);
+    if (options.appName && options.readyProbe !== false) {
+      startReadyProbe(state, options.appName, options.readyProbe || void 0);
+    }
+    return state.browser;
+  }
   function stopReadyProbe(state) {
     if (!state.readyProbe) return;
     clearInterval(state.readyProbe);
@@ -42,6 +49,15 @@
       state.browser.execute(state.pendingActions.shift());
     }
   }
+  function markBrowserReady(state) {
+    if (state.isReady) {
+      return false;
+    }
+    state.isReady = true;
+    stopReadyProbe(state);
+    flushPending(state);
+    return true;
+  }
   function executeInBrowser(state, js) {
     if (!state.browser || !state.isReady) {
       state.pendingActions.push(js);
@@ -51,15 +67,18 @@
   }
 
   // client_src/phone/index.ts
-  mp.gui.chat.push("!{#EAB308}[PHONE] Script geladen.");
   var browserState = createBrowserState();
   var isOpen = false;
   var chatInputOpen = false;
   var KEY_F7 = 118;
   function ensureBrowser() {
     if (browserState.browser) return;
-    initBrowser(browserState, { htmlPath: "package://phone/index.html", active: false });
-    startReadyProbe(browserState, "phone", { windowReadyKey: "__lbPhoneReady" });
+    ensureBrowserInitialized(browserState, {
+      htmlPath: "package://phone/index.html",
+      active: false,
+      appName: "phone",
+      readyProbe: { windowReadyKey: "__lbPhoneReady" }
+    });
   }
   function getPhoneStatePayload() {
     const accountId = Number(mp.players.local.getVariable("ACCOUNT_ID") ?? 0);
@@ -89,14 +108,11 @@
   function openPhone() {
     const accountId = Number(mp.players.local.getVariable("ACCOUNT_ID") ?? 0);
     const cursorVisible = mp.gui.cursor.visible;
-    mp.gui.chat.push(`!{#EAB308}[PHONE] openPhone called - ID: ${accountId}, isOpen: ${isOpen}, cursor: ${cursorVisible}`);
     if (accountId <= 0) {
-      mp.gui.chat.push("!{#EF4444}[PHONE] Abbruch: Keine ACCOUNT_ID vorhanden.");
       return;
     }
     if (isOpen) return;
     if (cursorVisible) {
-      mp.gui.chat.push("!{#EF4444}[PHONE] Abbruch: Cursor ist bereits sichtbar (UI offen?).");
       return;
     }
     ensureBrowser();
@@ -108,10 +124,7 @@
   }
   ensureBrowser();
   mp.events.add("cef:phone:ready", () => {
-    if (browserState.isReady) return;
-    browserState.isReady = true;
-    stopReadyProbe(browserState);
-    flushPending(browserState);
+    if (!markBrowserReady(browserState)) return;
     syncPhoneState();
   });
   mp.events.add("client:chat:inputOpen", (...args) => {
@@ -136,7 +149,6 @@
     closePhone();
   });
   mp.keys.bind(KEY_F7, true, () => {
-    mp.gui.chat.push(`!{#EAB308}[PHONE] F7 pressed. ChatInputOpen: ${chatInputOpen}`);
     if (chatInputOpen) return;
     if (isOpen) {
       closePhone();

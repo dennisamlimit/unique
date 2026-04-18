@@ -1,4 +1,4 @@
-﻿/// <reference path="../ragemp-client.d.ts" />
+/// <reference path="../ragemp-client.d.ts" />
 import { ClothingLib } from "@shared/clothing-lib";
 import { getUiTheme, getUiThemeJson, hexToRgb, loadUiTheme } from "../ui-theme";
 
@@ -60,6 +60,7 @@ interface InteractionState {
   wardrobeDismissedPointId: number | null;
   wardrobeCommittedAppearance: WardrobeAppearanceSnapshot | null;
   wardrobePreviewActive: boolean;
+  targetAtm: Mp.Object | null;
 }
 
 const state: InteractionState & { wardrobeBrowser: Mp.Browser | null, wardrobeVisible: boolean } = {
@@ -84,12 +85,14 @@ const state: InteractionState & { wardrobeBrowser: Mp.Browser | null, wardrobeVi
   wardrobeOpenPointId: null,
   wardrobeDismissedPointId: null,
   wardrobeCommittedAppearance: null,
-  wardrobePreviewActive: false
+  wardrobePreviewActive: false,
+  targetAtm: null
 };
 
 const KEY_G = 0x47;
 const INTERACTION_RANGE = 8.0;
 const WARDROBE_RANGE = 3.75;
+const ATM_RANGE = 1.2;
 const MARKER_DRAW_DISTANCE = 35.0;
 const SCAN_INTERVAL_MS = 100;
 loadUiTheme();
@@ -208,11 +211,17 @@ function scanTargets(): void {
       }
     }
 
-    state.targetVehicle = state.targetWardrobe ? null : findVehicleInView();
+    state.targetAtm = state.targetWardrobe ? null : findNearbyAtm();
+    state.targetVehicle = (state.targetWardrobe || state.targetAtm) ? null : findVehicleInView();
   }
 
   if (state.targetWardrobe) {
     drawWardrobeHint(state.targetWardrobe);
+    return;
+  }
+
+  if (state.targetAtm) {
+    drawAtmHint(state.targetAtm);
     return;
   }
 
@@ -493,6 +502,35 @@ function findNearbyWardrobe(): WardrobePoint | null {
   return nearest;
 }
 
+const ATM_MODELS = [
+  "prop_atm_01",
+  "prop_atm_02",
+  "prop_atm_03",
+  "prop_fleeca_atm"
+];
+
+function findNearbyAtm(): Mp.Object | null {
+  const player = mp.players.local;
+  const pos = player.position;
+
+  for (const modelName of ATM_MODELS) {
+    const hash = mp.game.joaat(modelName);
+    const handle = mp.game.object.getClosestObjectOfType(pos.x, pos.y, pos.z, ATM_RANGE, hash, false, false, false);
+    
+    if (handle !== 0) {
+      // Return a temporary object-like interface if RAGE doesn't automatically wrap the handle
+      // In RAGE:MP, if it's a world object, we might just need the handle or a proxy
+      return { 
+        handle, 
+        position: mp.game.entity.getCoords(handle, true),
+        model: hash 
+      } as any;
+    }
+  }
+
+  return null;
+}
+
 function ensureOverlayBatch(): Mp.EntityOverlayBatch | null {
   if (state.overlaySupported === false) {
     return null;
@@ -576,6 +614,12 @@ function drawWardrobeHint(point: WardrobePoint | null): void {
 
   try {
     mp.game.graphics.drawText(`G  ${point.label} (Kleidungskammer)`, [0.5, 0.62], { font: 4, color: [235, 245, 255, 235], scale: [0.34, 0.34], outline: true });
+  } catch (error) {}
+}
+
+function drawAtmHint(obj: Mp.Object): void {
+  try {
+    mp.game.graphics.drawText("G  Geldautomat (Fleeca Bank)", [0.5, 0.62], { font: 4, color: [235, 245, 255, 235], scale: [0.34, 0.34], outline: true });
   } catch (error) {}
 }
 
@@ -706,6 +750,12 @@ function openMenu(): void {
   state.targetWardrobe = findNearbyWardrobe();
   if (state.targetWardrobe) {
     openWardrobe();
+    return;
+  }
+
+  if (state.targetAtm) {
+    mp.gui.chat.push(`!{#F97316}[DEBUG] G-Taste am ATM gedrückt. Sende Event...`);
+    mp.events.call("client:banking:open");
     return;
   }
 

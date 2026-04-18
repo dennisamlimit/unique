@@ -2,15 +2,12 @@
 import { getUiThemeJson, loadUiTheme, saveUiTheme } from "../ui-theme";
 import {
   createBrowserState,
-  initBrowser,
+  ensureBrowserInitialized,
   executeInBrowser,
-  flushPending,
-  startReadyProbe,
-  stopReadyProbe,
-  type BrowserState
+  markBrowserReady
 } from "../shared/browser-manager.js";
 
-const browserState: BrowserState = createBrowserState();
+const browserState = createBrowserState();
 let isOpen = false;
 let chatInputOpen = false;
 let cefInputFocused = false;
@@ -24,8 +21,11 @@ function pushTheme() {
 
 function ensureBrowser() {
   if (browserState.browser) return;
-  initBrowser(browserState, { htmlPath: "package://usermenu/usermenu.html", active: false });
-  startReadyProbe(browserState, "usermenu");
+  ensureBrowserInitialized(browserState, {
+    htmlPath: "package://usermenu/usermenu.html",
+    active: false,
+    appName: "usermenu"
+  });
 }
 
 function closeMenu() {
@@ -57,10 +57,7 @@ mp.events.add("playerReady", () => {
 });
 
 mp.events.add("cef:usermenu:ready", () => {
-  if (browserState.isReady) return;
-  browserState.isReady = true;
-  stopReadyProbe(browserState);
-  flushPending(browserState);
+  if (!markBrowserReady(browserState)) return;
   pushTheme();
 });
 

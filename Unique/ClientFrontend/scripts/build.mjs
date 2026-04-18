@@ -22,7 +22,8 @@ const entries = [
   { name: "orga",      entry: resolve(root, "src/orga/main.jsx"),      title: "Unique Organisation" },
   { name: "usermenu", entry: resolve(root, "src/usermenu/main.jsx"), title: "Unique Usermenu" },
   { name: "wardrobe", entry: resolve(root, "src/wardrobe/main.jsx"), title: "Unique Wardrobe" },
-  { name: "inventory", entry: resolve(root, "src/inventory/main.jsx"), title: "Unique Inventory" }
+  { name: "inventory", entry: resolve(root, "src/inventory/main.jsx"), title: "Unique Inventory" },
+  { name: "banking", entry: resolve(root, "src/banking/main.jsx"), title: "Unique Banking" }
 ];
 
 function run(command, args) {
@@ -46,6 +47,8 @@ function htmlFor(app) {
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>${app.title}</title>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Manrope:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="ui.css" />
   <link rel="stylesheet" href="${app.name}.css" />
   <style>html,body{background:transparent!important;margin:0;padding:0}</style>

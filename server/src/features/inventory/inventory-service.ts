@@ -8,6 +8,7 @@ export class InventoryService {
         private repository: InventoryRepository,
         private templateRepository: ItemTemplateRepository
     ) {
+        console.log("[unique][Inventory] SERVICE INITIALIZING (v2.2 Debug-Logs active)...");
         this.registerEvents();
         this.registerAdminCommands();
     }
@@ -30,19 +31,27 @@ export class InventoryService {
 
         mp.events.add("server:inventory:useItem", (player: any, uid: string) => {
             if (typeof uid !== "string" || uid.length === 0) return;
+            console.log(`[unique][Inventory] server:inventory:useItem from ${player.name} for UID: ${uid}`);
 
             const used = inventoryScript.useItem(player, uid);
             if (used) {
+                console.log(`[unique][Inventory] Item ${uid} used (used=true), calling save...`);
                 this.broadcastUpdate(player);
+                void this.savePlayerInventory(player);
+            } else {
+                console.warn(`[unique][Inventory] Item ${uid} used (used=false) - item not found or onUse check failed.`);
             }
         });
 
         mp.events.add("server:inventory:moveItem", (player: any, uid: string, targetSlot: number) => {
             if (typeof uid !== "string" || uid.length === 0 || !Number.isInteger(targetSlot)) return;
+            console.log(`[InventoryService] Event server:inventory:moveItem received from ${player.name} for item ${uid} to slot ${targetSlot}`);
 
             const moved = inventoryScript.moveItem(player, uid, targetSlot);
             if (moved) {
+                console.log(`[InventoryService] Item ${uid} moved successfully, triggering save...`);
                 this.broadcastUpdate(player);
+                void this.savePlayerInventory(player);
             }
         });
     }
@@ -117,23 +126,40 @@ export class InventoryService {
 
     async loadPlayerInventory(player: any, characterId: number) {
         try {
+            console.log(`[unique][Inventory] Loading inventory for Character ${characterId}...`);
             const data = await this.repository.getByCharacterId(characterId);
             inventoryScript.loadPlayerInventory(player, data);
+            
+            const equippedCount = data.filter(i => i.data && i.data.equipped).length;
+            console.log(`[unique][Inventory] SUCCESS: Loaded ${data.length} items for Char ${characterId} (${equippedCount} equipped).`);
         } catch (error) {
-            console.error(`[InventoryService] Failed to load inventory for Character ${characterId}:`, error);
+            console.error(`[unique][Inventory] EXCEPTION Loading inventory for Char ${characterId}:`, error);
         }
     }
 
     async savePlayerInventory(player: any) {
-        const charId = Number(getVar(player, "CHARACTER_ID", 0));
-        if (charId <= 0) return;
+        const charIdRaw = getVar(player, "CHARACTER_ID", 0);
+        const charId = Number(charIdRaw);
+        
+        if (charId <= 0) {
+            console.warn(`[unique][Inventory] SKIPPING SAVE: Invalid CHARACTER_ID for ${player.name}.`);
+            return;
+        }
 
         try {
             const data = inventoryScript.savePlayerInventory(player);
+            console.log(`[unique][Inventory] Saving to DB for Character ${charId} (${data.length} items)...`);
             await this.repository.upsert(charId, data);
+            
+            const equippedCount = data.filter(i => i.data && i.data.equipped).length;
+            console.log(`[unique][Inventory] PERSISTED: Character ${charId}: ${data.length} used, ${equippedCount} equipped.`);
         } catch (error) {
-            console.error(`[InventoryService] Failed to save inventory for Character ${charId}:`, error);
+            console.error(`[unique][Inventory] EXCEPTION saving Character ${charId}:`, error);
         }
+    }
+
+    reapplyEquippedItems(player: any) {
+        inventoryScript.reapplyEquippedItems(player);
     }
 
     async addItem(player: any, itemKey: string, amount = 1, data: any = {}) {

@@ -2,16 +2,13 @@
 import { getUiThemeJson, loadUiTheme } from "../ui-theme";
 import {
   createBrowserState,
-  initBrowser,
+  ensureBrowserInitialized,
   executeInBrowser,
-  flushPending,
-  startReadyProbe,
-  stopReadyProbe,
-  type BrowserState
+  markBrowserReady
 } from "../shared/browser-manager.js";
 
 
-const browserState: BrowserState = createBrowserState();
+const browserState = createBrowserState();
 let chatOpen = false;
 let currentMode = "ic";
 let isAuthenticated = false;
@@ -24,8 +21,11 @@ function pushTheme() {
 
 function createChatBrowser(): void {
   if (browserState.browser) return;
-  initBrowser(browserState, { htmlPath: "package://chat/chat.html", active: true });
-  startReadyProbe(browserState, "chat");
+  ensureBrowserInitialized(browserState, {
+    htmlPath: "package://chat/chat.html",
+    active: true,
+    appName: "chat"
+  });
 }
 
 function openChat(): void {
@@ -62,10 +62,7 @@ function closeChat(): void {
 createChatBrowser();
 
 mp.events.add("cef:chat:ready", () => {
-  if (browserState.isReady) return;
-  browserState.isReady = true;
-  stopReadyProbe(browserState);
-  flushPending(browserState);
+  if (!markBrowserReady(browserState)) return;
   pushTheme();
   executeInBrowser(browserState, `window.chatApp && window.chatApp.setVisible(${JSON.stringify(isAuthenticated)});`);
 });

@@ -26,6 +26,7 @@ const modules = [
   "dl/index",
   "fingerpointing/index",
   "inventory/index",
+  "banking/index",
   "admin_utils"
 ];
 
