@@ -181,14 +181,16 @@
     if (level <= 0 || !isAdminModeEnabled()) {
       return;
     }
+    const accountId = Number(mp.players.local.getVariable("ACCOUNT_ID") ?? 0);
     ensureBrowser();
     isOpen = true;
     browserState.browser.active = true;
     mp.events.call("client:chat:authState", false);
     mp.events.call("client:hud:authState", false);
     mp.gui.cursor.show(true, true);
-    executeInBrowser(browserState, `window.adminApp && window.adminApp.open(${JSON.stringify(level)}, ${JSON.stringify(collectPlayers())});`);
+    executeInBrowser(browserState, `window.adminApp && window.adminApp.open(${JSON.stringify(level)}, ${JSON.stringify(accountId)}, ${JSON.stringify(collectPlayers())});`);
     mp.events.callRemote("server:admin:requestFactionData");
+    mp.events.callRemote("server:admin:requestHousingData");
     mp.events.callRemote("server:admin:getCommandList");
     if (level >= 5) {
       mp.events.callRemote("server:admin:requestLogs");
@@ -230,6 +232,10 @@
     const [payload] = args;
     executeInBrowser(browserState, `window.adminApp && window.adminApp.setFactions(${JSON.stringify(payload || "[]")});`);
   });
+  mp.events.add("client:admin:setHousing", (...args) => {
+    const [payload] = args;
+    executeInBrowser(browserState, `window.adminApp && window.adminApp.setHousing(${JSON.stringify(payload || "{}")});`);
+  });
   mp.events.add("client:admin:receiveCommands", (payload) => {
     executeInBrowser(browserState, `window.adminApp && window.adminApp.setCommands(${JSON.stringify(payload)});`);
   });
@@ -251,6 +257,14 @@
   mp.events.add("cef:admin:createFaction", (...args) => {
     const [type, shortName, name, colorHex, mapIconId] = args;
     mp.events.callRemote("server:admin:createFaction", type, shortName, name, colorHex, mapIconId);
+  });
+  mp.events.add("cef:admin:createHouse", (...args) => {
+    const [displayName, interiorKey, price, hasGarden, hasHelipad] = args;
+    mp.events.callRemote("server:admin:createHouse", displayName, interiorKey, price, hasGarden, hasHelipad);
+  });
+  mp.events.add("cef:admin:deleteHouse", (...args) => {
+    const [houseId] = args;
+    mp.events.callRemote("server:admin:deleteHouse", houseId);
   });
   mp.events.add("cef:admin:setFactionLeader", (...args) => {
     const [accountId, factionId] = args;
@@ -277,6 +291,9 @@
   });
   mp.events.add("cef:admin:requestLogs", () => {
     mp.events.callRemote("server:admin:requestLogs");
+  });
+  mp.events.add("cef:admin:requestTickets", () => {
+    mp.events.callRemote("server:admin:tickets:request");
   });
   mp.events.add("cef:admin:ticketClaim", (ticketId) => {
     mp.events.callRemote("server:admin:tickets:claim", ticketId);

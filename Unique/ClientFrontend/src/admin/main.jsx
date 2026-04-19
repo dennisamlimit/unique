@@ -1,4 +1,5 @@
 ﻿import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { logoSrc } from "../lib/brand.js";
 import { trigger } from "../lib/rage.js";
@@ -99,6 +100,187 @@ function PlayerCard({ player }) {
   );
 }
 
+function ConfirmDialog({ dialog, onCancel, onConfirm }) {
+  if (!dialog) {
+    return null;
+  }
+
+  const variant = dialog.variant || "primary";
+  const toneClasses =
+    variant === "danger"
+      ? "border-rose-300/30 bg-rose-500/[0.12] text-rose-100"
+      : variant === "warning"
+        ? "border-amber-300/30 bg-amber-500/[0.12] text-amber-100"
+        : "border-fuchsia-300/30 bg-fuchsia-500/[0.12] text-fuchsia-100";
+  const confirmClasses =
+    variant === "danger"
+      ? "bg-rose-500 hover:bg-rose-400"
+      : variant === "warning"
+        ? "bg-amber-500 hover:bg-amber-400 text-slate-950"
+        : "bg-fuchsia-500 hover:bg-fuchsia-400";
+
+  return (
+    <div className="fixed inset-0 z-[100] grid place-items-center bg-black/60 px-6 backdrop-blur-sm">
+      <div className={`w-full max-w-xl rounded-2xl border p-6 shadow-[0_20px_80px_rgba(0,0,0,0.6)] ${toneClasses}`}>
+        <div className="text-[11px] font-black uppercase tracking-[0.24em] opacity-80">Bestaetigung</div>
+        <div className="mt-3 text-2xl font-black text-white">{dialog.title}</div>
+        <div className="mt-3 text-sm font-semibold leading-6 text-zinc-100/90">{dialog.message}</div>
+        <div className="mt-6 flex justify-end gap-3">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="h-11 rounded-md border border-white/10 bg-black/30 px-4 text-[11px] font-black uppercase text-zinc-200 transition hover:bg-white/[0.08]"
+          >
+            Abbrechen
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            className={`h-11 rounded-md px-4 text-[11px] font-black uppercase text-white transition ${confirmClasses}`}
+          >
+            Bestaetigen
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ChevronDownIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-4 w-4 fill-none stroke-current stroke-[2]">
+      <path d="m6 9 6 6 6-6" />
+    </svg>
+  );
+}
+
+function PortalPopover({ open, anchorRef, onClose, width = "anchor", className = "", children }) {
+  const panelRef = React.useRef(null);
+  const [style, setStyle] = useState(null);
+
+  useEffect(() => {
+    if (!open) {
+      setStyle(null);
+      return undefined;
+    }
+
+    function updatePosition() {
+      const anchor = anchorRef.current;
+      if (!(anchor instanceof HTMLElement)) return;
+
+      const rect = anchor.getBoundingClientRect();
+      const computedWidth = width === "anchor" ? rect.width : width;
+      const maxWidth = Math.max(280, Math.min(Number(computedWidth) || rect.width, window.innerWidth - 24));
+      const left = Math.min(Math.max(12, rect.left), Math.max(12, window.innerWidth - maxWidth - 12));
+      const top = Math.min(rect.bottom + 10, Math.max(12, window.innerHeight - 12));
+
+      setStyle({
+        position: "fixed",
+        top: `${top}px`,
+        left: `${left}px`,
+        width: `${maxWidth}px`,
+        zIndex: 9999
+      });
+    }
+
+    function onPointerDown(event) {
+      const target = event.target;
+      if (
+        (panelRef.current instanceof HTMLElement && panelRef.current.contains(target)) ||
+        (anchorRef.current instanceof HTMLElement && anchorRef.current.contains(target))
+      ) {
+        return;
+      }
+      onClose();
+    }
+
+    updatePosition();
+    window.addEventListener("resize", updatePosition);
+    window.addEventListener("scroll", updatePosition, true);
+    window.addEventListener("pointerdown", onPointerDown);
+
+    return () => {
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
+      window.removeEventListener("pointerdown", onPointerDown);
+    };
+  }, [anchorRef, onClose, open, width]);
+
+  if (!open || !style) return null;
+
+  return createPortal(
+    <div ref={panelRef} style={style} className={className}>
+      {children}
+    </div>,
+    document.body
+  );
+}
+
+function HousingTemplateCombobox({ options, value, onChange }) {
+  const [open, setOpen] = useState(false);
+  const buttonRef = React.useRef(null);
+  const activeTemplate = options.find((template) => template.key === value) || options[0] || null;
+
+  return (
+    <div className="relative isolate" data-housing-template-combobox>
+      <button
+        ref={buttonRef}
+        type="button"
+        onClick={() => setOpen((current) => !current)}
+        className="theme-input theme-nav-tile flex h-11 w-full items-center justify-between rounded-md px-3 text-left text-sm font-semibold text-white transition hover:border-violet-200/[0.26] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-fuchsia-500/40"
+      >
+        <span className="min-w-0">
+          <span className="block truncate font-black uppercase">{activeTemplate?.label || "Interior auswaehlen"}</span>
+          <span className="block truncate text-[10px] font-black uppercase tracking-[0.16em] text-zinc-500">
+            {activeTemplate ? `${activeTemplate.tierLabel} | ${activeTemplate.locationName || activeTemplate.key}` : "Keine Vorlage geladen"}
+          </span>
+        </span>
+        <span className={`ml-3 shrink-0 theme-secondary-text transition ${open ? "rotate-180" : ""}`}>
+          <ChevronDownIcon />
+        </span>
+      </button>
+      <PortalPopover
+        open={open}
+        anchorRef={buttonRef}
+        onClose={() => setOpen(false)}
+        className="theme-popover grid gap-1 rounded-md p-2"
+      >
+        {options.map((template) => {
+          const active = template.key === (activeTemplate?.key || "");
+          return (
+            <button
+              key={template.key}
+              type="button"
+              onClick={() => {
+                onChange(template.key);
+                setOpen(false);
+              }}
+              className={`theme-nav-tile rounded-md px-3 py-3 text-left transition ${
+                active
+                  ? "theme-primary-border theme-primary-soft text-white theme-primary-glow"
+                  : "border-transparent bg-black/20 text-zinc-300 hover:bg-white/[0.05] hover:text-white"
+              }`}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-black uppercase">{template.label}</div>
+                  <div className="mt-1 truncate text-[10px] font-black uppercase tracking-[0.16em] text-zinc-500">
+                    {template.tierLabel} | {template.locationName || template.key}
+                  </div>
+                </div>
+                <div className="rounded bg-white/[0.08] px-2 py-1 text-[10px] font-black uppercase text-amber-100">
+                  {`${Number(template.stars || 0)}/5 Sterne`}
+                </div>
+              </div>
+              <div className="mt-2 text-xs font-semibold leading-6 text-zinc-400">{template.description}</div>
+            </button>
+          );
+        })}
+      </PortalPopover>
+    </div>
+  );
+}
+
 function formatDate(value) {
   if (!value) return "Unbekannt";
   const date = new Date(value);
@@ -110,6 +292,10 @@ function formatDurationMs(ms) {
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
   return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+function formatMoney(value) {
+  return `$${Number(value || 0).toLocaleString("de-DE")}`;
 }
 
 function getClaimReleaseMs(ticket, now) {
@@ -162,10 +348,12 @@ function AdminApp() {
   const [logs, setLogs] = useState([]);
   const [notice, setNotice] = useState("");
   const [factionForm, setFactionForm] = useState({ type: "state", shortName: "", name: "", colorHex: "#33AA88", mapIconId: "" });
+  const [housingForm, setHousingForm] = useState({ displayName: "", interiorKey: "", price: "", hasGarden: false, hasHelipad: false });
   const [leaderForm, setLeaderForm] = useState({ accountId: "", factionId: "" });
   const [spawnFactionId, setSpawnFactionId] = useState("");
   const [wardrobeForm, setWardrobeForm] = useState({ factionId: "", label: "" });
   const [vehicleForm, setVehicleForm] = useState({ factionId: "", minRankLevel: "1", modelName: "", displayName: "" });
+  const [housingData, setHousingData] = useState({ templates: [], houses: [] });
   const [defaultTarget, setDefaultTarget] = useState("all");
   const [localCommandLevels, setLocalCommandLevels] = useState({});
   const [ticketData, setTicketData] = useState({ openCount: 0, tickets: [] });
@@ -175,6 +363,7 @@ function AdminApp() {
   const [ticketHistory, setTicketHistory] = useState({ accountId: 0, tickets: [] });
   const [ticketInsight, setTicketInsight] = useState({ accountId: 0, account: null, warnings: [] });
   const [nowMs, setNowMs] = useState(Date.now());
+  const [confirmDialog, setConfirmDialog] = useState(null);
 
   const allowedCommands = useMemo(() => commands.filter((command) => (command.requiredLevel || command.level || 0) <= adminLevel), [adminLevel, commands]);
   const grouped = useMemo(() => {
@@ -186,6 +375,10 @@ function AdminApp() {
     }, {});
   }, [allowedCommands]);
   const onlineAdmins = useMemo(() => players.filter((player) => player.adminLevel > 0), [players]);
+  const effectiveHousingTemplateKey = housingForm.interiorKey || housingData.templates[0]?.key || "";
+  const selectedHousingTemplate = useMemo(() => {
+    return housingData.templates.find((template) => template.key === effectiveHousingTemplateKey) || null;
+  }, [effectiveHousingTemplateKey, housingData.templates]);
   const sortedTickets = useMemo(() => {
     return [...ticketData.tickets].sort((left, right) => {
       const leftClaimed = left.claimedByName ? 1 : 0;
@@ -217,10 +410,12 @@ function AdminApp() {
   }, []);
 
   const close = useCallback(() => {
+    setConfirmDialog(null);
     setVisible(false);
   }, []);
 
   const requestClose = useCallback(() => {
+    setConfirmDialog(null);
     setVisible(false);
     trigger("cef:admin:close");
   }, []);
@@ -233,6 +428,7 @@ function AdminApp() {
     setNotice("");
     setTicketReply("");
     setTicketInviteAccountId("");
+    setConfirmDialog(null);
     setVisible(true);
     trigger("cef:admin:requestTickets");
   }, []);
@@ -269,6 +465,21 @@ function AdminApp() {
           setFactions(Array.isArray(parsed) ? parsed : []);
         } catch (error) {
           setFactions([]);
+        }
+      },
+      setHousing: (rawPayload) => {
+        try {
+          const parsed = JSON.parse(rawPayload || "{\"templates\":[],\"houses\":[]}");
+          setHousingData({
+            templates: Array.isArray(parsed.templates) ? parsed.templates : [],
+            houses: Array.isArray(parsed.houses) ? parsed.houses : []
+          });
+          setHousingForm((current) => ({
+            ...current,
+            interiorKey: current.interiorKey || parsed.templates?.[0]?.key || ""
+          }));
+        } catch (error) {
+          setHousingData({ templates: [], houses: [] });
         }
       },
       setTickets: (rawPayload) => {
@@ -339,11 +550,16 @@ function AdminApp() {
   const selectedTicketReleaseMs = getClaimReleaseMs(selectedTicket, nowMs);
   const themeVars = getThemeVars(theme);
 
+  function queueConfirm(title, message, action, variant = "primary") {
+    setConfirmDialog({ title, message, action, variant });
+  }
+
   const navItems = [
     { id: "home", label: "Home", icon: "home" },
     { id: "players", label: "Spieler", icon: "players" },
     { id: "tickets", label: "Tickets", icon: "logs" },
     { id: "factions", label: "Fraktionen", icon: "home" },
+    { id: "housing", label: "Housing", icon: "home" },
     { id: "logs", label: "Logs", icon: "logs" },
     { id: "commands", label: "Befehle", icon: "commands" },
     ...(adminLevel === 10 ? [{ id: "perms", label: "Berechtigungen", icon: "perms" }] : [])
@@ -352,6 +568,15 @@ function AdminApp() {
   return (
     <main className="unique-theme fixed inset-0 grid bg-black/[0.72] text-white backdrop-blur-md" style={themeVars}>
       <style>{THEME_CSS}</style>
+      <ConfirmDialog
+        dialog={confirmDialog}
+        onCancel={() => setConfirmDialog(null)}
+        onConfirm={() => {
+          const action = confirmDialog?.action;
+          setConfirmDialog(null);
+          action?.();
+        }}
+      />
       <div className="pointer-events-none absolute inset-0" style={{ background: "linear-gradient(120deg, rgba(4,4,8,0.98), rgb(var(--ui-surface-rgb) / 0.92) 46%, rgb(var(--ui-primary-rgb) / 0.24) 76%, rgba(5,5,8,0.96))" }} />
       <div className="pointer-events-none absolute inset-x-[7vw] top-[14vh] h-[62vh] -skew-x-12 border-y border-violet-300/[0.08]" style={{ backgroundColor: "rgb(var(--ui-primary-rgb) / 0.05)" }} />
 
@@ -619,15 +844,20 @@ function AdminApp() {
                               type="button"
                               disabled={!ticketReply.trim()}
                               onClick={() => {
-                                let forceReply = false;
                                 if (replyRequiresConfirm) {
-                                  const accepted = window.confirm(`Dieses Ticket ist aktuell von ${selectedTicket.claimedByName || "einem anderen Admin"} geclaimt. Wirklich trotzdem antworten?`);
-                                  if (!accepted) {
-                                    return;
-                                  }
-                                  forceReply = true;
+                                  queueConfirm(
+                                    "Ticket-Antwort erzwingen",
+                                    `Dieses Ticket ist aktuell von ${selectedTicket.claimedByName || "einem anderen Admin"} geclaimt. Wirklich trotzdem antworten?`,
+                                    () => {
+                                      trigger("cef:admin:ticketReply", selectedTicket.ticketId, ticketReply, true);
+                                      setTicketReply("");
+                                    },
+                                    "warning"
+                                  );
+                                  return;
                                 }
-                                trigger("cef:admin:ticketReply", selectedTicket.ticketId, ticketReply, forceReply);
+
+                                trigger("cef:admin:ticketReply", selectedTicket.ticketId, ticketReply, false);
                                 setTicketReply("");
                               }}
                               className="h-10 rounded-md bg-fuchsia-500 text-[10px] font-black uppercase text-white disabled:cursor-not-allowed disabled:opacity-50"
@@ -793,6 +1023,208 @@ function AdminApp() {
                         <div className="text-xs font-semibold text-zinc-400">ID {faction.factionId} | {faction.type} | {faction.colorHex} | Icon {faction.mapIconId}</div>
                       </article>
                     ))}
+                  </div>
+                </div>
+              </section>
+            )}
+
+            {activePanel === "housing" && (
+              <section className="grid gap-5">
+                <div className="grid gap-4 xl:grid-cols-[1.05fr_0.95fr]">
+                  <div className="grid gap-3 rounded-md border border-violet-200/[0.12] bg-black/[0.24] p-5">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <h2 className="text-xs font-black uppercase tracking-normal text-violet-100">Haus dynamisch erstellen</h2>
+                        <div className="mt-1 text-sm font-semibold text-zinc-400">
+                          Erstellung an deiner aktuellen Position. Streetname wird automatisch aus deiner aktuellen Strasse gezogen. Garage nutzt bei Fahrzeug den Fahrzeugspot, sonst einen Vorwaerts-Offset.
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => trigger("cef:admin:createHouse", housingForm.displayName, effectiveHousingTemplateKey, housingForm.price || "", housingForm.hasGarden, housingForm.hasHelipad)}
+                        className="h-11 rounded-md bg-fuchsia-500 px-5 text-[10px] font-black uppercase text-white"
+                      >
+                        Haus erstellen
+                      </button>
+                    </div>
+                    <div className="grid gap-3 md:grid-cols-3">
+                      <input
+                        value={housingForm.displayName}
+                        onChange={(e) => setHousingForm((current) => ({ ...current, displayName: e.target.value }))}
+                        className="h-10 rounded-md border border-violet-300/[0.18] bg-black/[0.48] px-3 text-sm font-semibold text-white"
+                        placeholder="Hausname"
+                      />
+                      <HousingTemplateCombobox
+                        options={housingData.templates}
+                        value={effectiveHousingTemplateKey}
+                        onChange={(nextKey) => setHousingForm((current) => ({ ...current, interiorKey: nextKey }))}
+                      />
+                      <input
+                        value={housingForm.price}
+                        onChange={(e) => setHousingForm((current) => ({ ...current, price: e.target.value.replace(/[^0-9]/g, "") }))}
+                        className="h-10 rounded-md border border-violet-300/[0.18] bg-black/[0.48] px-3 text-sm font-semibold text-white"
+                        placeholder={`Preis Override (${selectedHousingTemplate ? formatMoney(selectedHousingTemplate.basePrice) : "Templatepreis"})`}
+                      />
+                    </div>
+                    <div className="grid gap-3 md:grid-cols-[1fr_1fr_auto]">
+                      <div className="rounded-md border border-violet-200/[0.12] bg-black/[0.24] px-4 py-3">
+                        <div className="text-[10px] font-black uppercase tracking-[0.16em] text-zinc-500">Aussenbereich</div>
+                        <div className="mt-2 flex items-center gap-3">
+                          <button
+                            type="button"
+                            onClick={() => setHousingForm((current) => ({ ...current, hasGarden: true }))}
+                            className={`h-10 rounded-md px-4 text-[10px] font-black uppercase transition ${
+                              housingForm.hasGarden
+                                ? "bg-emerald-500 text-white"
+                                : "border border-violet-200/[0.12] bg-black/[0.36] text-zinc-300 hover:bg-white/[0.05]"
+                            }`}
+                          >
+                            Garten
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setHousingForm((current) => ({ ...current, hasGarden: false }))}
+                            className={`h-10 rounded-md px-4 text-[10px] font-black uppercase transition ${
+                              !housingForm.hasGarden
+                                ? "bg-zinc-700 text-white"
+                                : "border border-violet-200/[0.12] bg-black/[0.36] text-zinc-300 hover:bg-white/[0.05]"
+                            }`}
+                          >
+                            Kein Garten
+                          </button>
+                        </div>
+                      </div>
+                      <div className="rounded-md border border-violet-200/[0.12] bg-black/[0.24] px-4 py-3">
+                        <div className="text-[10px] font-black uppercase tracking-[0.16em] text-zinc-500">Luftfahrzeuge</div>
+                        <div className="mt-2 flex items-center gap-3">
+                          <button
+                            type="button"
+                            onClick={() => setHousingForm((current) => ({ ...current, hasHelipad: true }))}
+                            className={`h-10 rounded-md px-4 text-[10px] font-black uppercase transition ${
+                              housingForm.hasHelipad
+                                ? "bg-sky-500 text-white"
+                                : "border border-violet-200/[0.12] bg-black/[0.36] text-zinc-300 hover:bg-white/[0.05]"
+                            }`}
+                          >
+                            HeliPad
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setHousingForm((current) => ({ ...current, hasHelipad: false }))}
+                            className={`h-10 rounded-md px-4 text-[10px] font-black uppercase transition ${
+                              !housingForm.hasHelipad
+                                ? "bg-zinc-700 text-white"
+                                : "border border-violet-200/[0.12] bg-black/[0.36] text-zinc-300 hover:bg-white/[0.05]"
+                            }`}
+                          >
+                            Kein HeliPad
+                          </button>
+                        </div>
+                      </div>
+                      <div className="rounded-md border border-violet-200/[0.12] bg-black/[0.24] px-4 py-3 text-right">
+                        <div className="text-[10px] font-black uppercase tracking-[0.16em] text-zinc-500">Gewaehlt</div>
+                        <div className="mt-2 text-sm font-black uppercase text-white">{housingForm.hasGarden ? "Mit Garten" : "Ohne Garten"}</div>
+                        <div className="mt-1 text-sm font-black uppercase text-white">{housingForm.hasHelipad ? "Mit HeliPad" : "Ohne HeliPad"}</div>
+                      </div>
+                    </div>
+                    {selectedHousingTemplate && (
+                      <div className="grid gap-3 rounded-md border border-fuchsia-300/[0.16] bg-fuchsia-500/[0.08] p-4 lg:grid-cols-[1fr_auto]">
+                        <div className="grid gap-2">
+                          <div className="flex flex-wrap items-center gap-3">
+                            <div className="text-lg font-black uppercase text-white">{selectedHousingTemplate.label}</div>
+                            <div className="rounded bg-white/[0.08] px-2 py-1 text-[10px] font-black uppercase text-amber-100">
+                              {`${Number(selectedHousingTemplate.stars || 0)}/5 Sterne`}
+                            </div>
+                          </div>
+                          <div className="text-sm font-semibold leading-6 text-zinc-300">{selectedHousingTemplate.description}</div>
+                        </div>
+                        <div className="grid gap-2 text-right text-[11px] font-black uppercase text-zinc-200">
+                          <div>RAGE Location {selectedHousingTemplate.locationName || selectedHousingTemplate.key}</div>
+                          <div>Basispreis {formatMoney(selectedHousingTemplate.basePrice)}</div>
+                          <div>{housingForm.hasGarden ? "Mit Garten" : "Ohne Garten"}</div>
+                          <div>{housingForm.hasHelipad ? "Mit HeliPad" : "Ohne HeliPad"}</div>
+                          <div>Lager {selectedHousingTemplate.storageSlots} Slots</div>
+                          <div>Garage {selectedHousingTemplate.garageSlots} Slots</div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="grid gap-3 rounded-md border border-violet-200/[0.12] bg-black/[0.24] p-5">
+                    <h2 className="text-xs font-black uppercase tracking-normal text-violet-100">Housing Uebersicht</h2>
+                    <div className="grid gap-3 md:grid-cols-3">
+                      <article className="rounded-md border border-violet-200/[0.08] bg-black/20 p-4">
+                        <div className="text-[10px] font-black uppercase text-zinc-500">Immobilien</div>
+                        <div className="mt-2 text-3xl font-black text-white">{housingData.houses.length}</div>
+                      </article>
+                      <article className="rounded-md border border-violet-200/[0.08] bg-black/20 p-4">
+                        <div className="text-[10px] font-black uppercase text-zinc-500">Verkauft</div>
+                        <div className="mt-2 text-3xl font-black text-white">{housingData.houses.filter((house) => house.ownerAccountId).length}</div>
+                      </article>
+                      <article className="rounded-md border border-violet-200/[0.08] bg-black/20 p-4">
+                        <div className="text-[10px] font-black uppercase text-zinc-500">Premium 5 Stern</div>
+                        <div className="mt-2 text-3xl font-black text-white">{housingData.houses.filter((house) => Number(house.stars) === 5).length}</div>
+                      </article>
+                    </div>
+                    <div className="rounded-md border border-violet-200/[0.08] bg-black/20 p-4 text-sm font-semibold leading-6 text-zinc-300">
+                      Die 5-Sterne-Systematik bleibt an das Interior gekoppelt: 1 Stern ist bewusst einfach und guenstig, 5 Sterne ist das teuerste Premium-Interior.
+                    </div>
+                  </div>
+                </div>
+
+                <div className="rounded-md border border-violet-200/[0.12] bg-black/[0.24] p-5">
+                  <div className="flex items-center justify-between gap-3">
+                    <h2 className="text-xs font-black uppercase tracking-normal text-violet-100">Bestehende Haeuser</h2>
+                    <div className="text-[10px] font-black uppercase text-zinc-500">
+                      Klick auf Loeschen entfernt Haus, Lager und Garagendaten.
+                    </div>
+                  </div>
+                  <div className="mt-4 grid gap-3 lg:grid-cols-2">
+                    {housingData.houses.map((house) => (
+                      <article key={house.houseId} className="grid gap-3 rounded-md border border-violet-200/[0.1] bg-black/[0.24] p-4">
+                        <div className="flex items-start justify-between gap-4">
+                          <div className="min-w-0">
+                            <div className="truncate text-sm font-black uppercase text-white">
+                              #{house.houseId} {house.displayName}
+                            </div>
+                            <div className="text-xs font-semibold text-zinc-400">
+                              {house.streetName} | {house.interiorKey} | {formatMoney(house.price)}
+                            </div>
+                          </div>
+                          <div className="rounded bg-white/[0.06] px-2 py-1 text-[10px] font-black uppercase text-amber-100">
+                            {`${Number(house.stars || 0)}/5 Sterne`}
+                          </div>
+                        </div>
+                        <div className="grid gap-1 text-[11px] font-semibold text-zinc-300">
+                          <div>Besitzer: {house.ownerName || "Frei"}</div>
+                          <div>Garten: {house.hasGarden ? "Ja" : "Nein"}</div>
+                          <div>HeliPad: {house.hasHelipad ? "Ja" : "Nein"}</div>
+                          <div>Lager: {house.storageSlots} | Garage: {house.garageSlots}</div>
+                          <div>
+                            Eingang: {Number(house.entranceX || 0).toFixed(2)} / {Number(house.entranceY || 0).toFixed(2)} / {Number(house.entranceZ || 0).toFixed(2)}
+                          </div>
+                        </div>
+                        <div className="flex justify-end">
+                          <button
+                            type="button"
+                            onClick={() => queueConfirm(
+                              "Haus loeschen",
+                              `Haus #${house.houseId} (${house.displayName}) wirklich entfernen? Lager- und Garagendaten werden ebenfalls geloescht.`,
+                              () => trigger("cef:admin:deleteHouse", house.houseId),
+                              "danger"
+                            )}
+                            className="h-10 rounded-md bg-rose-500 px-4 text-[10px] font-black uppercase text-white"
+                          >
+                            Loeschen
+                          </button>
+                        </div>
+                      </article>
+                    ))}
+                    {housingData.houses.length === 0 && (
+                      <div className="rounded-md border border-violet-200/[0.1] bg-black/[0.24] p-5 text-sm font-semibold text-zinc-400">
+                        Noch keine Haeuser angelegt.
+                      </div>
+                    )}
                   </div>
                 </div>
               </section>

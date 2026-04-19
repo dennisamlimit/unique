@@ -17,6 +17,8 @@ import { CharacterRepository } from "./features/accounts/character-repository.js
 import { InventoryRepository } from "./features/inventory/inventory-repository.js";
 import { ItemTemplateRepository } from "./features/inventory/item-template-repository.js";
 import { InventoryService } from "./features/inventory/inventory-service.js";
+import { HousingService } from "./features/housing/housing-service.js";
+import { HOUSE_HELIPAD_SLOTS, getHouseInteriorDimension, isHelicopterModelHash } from "./features/housing/housing.js";
 
 
 // Vehicle Consumption & State Sync
@@ -139,6 +141,7 @@ import {
   getArmour,
   getHeading,
   getPlayerName,
+  isPlayerVehicleDriver,
   getVar,
   setArmour,
   setHeading,
@@ -157,12 +160,15 @@ const pool = getPool();
 const inventoryRepo = new InventoryRepository(pool);
 const itemTemplateRepo = new ItemTemplateRepository(pool);
 export const inventoryService = new InventoryService(inventoryRepo, itemTemplateRepo);
+const housing = new HousingService();
 const LOCAL_CHAT_RANGE = 20;
 const ADMIN_JAIL_POSITION = { x: 1691.14, y: 2565.66, z: 45.56, rotZ: 180, dimension: 1 };
 const ADMIN_JAIL_RELEASE_POSITION = { x: 1846.64, y: 2585.86, z: 45.67, rotZ: 90, dimension: 1 };
 const adminJailTimers = new Map<number, NodeJS.Timeout>();
 const factionVehicleEntities = new Map<number, any>();
 const vehicleFactionLookup = new WeakMap<object, number>();
+const houseGarageVehicleEntities = new Map<number, any>();
+const vehicleHouseGarageLookup = new WeakMap<object, number>();
 const KNOWN_FACTION_PERMISSION_KEYS = [
   "event_access",
   "storage_general",
@@ -648,6 +654,402 @@ async function syncWardrobeDataForPlayer(player: any) {
   emitClient(player, "client:factionWardrobe:setData", JSON.stringify({ points, outfits }));
 }
 
+async function syncHousingDataForPlayer(player: any) {
+  if (!player || !isLoggedIn(player)) {
+    emitClient(player, "client:housing:setData", JSON.stringify({ houses: [] }));
+    return;
+  }
+
+  emitClient(player, "client:housing:setData", JSON.stringify(await housing.buildPlayerPayload(player)));
+}
+
+async function syncHousingDataForAll() {
+  forEachPlayer((player) => {
+    if (!isLoggedIn(player)) {
+      return;
+    }
+
+    void syncHousingDataForPlayer(player).catch((error) => logError("sync housing player failed", error));
+  });
+}
+
+async function sendAdminHousingData(player: any) {
+  emitClient(player, "client:admin:setHousing", JSON.stringify(await housing.buildAdminPayload()));
+}
+
+async function refreshAdminHousingDataForAllAdmins() {
+  const refreshes: Promise<void>[] = [];
+  forEachPlayer((player) => {
+    if (!isLoggedIn(player) || !hasAdminLevel(player, 1)) {
+      return;
+    }
+
+    refreshes.push(sendAdminHousingData(player).catch((error) => logError("refresh admin housing data failed", error)));
+  });
+  await Promise.all(refreshes);
+}
+
+function getPointDistance(player: any, point: { x: number; y: number; z: number }, dimension: number) {
+  if (Number(player.dimension ?? 0) !== Number(dimension ?? 0)) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  const dx = Number(player.position?.x ?? 0) - Number(point.x ?? 0);
+  const dy = Number(player.position?.y ?? 0) - Number(point.y ?? 0);
+  const dz = Number(player.position?.z ?? 0) - Number(point.z ?? 0);
+  return Math.sqrt(dx * dx + dy * dy + dz * dz);
+}
+
+async function getHouseByCurrentInterior(player: any) {
+  const currentHouseId = Number(getVar(player, "CURRENT_HOUSE_ID", 0));
+  if (!Number.isInteger(currentHouseId) || currentHouseId <= 0) {
+    return null;
+  }
+
+  return housing.getById(currentHouseId);
+}
+
+async function findNearbyExteriorHouse(player: any, houseId?: number) {
+  const houses = houseId ? [await housing.getById(houseId)].filter(Boolean) : await housing.getAll();
+  let nearest: any = null;
+  let nearestDistance = 3.4;
+
+  for (const house of houses) {
+    if (!house) continue;
+    const distance = getPointDistance(player, { x: house.entranceX, y: house.entranceY, z: house.entranceZ }, house.entranceDimension);
+    if (distance <= nearestDistance) {
+      nearest = house;
+      nearestDistance = distance;
+    }
+  }
+
+  return nearest;
+}
+
+function getHouseParkingPoint(house: any, parkingType: "garage" | "helipad") {
+  const prefix = parkingType === "helipad" ? "helipad" : "garage";
+  const x = house?.[`${prefix}X`];
+  const y = house?.[`${prefix}Y`];
+  const z = house?.[`${prefix}Z`];
+  const rotZ = house?.[`${prefix}RotZ`];
+
+  if (x === null || y === null || z === null || rotZ === null || x === undefined || y === undefined || z === undefined || rotZ === undefined) {
+    return null;
+  }
+
+  return {
+    x: Number(x),
+    y: Number(y),
+    z: Number(z),
+    rotZ: Number(rotZ),
+    // Exterior parking should always live in the entrance dimension, even if
+    // legacy DB rows still contain an outdated per-point dimension.
+    dimension: Number(house?.entranceDimension ?? house?.[`${prefix}Dimension`] ?? 0)
+  };
+}
+
+function getHouseParkingRange(parkingType: "garage" | "helipad") {
+  return parkingType === "helipad" ? 6.75 : 4.75;
+}
+
+async function isNearHouseParking(player: any, house: any, parkingType: "garage" | "helipad") {
+  const point = getHouseParkingPoint(house, parkingType);
+  if (!point) {
+    return false;
+  }
+
+  return getPointDistance(player, point, point.dimension) <= getHouseParkingRange(parkingType);
+}
+
+async function isNearHouseInteriorPoint(player: any, house: any, pointType: "exit" | "storage" | "wardrobe") {
+  const interior = housing.getInterior(house);
+  if (!interior) {
+    return false;
+  }
+
+  const point = pointType === "exit"
+    ? interior.exitPoint
+    : pointType === "storage"
+      ? interior.storagePoint
+      : interior.wardrobePoint;
+
+  return getPointDistance(player, point, getHouseInteriorDimension(house.houseId)) <= 2.8;
+}
+
+function getVehicleHouseGarageEntityId(vehicle: any) {
+  if (!vehicle) {
+    return 0;
+  }
+
+  const fromWeakMap = vehicleHouseGarageLookup.get(vehicle);
+  if (fromWeakMap) {
+    return fromWeakMap;
+  }
+
+  return Number(vehicle.getVariable?.("HOUSE_GARAGE_VEHICLE_ID") ?? 0);
+}
+
+async function spawnHouseGarageVehicleEntity(garageVehicleId: number, houseOverride?: any) {
+  const record = await housing.getGarageVehicleById(garageVehicleId);
+  if (!record) {
+    return null;
+  }
+
+  const houseRecord = houseOverride ?? await housing.getById(record.houseId);
+  if (!houseRecord) {
+    return null;
+  }
+
+  const existing = houseGarageVehicleEntities.get(garageVehicleId);
+  existing?.destroy?.();
+  const parkingType = record.parkingType === "helipad" ? "helipad" : "garage";
+  const spawnPoint = getHouseParkingPoint(houseRecord, parkingType);
+  if (!spawnPoint) {
+    return null;
+  }
+
+  const vehicle = mp.vehicles.new(Number(record.modelHash), vector3(spawnPoint.x, spawnPoint.y, spawnPoint.z), {
+    heading: spawnPoint.rotZ,
+    color: [record.colorPrimary, record.colorSecondary],
+    numberPlate: record.numberPlate || `HOME${garageVehicleId}`,
+    dimension: spawnPoint.dimension
+  });
+
+  if (!vehicle) {
+    return null;
+  }
+
+  vehicle.dimension = spawnPoint.dimension;
+  vehicle.locked = !!record.isLocked;
+  vehicle.engine = false;
+  vehicle.setVariable("HOUSE_GARAGE_VEHICLE_ID", record.garageVehicleId);
+  vehicle.setVariable("HOUSE_ID", record.houseId);
+  vehicle.setVariable("HOUSE_VEHICLE_STORAGE_TYPE", parkingType);
+  vehicle.setVariable("IS_LOCKED", !!record.isLocked);
+  vehicle.setVariable("FUEL", record.fuelLevel ?? 100);
+  vehicle.setVariable("FUEL_TYPE", "petrol");
+  vehicle.setVariable("MAX_FUEL", 100);
+  vehicle.setVariable("HEALTH_PERCENT", (record.health ?? 1000) / 10);
+  vehicle.setVariable("HOUSE_VEHICLE_NAME", record.displayName);
+
+  houseGarageVehicleEntities.set(record.garageVehicleId, vehicle);
+  vehicleHouseGarageLookup.set(vehicle, record.garageVehicleId);
+  return vehicle;
+}
+
+function despawnHouseGarageVehicleEntity(garageVehicleId: number) {
+  const vehicle = houseGarageVehicleEntities.get(garageVehicleId);
+  if (!vehicle) {
+    return;
+  }
+
+  houseGarageVehicleEntities.delete(garageVehicleId);
+  vehicle.destroy?.();
+}
+
+type HouseParkingConfig = {
+  accessEnabled: (house: any) => boolean;
+  storedVehicles: (houseId: number) => Promise<any[]>;
+  capacity: (house: any) => number;
+  driverError: string;
+  modelError: string | null;
+  factionError: string;
+  capacityError: string;
+  displayName: (vehicle: any, houseId: number) => string;
+  numberPlate: (vehicle: any, houseId: number) => string;
+  spawnError: string;
+  storeSuccess: (vehicleName: string, house: any) => string;
+  spawnSuccess: (vehicleName: string) => string;
+};
+
+function getHouseParkingConfig(parkingType: "garage" | "helipad"): HouseParkingConfig {
+  return parkingType === "helipad"
+    ? {
+        accessEnabled: (house: any) => !!house?.hasHelipad,
+        storedVehicles: (houseId: number) => housing.getHelipadVehicles(houseId),
+        capacity: (_house: any) => HOUSE_HELIPAD_SLOTS,
+        driverError: "Du musst als Pilot in einem Helikopter sitzen.",
+        modelError: "Auf dem HeliPad koennen nur Helikopter eingeparkt werden.",
+        factionError: "Fraktionsfahrzeuge koennen nicht im HeliPad-System eingelagert werden.",
+        capacityError: "Das HeliPad ist voll.",
+        displayName: (vehicle: any, _houseId: number) => String(
+          vehicle.getVariable?.("HOUSE_VEHICLE_NAME")
+          ?? vehicle.getVariable?.("FACTION_VEHICLE_NAME")
+          ?? vehicle.getNumberPlateText?.()
+          ?? "Helikopter"
+        ),
+        numberPlate: (vehicle: any, houseId: number) => String(vehicle.getNumberPlateText?.() ?? `HELI${houseId}`),
+        spawnError: "Helikopter konnte nicht auf dem HeliPad gespawnt werden.",
+        storeSuccess: (vehicleName: string, house: any) => `${vehicleName} wurde auf dem HeliPad von ${house.displayName} eingeparkt.`,
+        spawnSuccess: (vehicleName: string) => `${vehicleName} wurde auf dem HeliPad bereitgestellt.`
+      }
+    : {
+        accessEnabled: (_house: any) => true,
+        storedVehicles: (houseId: number) => housing.getGarageVehicles(houseId),
+        capacity: (house: any) => Number(house?.garageSlots ?? 0),
+        driverError: "Du musst als Fahrer in einem Fahrzeug sitzen.",
+        modelError: null,
+        factionError: "Fraktionsfahrzeuge koennen nicht im Hausgarage-System eingelagert werden.",
+        capacityError: "Die Garage ist voll.",
+        displayName: (vehicle: any, _houseId: number) => String(
+          vehicle.getVariable?.("HOUSE_VEHICLE_NAME")
+          ?? vehicle.getVariable?.("FACTION_VEHICLE_NAME")
+          ?? vehicle.getNumberPlateText?.()
+          ?? "Fahrzeug"
+        ),
+        numberPlate: (vehicle: any, houseId: number) => String(vehicle.getNumberPlateText?.() ?? `HOME${houseId}`),
+        spawnError: "Garagefahrzeug konnte nicht ausgeparkt werden.",
+        storeSuccess: (vehicleName: string, house: any) => `${vehicleName} wurde in ${house.displayName} eingeparkt.`,
+        spawnSuccess: (vehicleName: string) => `${vehicleName} wurde ausgeparkt.`
+      };
+}
+
+async function parkPlayerVehicleInHouseParking(
+  player: any,
+  houseId: number,
+  accountId: number,
+  adminLevel: number,
+  parkingType: "garage" | "helipad"
+) {
+  const houseRecord = await housing.getById(houseId);
+  const config = getHouseParkingConfig(parkingType);
+  if (!houseRecord || !config.accessEnabled(houseRecord)) {
+    return;
+  }
+
+  if (!housing.canManageHouse(houseRecord, accountId, adminLevel) || !(await isNearHouseParking(player, houseRecord, parkingType))) {
+    return;
+  }
+
+  const vehicle = player.vehicle;
+  if (!vehicle || !isPlayerVehicleDriver(player, vehicle)) {
+    systemMessage(player, config.driverError);
+    return;
+  }
+
+  if (parkingType === "helipad" && !isHelicopterModelHash(Number(vehicle.model ?? 0))) {
+    systemMessage(player, config.modelError!);
+    return;
+  }
+
+  if (getFactionVehicleEntityId(vehicle) > 0) {
+    systemMessage(player, config.factionError);
+    return;
+  }
+
+  const parkedVehicles = await config.storedVehicles(houseId);
+  if (parkedVehicles.length >= config.capacity(houseRecord)) {
+    systemMessage(player, config.capacityError);
+    return;
+  }
+
+  const stored = await housing.createGarageVehicle({
+    houseId,
+    parkingType,
+    modelHash: Number(vehicle.model ?? 0),
+    displayName: config.displayName(vehicle, houseId),
+    numberPlate: config.numberPlate(vehicle, houseId),
+    colorPrimary: Number(vehicle.getColor?.(0) ?? 0),
+    colorSecondary: Number(vehicle.getColor?.(1) ?? 0),
+    fuelLevel: Number(vehicle.getVariable?.("FUEL") ?? 100),
+    health: Number(vehicle.bodyHealth ?? 1000),
+    isLocked: !!vehicle.locked
+  });
+
+  const transientGarageVehicleId = getVehicleHouseGarageEntityId(vehicle);
+  if (transientGarageVehicleId > 0) {
+    houseGarageVehicleEntities.delete(transientGarageVehicleId);
+    vehicleHouseGarageLookup.delete(vehicle);
+  }
+
+  vehicle.destroy?.();
+  systemMessage(player, config.storeSuccess(stored.displayName, houseRecord));
+  await syncHousingDataForAll();
+}
+
+async function spawnStoredHouseParkingVehicle(
+  player: any,
+  houseId: number,
+  garageVehicleId: number,
+  accountId: number,
+  adminLevel: number,
+  parkingType: "garage" | "helipad"
+) {
+  const houseRecord = await housing.getById(houseId);
+  const config = getHouseParkingConfig(parkingType);
+  if (!houseRecord || !config.accessEnabled(houseRecord) || !Number.isInteger(garageVehicleId) || garageVehicleId <= 0) {
+    return;
+  }
+
+  if (!housing.canManageHouse(houseRecord, accountId, adminLevel) || !(await isNearHouseParking(player, houseRecord, parkingType))) {
+    return;
+  }
+
+  const garageVehicle = await housing.getGarageVehicleById(garageVehicleId);
+  if (!garageVehicle || garageVehicle.houseId !== houseId || garageVehicle.parkingType !== parkingType) {
+    return;
+  }
+
+  const spawned = await spawnHouseGarageVehicleEntity(garageVehicleId, houseRecord);
+  if (!spawned) {
+    systemMessage(player, config.spawnError);
+    return;
+  }
+
+  spawned.setVariable("HOUSE_ORIGIN_HOUSE_ID", houseId);
+  await housing.deleteGarageVehicle(garageVehicleId);
+  systemMessage(player, config.spawnSuccess(garageVehicle.displayName));
+  await syncHousingDataForAll();
+}
+
+function serializeStoragePayload(player: any, houseRecord: any, storageInventory: any[]) {
+  const playerInventory = inventoryService.serializeInventoryForClientPayload(inventoryService.getInventorySnapshot(player));
+  const stashInventory = inventoryService.serializeInventoryForClientPayload(storageInventory);
+
+  return JSON.stringify({
+    houseId: houseRecord.houseId,
+    title: houseRecord.displayName,
+    streetName: houseRecord.streetName,
+    stars: houseRecord.stars,
+    slots: {
+      used: stashInventory.length,
+      total: houseRecord.storageSlots
+    },
+    playerInventory,
+    storageInventory: stashInventory
+  });
+}
+
+function buildInventorySignature(item: any) {
+  return JSON.stringify({
+    key: String(item?.key ?? ""),
+    data: item?.data ?? null
+  });
+}
+
+function moveEntryBetweenInventories(source: any[], target: any[], uid: string, targetCapacity: number) {
+  const sourceIndex = source.findIndex((entry) => String(entry?.uid ?? "") === String(uid));
+  if (sourceIndex === -1) {
+    return { ok: false as const, reason: "not_found" };
+  }
+
+  const [entry] = source.splice(sourceIndex, 1);
+  const mergeTargetIndex = target.findIndex((candidate) => buildInventorySignature(candidate) === buildInventorySignature(entry));
+
+  if (mergeTargetIndex >= 0) {
+    target[mergeTargetIndex].amount = Number(target[mergeTargetIndex].amount ?? 0) + Number(entry.amount ?? 0);
+    return { ok: true as const, merged: true };
+  }
+
+  if (target.length >= targetCapacity) {
+    source.splice(sourceIndex, 0, entry);
+    return { ok: false as const, reason: "capacity" };
+  }
+
+  target.push(entry);
+  return { ok: true as const, merged: false };
+}
+
 function hasAdminLevel(player: any, level = 1) {
   return Number(getVar(player, "ADMIN_LEVEL", 0)) >= level;
 }
@@ -824,18 +1226,39 @@ async function savePlayerPosition(player: any) {
     return;
   }
 
+  const activeHouse = await getHouseByCurrentInterior(player);
+  const positionSource = activeHouse
+    ? {
+        posX: activeHouse.entranceX,
+        posY: activeHouse.entranceY,
+        posZ: activeHouse.entranceZ,
+        rotZ: activeHouse.entranceRotZ,
+        dimension: activeHouse.entranceDimension
+      }
+    : {
+        posX: player.position.x,
+        posY: player.position.y,
+        posZ: player.position.z,
+        rotZ: getHeading(player),
+        dimension: player.dimension ?? 0
+      };
+
   const dto: SavePlayerStateDto = parseSavePlayerStateDto({
-    posX: player.position.x,
-    posY: player.position.y,
-    posZ: player.position.z,
-    rotZ: getHeading(player),
-    dimension: player.dimension ?? 0,
+    posX: positionSource.posX,
+    posY: positionSource.posY,
+    posZ: positionSource.posZ,
+    rotZ: positionSource.rotZ,
+    dimension: positionSource.dimension,
     health: player.health ?? 100,
     armor: getArmour(player),
     cash: getVar(player, "CASH", 0),
     bankCash: getVar(player, "BANK_CASH", 0)
   });
 
+  const characterId = Number(getVar(player, "CHARACTER_ID", 0));
+  if (characterId > 0) {
+    await characterRepository.updateState(characterId, dto as any);
+  }
   await accounts.savePlayerState(accountId, dto);
 }
 
@@ -1158,7 +1581,7 @@ async function handleAdminCommand(player: any, command: string, parts: string[],
       const reason = (durationMs ? parts.slice(3) : parts.slice(2)).join(" ").trim() || "Kein Grund angegeben.";
       const expiresAt = durationMs ? new Date(Date.now() + durationMs) : null;
       const adminAccountId = Number(getVar(player, "ACCOUNT_ID", 0));
-      const saved = await accounts.setBanState(accountId, true, reason, getPlayerName(player), adminAccountId, expiresAt);
+      const saved = await accounts.setBanState(accountId, true, reason, expiresAt?.toISOString?.() ?? null, getPlayerName(player), adminAccountId);
       if (!saved) {
         systemMessage(player, "Ban konnte nicht gespeichert werden.");
         return true;
@@ -1236,6 +1659,9 @@ async function onChatSend(player: any, mode: string, text: string) {
 
   const trimmed = text.trim();
   const chatMode = (mode ?? "ic").trim().toLowerCase();
+  const parts = trimmed.startsWith("/") ? trimmed.slice(1).split(/\s+/).filter(Boolean) : [];
+  const command = parts[0]?.toLowerCase() ?? "";
+  const args = parts.length > 1 ? parts.slice(1).join(" ") : "";
 
   if (trimmed.startsWith("/")) {
     const adminLevel = Number(getVar(player, "ADMIN_LEVEL", 0));
@@ -1284,7 +1710,7 @@ async function bootstrap() {
   
   // Initialize Admin System
   registerAllAdminCommands(adminService, {
-    accounts, spawns, factions,
+    accounts, spawns, factions, housing,
     systemMessage, forEachPlayer, adminMessage,
     getPlayerName, getHeading, getVar, setVar,
     emitClient, findPlayerByAnyId, notifyAdmins,
@@ -1292,7 +1718,10 @@ async function bootstrap() {
     jailPlayer, releasePlayerFromJail, setArmour, formatSpawn,
     spawnFactionVehicle: spawnFactionVehicleEntity,
     syncOnlineFactionMember: syncFactionStateForOnlineAccount,
-    syncFactionMapBlips: syncFactionMapBlipsForAll
+    syncFactionMapBlips: syncFactionMapBlipsForAll,
+    syncHousingDataForAll,
+    refreshAdminHousingDataForAllAdmins,
+    despawnHouseGarageVehicle: despawnHouseGarageVehicleEntity
   });
   await adminService.syncPermissions();
 
@@ -1320,6 +1749,9 @@ async function bootstrap() {
     setVar(player, "FACTION_RANK", 0);
     setVar(player, "FACTION_RANK_NAME", "");
     setVar(player, "FACTION_PERMISSIONS", "[]");
+    setVar(player, "CURRENT_HOUSE_ID", 0);
+    setVar(player, "HOUSE_STORAGE_OPEN", false);
+    setVar(player, "OPEN_HOUSE_STORAGE_ID", 0);
   });
 
   mp.events.add("playerQuit", (player: any) => {
@@ -1333,7 +1765,18 @@ async function bootstrap() {
     });
   }, 3 * 60 * 1000);
 
-  registerAuthEvents({ accounts, characterRepository, spawns, factions, phoneService: phone, inventory: inventoryService, logError, systemMessage, syncFactionMapBlips: syncFactionMapBlipsForPlayer });
+  registerAuthEvents({
+    accounts,
+    characterRepository,
+    spawns,
+    factions,
+    phoneService: phone,
+    inventory: inventoryService,
+    logError,
+    systemMessage,
+    syncFactionMapBlips: syncFactionMapBlipsForPlayer,
+    syncHousing: syncHousingDataForPlayer
+  });
   registerPhoneEvents(phone);
   registerFactionCefEvents({
     factions,
@@ -1386,6 +1829,23 @@ async function bootstrap() {
     })().catch((error) => logError("admin request faction data failed", error));
   });
 
+  mp.events.add("server:admin:requestHousingData", (player: any) => {
+    void (async () => {
+      if (!hasAdminLevel(player, 1)) {
+        return;
+      }
+
+      await sendAdminHousingData(player);
+    })().catch((error) => logError("admin request housing data failed", error));
+  });
+
+  mp.events.add("server:hud:updateLocation", (player: any, rawZoneName: unknown, rawStreetName: unknown, rawCrossingName: unknown) => {
+    const normalizeLocationLabel = (value: unknown, fallback = "") => String(value ?? "").trim().slice(0, 64) || fallback;
+    setVar(player, "CURRENT_ZONE_NAME", normalizeLocationLabel(rawZoneName, "San Andreas"));
+    setVar(player, "CURRENT_STREET_NAME", normalizeLocationLabel(rawStreetName));
+    setVar(player, "CURRENT_CROSSING_NAME", normalizeLocationLabel(rawCrossingName));
+  });
+
   mp.events.add("server:admin:getCommandList", (player: any) => {
     void (async () => {
         const level = Number(getVar(player, "ADMIN_LEVEL", 0));
@@ -1416,6 +1876,135 @@ async function bootstrap() {
         const logs = await adminService.getCommandLogs();
         emitClient(player, "client:admin:receiveLogs", JSON.stringify(logs));
     })().catch(err => logError("requestLogs failed", err));
+  });
+
+  mp.events.add("server:admin:createHouse", (
+    player: any,
+    rawDisplayName: unknown,
+    rawInteriorOrStreet: unknown,
+    rawInteriorKeyOrPrice: unknown,
+    rawPriceOrHasGarden?: unknown,
+    rawHasGardenOrHelipad?: unknown,
+    rawHasHelipad?: unknown
+  ) => {
+    void (async () => {
+      if (!hasAdminLevel(player, 5)) {
+        systemMessage(player, "Dafuer benoetigst du Admin-Level 5.");
+        return;
+      }
+
+      let interiorKey = String(rawInteriorOrStreet ?? "").trim();
+      let price = Number(rawInteriorKeyOrPrice);
+      let hasGarden = false;
+      let hasHelipad = false;
+
+      if (rawHasHelipad !== undefined) {
+        interiorKey = String(rawInteriorKeyOrPrice ?? "").trim();
+        price = Number(rawPriceOrHasGarden);
+        hasGarden = Boolean(rawHasGardenOrHelipad);
+        hasHelipad = Boolean(rawHasHelipad);
+      } else if (typeof rawHasGardenOrHelipad === "boolean") {
+        interiorKey = String(rawInteriorOrStreet ?? "").trim();
+        price = Number(rawInteriorKeyOrPrice);
+        hasGarden = Boolean(rawPriceOrHasGarden);
+        hasHelipad = rawHasGardenOrHelipad;
+      } else if (typeof rawPriceOrHasGarden === "boolean") {
+        interiorKey = String(rawInteriorOrStreet ?? "").trim();
+        price = Number(rawInteriorKeyOrPrice);
+        hasGarden = rawPriceOrHasGarden;
+      } else if (rawHasGardenOrHelipad !== undefined) {
+        interiorKey = String(rawInteriorKeyOrPrice ?? "").trim();
+        price = Number(rawPriceOrHasGarden);
+        hasGarden = Boolean(rawHasGardenOrHelipad);
+      } else if (rawPriceOrHasGarden !== undefined) {
+        interiorKey = String(rawInteriorKeyOrPrice ?? "").trim();
+        price = Number(rawPriceOrHasGarden);
+      }
+
+      const result = await housing.createHouseFromPlayer(player, {
+        displayName: String(rawDisplayName ?? "").trim(),
+        interiorKey,
+        price,
+        hasGarden,
+        hasHelipad,
+        createdByAccountId: Number(getVar(player, "ACCOUNT_ID", 0)) || null
+      });
+
+      if (!result.ok) {
+        systemMessage(player, "Interior-Vorlage wurde nicht gefunden.");
+        return;
+      }
+
+      systemMessage(
+        player,
+        `Haus erstellt: #${result.house.houseId} ${result.house.displayName} (${result.template.tierLabel}, $${result.house.price.toLocaleString("de-DE")}, ${result.house.streetName})`
+      );
+      await refreshAdminHousingDataForAllAdmins();
+      await syncHousingDataForAll();
+    })().catch((error) => {
+      logError("admin create house failed", error);
+      systemMessage(player, "Haus konnte nicht erstellt werden.");
+    });
+  });
+
+  mp.events.add("server:admin:deleteHouse", (player: any, rawHouseId: unknown) => {
+    void (async () => {
+      if (!hasAdminLevel(player, 10)) {
+        systemMessage(player, "Dafuer benoetigst du Admin-Level 10.");
+        return;
+      }
+
+      const houseId = Number(rawHouseId);
+      if (!Number.isInteger(houseId) || houseId <= 0) {
+        return;
+      }
+
+      const houseRecord = await housing.getById(houseId);
+      if (!houseRecord) {
+        systemMessage(player, "Haus nicht gefunden.");
+        return;
+      }
+
+      const parkedVehicles = await housing.getStoredVehicles(houseId);
+      for (const parkedVehicle of parkedVehicles) {
+        despawnHouseGarageVehicleEntity(parkedVehicle.garageVehicleId);
+      }
+      const activeHouseVehicles = ((mp as any).vehicles?.toArray?.() ?? []) as any[];
+      activeHouseVehicles.forEach((vehicle: any) => {
+        if (Number(vehicle.getVariable?.("HOUSE_ORIGIN_HOUSE_ID") ?? 0) === houseId) {
+          vehicle.destroy?.();
+        }
+      });
+
+      const deleted = await housing.deleteHouse(houseId);
+      if (!deleted) {
+        systemMessage(player, "Haus konnte nicht geloescht werden.");
+        return;
+      }
+
+      forEachPlayer((target) => {
+        if (Number(getVar(target, "CURRENT_HOUSE_ID", 0)) !== houseId) {
+          return;
+        }
+
+        target.dimension = houseRecord.entranceDimension;
+        target.position = vector3(houseRecord.entranceX, houseRecord.entranceY, houseRecord.entranceZ);
+        setHeading(target, houseRecord.entranceRotZ);
+        setVar(target, "CURRENT_HOUSE_ID", 0);
+        setVar(target, "HOUSE_STORAGE_OPEN", false);
+        setVar(target, "OPEN_HOUSE_STORAGE_ID", 0);
+        emitClient(target, "client:housingStorage:hide");
+        emitClient(target, "client:housing:forceCloseWardrobe");
+        systemMessage(target, "Dein aktuelles Haus wurde entfernt. Du wurdest nach draussen gesetzt.");
+      });
+
+      systemMessage(player, `Haus #${houseId} wurde geloescht.`);
+      await refreshAdminHousingDataForAllAdmins();
+      await syncHousingDataForAll();
+    })().catch((error) => {
+      logError("admin delete house failed", error);
+      systemMessage(player, "Haus konnte nicht geloescht werden.");
+    });
   });
 
   mp.events.add("server:admin:createFaction", (player: any, type: unknown, shortName: unknown, name: unknown, colorHex: unknown, mapIconId: unknown) => {
@@ -1585,15 +2174,252 @@ async function bootstrap() {
   });
 
   mp.events.add("server:interaction:select", (player: any, rawAction: unknown) => {
-    const actionId = String(rawAction || "");
-    if (!actionId) return;
+    void (async () => {
+      const actionId = String(rawAction || "");
+      if (!actionId) return;
 
-    // TODO: Implement contextual actions based on player state (near vehicle, etc.)
-    if (actionId === "lock") {
-      mp.events.call("server:vehicle:toggleLock", player);
-    } else {
+      if (actionId === "lock") {
+        mp.events.call("server:vehicle:toggleLock", player);
+        return;
+      }
+
+      const parts = actionId.split(":");
+      if (parts[0] !== "house") {
+        systemMessage(player, `Aktion ${actionId} ist aktuell noch nicht verfuegbar.`);
+        return;
+      }
+
+      const actionType = parts[1];
+      const houseId = Number(parts[2]);
+      const accountId = Number(getVar(player, "ACCOUNT_ID", 0));
+      const adminLevel = Number(getVar(player, "ADMIN_LEVEL", 0));
+
+      if (!Number.isInteger(houseId) || houseId <= 0) {
+        return;
+      }
+
+      if (actionType === "buy") {
+        const houseRecord = await findNearbyExteriorHouse(player, houseId);
+        if (!houseRecord) {
+          return;
+        }
+
+        const bankCash = Number(getVar(player, "BANK_CASH", 0));
+        const cash = Number(getVar(player, "CASH", 0));
+        if (bankCash + cash < houseRecord.price) {
+          systemMessage(player, `Dir fehlen $${(houseRecord.price - (bankCash + cash)).toLocaleString("de-DE")} fuer den Kauf.`);
+          return;
+        }
+
+        const result = await housing.buyHouse(houseId, accountId);
+        if (!result.ok) {
+          systemMessage(player, result.reason === "owned" ? "Dieses Haus wurde bereits verkauft." : "Haus konnte nicht gekauft werden.");
+          return;
+        }
+
+        let remaining = houseRecord.price;
+        const newBankCash = Math.max(0, bankCash - Math.min(bankCash, remaining));
+        remaining -= Math.min(bankCash, remaining);
+        const newCash = Math.max(0, cash - remaining);
+        setPlayerMoney(player, "BANK_CASH", newBankCash);
+        setPlayerMoney(player, "CASH", newCash);
+        await savePlayerPosition(player);
+
+        systemMessage(player, `Haus gekauft: ${houseRecord.displayName} fuer $${houseRecord.price.toLocaleString("de-DE")}.`);
+        await syncHousingDataForAll();
+        return;
+      }
+
+      if (actionType === "enter") {
+        const houseRecord = await findNearbyExteriorHouse(player, houseId);
+        if (!houseRecord) {
+          return;
+        }
+
+        if (!housing.canManageHouse(houseRecord, accountId, adminLevel)) {
+          systemMessage(player, "Du besitzt keinen Schluessel fuer dieses Haus.");
+          return;
+        }
+
+        const interior = housing.getInterior(houseRecord);
+        if (!interior) {
+          systemMessage(player, "Interior konnte nicht geladen werden.");
+          return;
+        }
+
+        player.dimension = interior.dimension;
+        player.position = vector3(interior.entryPoint.x, interior.entryPoint.y, interior.entryPoint.z);
+        setHeading(player, interior.entryPoint.rotZ);
+        setVar(player, "CURRENT_HOUSE_ID", houseRecord.houseId);
+        setVar(player, "HOUSE_STORAGE_OPEN", false);
+        setVar(player, "OPEN_HOUSE_STORAGE_ID", 0);
+        emitClient(player, "client:housing:stabilizeInteriorSpawn", JSON.stringify({
+          x: interior.entryPoint.x,
+          y: interior.entryPoint.y,
+          z: interior.entryPoint.z
+        }));
+        systemMessage(player, `Du hast ${houseRecord.displayName} betreten.`);
+        await syncHousingDataForPlayer(player);
+        return;
+      }
+
+      if (actionType === "exit") {
+        const houseRecord = await getHouseByCurrentInterior(player);
+        if (!houseRecord || houseRecord.houseId !== houseId) {
+          return;
+        }
+
+        if (!(await isNearHouseInteriorPoint(player, houseRecord, "exit"))) {
+          return;
+        }
+
+        player.dimension = houseRecord.entranceDimension;
+        player.position = vector3(houseRecord.entranceX, houseRecord.entranceY, houseRecord.entranceZ);
+        setHeading(player, houseRecord.entranceRotZ);
+        setVar(player, "CURRENT_HOUSE_ID", 0);
+        setVar(player, "HOUSE_STORAGE_OPEN", false);
+        setVar(player, "OPEN_HOUSE_STORAGE_ID", 0);
+        emitClient(player, "client:housingStorage:hide");
+        emitClient(player, "client:housing:forceCloseWardrobe");
+        systemMessage(player, `Du hast ${houseRecord.displayName} verlassen.`);
+        await syncHousingDataForPlayer(player);
+        return;
+      }
+
+      if (actionType === "lock") {
+        const houseRecord = await findNearbyExteriorHouse(player, houseId);
+        if (!houseRecord) {
+          return;
+        }
+
+        if (!housing.canManageHouse(houseRecord, accountId, adminLevel)) {
+          systemMessage(player, "Du kannst diese Tuer nicht bedienen.");
+          return;
+        }
+
+        const updated = await housing.toggleLock(houseId);
+        if (!updated) {
+          return;
+        }
+
+        systemMessage(player, updated.isLocked ? "Haustuer abgeschlossen." : "Haustuer aufgeschlossen.");
+        await syncHousingDataForAll();
+        return;
+      }
+
+      if (actionType === "storage") {
+        const houseRecord = await getHouseByCurrentInterior(player);
+        if (!houseRecord || houseRecord.houseId !== houseId) {
+          return;
+        }
+
+        if (!housing.canManageHouse(houseRecord, accountId, adminLevel) || !(await isNearHouseInteriorPoint(player, houseRecord, "storage"))) {
+          return;
+        }
+
+        const storageRecord = await housing.getStorage(houseId);
+        setVar(player, "HOUSE_STORAGE_OPEN", true);
+        setVar(player, "OPEN_HOUSE_STORAGE_ID", houseId);
+        emitClient(player, "client:housingStorage:show", serializeStoragePayload(player, houseRecord, storageRecord.inventoryData));
+        return;
+      }
+
+      if (actionType === "wardrobe") {
+        const houseRecord = await getHouseByCurrentInterior(player);
+        if (!houseRecord || houseRecord.houseId !== houseId) {
+          return;
+        }
+
+        if (!housing.canManageHouse(houseRecord, accountId, adminLevel) || !(await isNearHouseInteriorPoint(player, houseRecord, "wardrobe"))) {
+          return;
+        }
+
+        emitClient(player, "client:housing:openWardrobe", JSON.stringify({
+          houseId: houseRecord.houseId,
+          title: houseRecord.displayName
+        }));
+        return;
+      }
+
+      if ((actionType === "garage" || actionType === "helipad") && parts[3] === "park") {
+        await parkPlayerVehicleInHouseParking(player, houseId, accountId, adminLevel, actionType);
+        return;
+      }
+
+      if ((actionType === "garage" || actionType === "helipad") && parts[3] === "spawn") {
+        await spawnStoredHouseParkingVehicle(player, houseId, Number(parts[4]), accountId, adminLevel, actionType);
+        return;
+      }
+
       systemMessage(player, `Aktion ${actionId} ist aktuell noch nicht verfuegbar.`);
-    }
+    })().catch((error) => logError("interaction select failed", error));
+  });
+
+  mp.events.add("server:housing:storage:deposit", (player: any, rawUid: unknown) => {
+    void (async () => {
+      const houseId = Number(getVar(player, "OPEN_HOUSE_STORAGE_ID", 0));
+      const uid = String(rawUid ?? "");
+      if (!Boolean(getVar(player, "HOUSE_STORAGE_OPEN", false)) || !uid || houseId <= 0) {
+        return;
+      }
+
+      const houseRecord = await getHouseByCurrentInterior(player);
+      if (!houseRecord || houseRecord.houseId !== houseId || !(await isNearHouseInteriorPoint(player, houseRecord, "storage"))) {
+        emitClient(player, "client:housingStorage:hide");
+        setVar(player, "HOUSE_STORAGE_OPEN", false);
+        setVar(player, "OPEN_HOUSE_STORAGE_ID", 0);
+        return;
+      }
+
+      const storageRecord = await housing.getStorage(houseId);
+      const playerInventory = inventoryService.getInventorySnapshot(player);
+      const storageInventory = Array.isArray(storageRecord.inventoryData) ? [...storageRecord.inventoryData] : [];
+      const transfer = moveEntryBetweenInventories(playerInventory, storageInventory, uid, houseRecord.storageSlots);
+      if (!transfer.ok) {
+        systemMessage(player, transfer.reason === "capacity" ? "Das Lager ist voll." : "Gegenstand wurde nicht gefunden.");
+        return;
+      }
+
+      inventoryService.setInventorySnapshot(player, playerInventory as any);
+      await housing.saveStorage(houseId, storageInventory);
+      emitClient(player, "client:housingStorage:update", serializeStoragePayload(player, houseRecord, storageInventory));
+    })().catch((error) => logError("housing storage deposit failed", error));
+  });
+
+  mp.events.add("server:housing:storage:withdraw", (player: any, rawUid: unknown) => {
+    void (async () => {
+      const houseId = Number(getVar(player, "OPEN_HOUSE_STORAGE_ID", 0));
+      const uid = String(rawUid ?? "");
+      if (!Boolean(getVar(player, "HOUSE_STORAGE_OPEN", false)) || !uid || houseId <= 0) {
+        return;
+      }
+
+      const houseRecord = await getHouseByCurrentInterior(player);
+      if (!houseRecord || houseRecord.houseId !== houseId || !(await isNearHouseInteriorPoint(player, houseRecord, "storage"))) {
+        emitClient(player, "client:housingStorage:hide");
+        setVar(player, "HOUSE_STORAGE_OPEN", false);
+        setVar(player, "OPEN_HOUSE_STORAGE_ID", 0);
+        return;
+      }
+
+      const storageRecord = await housing.getStorage(houseId);
+      const playerInventory = inventoryService.getInventorySnapshot(player);
+      const storageInventory = Array.isArray(storageRecord.inventoryData) ? [...storageRecord.inventoryData] : [];
+      const transfer = moveEntryBetweenInventories(storageInventory, playerInventory, uid, 64);
+      if (!transfer.ok) {
+        systemMessage(player, transfer.reason === "capacity" ? "Dein Inventar ist voll." : "Gegenstand wurde nicht gefunden.");
+        return;
+      }
+
+      inventoryService.setInventorySnapshot(player, playerInventory as any);
+      await housing.saveStorage(houseId, storageInventory);
+      emitClient(player, "client:housingStorage:update", serializeStoragePayload(player, houseRecord, storageInventory));
+    })().catch((error) => logError("housing storage withdraw failed", error));
+  });
+
+  mp.events.add("server:housing:storage:close", (player: any) => {
+    setVar(player, "HOUSE_STORAGE_OPEN", false);
+    setVar(player, "OPEN_HOUSE_STORAGE_ID", 0);
   });
 
   mp.events.add("server:admin:tickets:reply", (player: any, rawTicketId: unknown, rawMessage: unknown, rawForce: unknown) => {

@@ -57,6 +57,46 @@ export async function initializeDatabase() {
     await client.query("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS ban_admin_account_id INTEGER NOT NULL DEFAULT 0;");
 
     await client.query(`
+      CREATE TABLE IF NOT EXISTS server_settings (
+        setting_key TEXT PRIMARY KEY,
+        setting_value TEXT NOT NULL
+      );
+    `);
+
+    await client.query(
+      `
+        INSERT INTO server_settings (setting_key, setting_value)
+        VALUES ('starter_money', '100')
+        ON CONFLICT (setting_key) DO NOTHING;
+      `
+    );
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS characters (
+        character_id SERIAL PRIMARY KEY,
+        account_id INTEGER NOT NULL REFERENCES accounts(account_id) ON DELETE CASCADE,
+        first_name TEXT NOT NULL,
+        last_name TEXT NOT NULL,
+        cash INTEGER NOT NULL DEFAULT 0,
+        bank_cash INTEGER NOT NULL DEFAULT 0,
+        admin_level INTEGER NOT NULL DEFAULT 0,
+        customization_json TEXT,
+        phone_number VARCHAR(15),
+        pos_x DOUBLE PRECISION NOT NULL DEFAULT -75.24,
+        pos_y DOUBLE PRECISION NOT NULL DEFAULT -818.95,
+        pos_z DOUBLE PRECISION NOT NULL DEFAULT 326.18,
+        rot_z DOUBLE PRECISION NOT NULL DEFAULT 160.0,
+        dimension INTEGER NOT NULL DEFAULT 0,
+        health INTEGER NOT NULL DEFAULT 100,
+        armor INTEGER NOT NULL DEFAULT 0,
+        is_banned BOOLEAN NOT NULL DEFAULT FALSE,
+        ban_reason TEXT,
+        ban_expires_at TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+
+    await client.query(`
       CREATE TABLE IF NOT EXISTS server_spawn (
         spawn_key TEXT PRIMARY KEY,
         pos_x DOUBLE PRECISION NOT NULL,
@@ -296,6 +336,32 @@ export async function initializeDatabase() {
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
     `);
+    await client.query(`
+      DO $$
+      BEGIN
+        IF EXISTS (
+          SELECT 1
+          FROM information_schema.table_constraints
+          WHERE table_name = 'character_inventories'
+            AND constraint_type = 'FOREIGN KEY'
+            AND constraint_name = 'character_inventories_character_id_fkey'
+        ) THEN
+          ALTER TABLE character_inventories DROP CONSTRAINT character_inventories_character_id_fkey;
+        END IF;
+      EXCEPTION
+        WHEN undefined_object THEN NULL;
+      END $$;
+    `);
+    await client.query(`
+      DO $$
+      BEGIN
+        ALTER TABLE character_inventories
+        ADD CONSTRAINT character_inventories_character_id_fkey
+        FOREIGN KEY (character_id) REFERENCES characters(character_id) ON DELETE CASCADE;
+      EXCEPTION
+        WHEN duplicate_object THEN NULL;
+      END $$;
+    `);
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS item_templates (
@@ -308,6 +374,145 @@ export async function initializeDatabase() {
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
     `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS houses (
+        house_id SERIAL PRIMARY KEY,
+        display_name TEXT NOT NULL,
+        street_name TEXT NOT NULL,
+        interior_key TEXT NOT NULL,
+        stars INTEGER NOT NULL CHECK (stars BETWEEN 1 AND 5),
+        price INTEGER NOT NULL DEFAULT 0,
+        has_garden BOOLEAN NOT NULL DEFAULT FALSE,
+        has_helipad BOOLEAN NOT NULL DEFAULT FALSE,
+        entrance_x DOUBLE PRECISION NOT NULL,
+        entrance_y DOUBLE PRECISION NOT NULL,
+        entrance_z DOUBLE PRECISION NOT NULL,
+        entrance_rot_z DOUBLE PRECISION NOT NULL DEFAULT 0,
+        entrance_dimension INTEGER NOT NULL DEFAULT 0,
+        garage_x DOUBLE PRECISION NOT NULL,
+        garage_y DOUBLE PRECISION NOT NULL,
+        garage_z DOUBLE PRECISION NOT NULL,
+        garage_rot_z DOUBLE PRECISION NOT NULL DEFAULT 0,
+        garage_dimension INTEGER NOT NULL DEFAULT 0,
+        helipad_x DOUBLE PRECISION,
+        helipad_y DOUBLE PRECISION,
+        helipad_z DOUBLE PRECISION,
+        helipad_rot_z DOUBLE PRECISION,
+        helipad_dimension INTEGER,
+        storage_slots INTEGER NOT NULL DEFAULT 24,
+        garage_slots INTEGER NOT NULL DEFAULT 1,
+        interior_entry_x DOUBLE PRECISION,
+        interior_entry_y DOUBLE PRECISION,
+        interior_entry_z DOUBLE PRECISION,
+        interior_entry_rot_z DOUBLE PRECISION,
+        interior_exit_x DOUBLE PRECISION,
+        interior_exit_y DOUBLE PRECISION,
+        interior_exit_z DOUBLE PRECISION,
+        interior_exit_rot_z DOUBLE PRECISION,
+        storage_x DOUBLE PRECISION,
+        storage_y DOUBLE PRECISION,
+        storage_z DOUBLE PRECISION,
+        storage_rot_z DOUBLE PRECISION,
+        wardrobe_x DOUBLE PRECISION,
+        wardrobe_y DOUBLE PRECISION,
+        wardrobe_z DOUBLE PRECISION,
+        wardrobe_rot_z DOUBLE PRECISION,
+        owner_account_id INTEGER REFERENCES accounts(account_id) ON DELETE SET NULL,
+        is_locked BOOLEAN NOT NULL DEFAULT TRUE,
+        created_by_account_id INTEGER REFERENCES accounts(account_id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+    await client.query("ALTER TABLE houses ADD COLUMN IF NOT EXISTS interior_entry_x DOUBLE PRECISION;");
+    await client.query("ALTER TABLE houses ADD COLUMN IF NOT EXISTS interior_entry_y DOUBLE PRECISION;");
+    await client.query("ALTER TABLE houses ADD COLUMN IF NOT EXISTS interior_entry_z DOUBLE PRECISION;");
+    await client.query("ALTER TABLE houses ADD COLUMN IF NOT EXISTS interior_entry_rot_z DOUBLE PRECISION;");
+    await client.query("ALTER TABLE houses ADD COLUMN IF NOT EXISTS interior_exit_x DOUBLE PRECISION;");
+    await client.query("ALTER TABLE houses ADD COLUMN IF NOT EXISTS interior_exit_y DOUBLE PRECISION;");
+    await client.query("ALTER TABLE houses ADD COLUMN IF NOT EXISTS interior_exit_z DOUBLE PRECISION;");
+    await client.query("ALTER TABLE houses ADD COLUMN IF NOT EXISTS interior_exit_rot_z DOUBLE PRECISION;");
+    await client.query("ALTER TABLE houses ADD COLUMN IF NOT EXISTS storage_x DOUBLE PRECISION;");
+    await client.query("ALTER TABLE houses ADD COLUMN IF NOT EXISTS storage_y DOUBLE PRECISION;");
+    await client.query("ALTER TABLE houses ADD COLUMN IF NOT EXISTS storage_z DOUBLE PRECISION;");
+    await client.query("ALTER TABLE houses ADD COLUMN IF NOT EXISTS storage_rot_z DOUBLE PRECISION;");
+    await client.query("ALTER TABLE houses ADD COLUMN IF NOT EXISTS wardrobe_x DOUBLE PRECISION;");
+    await client.query("ALTER TABLE houses ADD COLUMN IF NOT EXISTS wardrobe_y DOUBLE PRECISION;");
+    await client.query("ALTER TABLE houses ADD COLUMN IF NOT EXISTS wardrobe_z DOUBLE PRECISION;");
+    await client.query("ALTER TABLE houses ADD COLUMN IF NOT EXISTS wardrobe_rot_z DOUBLE PRECISION;");
+    await client.query("ALTER TABLE houses ADD COLUMN IF NOT EXISTS has_garden BOOLEAN NOT NULL DEFAULT FALSE;");
+    await client.query("ALTER TABLE houses ADD COLUMN IF NOT EXISTS has_helipad BOOLEAN NOT NULL DEFAULT FALSE;");
+    await client.query("ALTER TABLE houses ADD COLUMN IF NOT EXISTS helipad_x DOUBLE PRECISION;");
+    await client.query("ALTER TABLE houses ADD COLUMN IF NOT EXISTS helipad_y DOUBLE PRECISION;");
+    await client.query("ALTER TABLE houses ADD COLUMN IF NOT EXISTS helipad_z DOUBLE PRECISION;");
+    await client.query("ALTER TABLE houses ADD COLUMN IF NOT EXISTS helipad_rot_z DOUBLE PRECISION;");
+    await client.query("ALTER TABLE houses ADD COLUMN IF NOT EXISTS helipad_dimension INTEGER;");
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS house_storage (
+        house_id INTEGER PRIMARY KEY REFERENCES houses(house_id) ON DELETE CASCADE,
+        inventory_data JSONB NOT NULL DEFAULT '[]',
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS house_interior_layouts (
+        interior_key TEXT PRIMARY KEY,
+        entry_x DOUBLE PRECISION,
+        entry_y DOUBLE PRECISION,
+        entry_z DOUBLE PRECISION,
+        entry_rot_z DOUBLE PRECISION,
+        exit_x DOUBLE PRECISION,
+        exit_y DOUBLE PRECISION,
+        exit_z DOUBLE PRECISION,
+        exit_rot_z DOUBLE PRECISION,
+        storage_x DOUBLE PRECISION,
+        storage_y DOUBLE PRECISION,
+        storage_z DOUBLE PRECISION,
+        storage_rot_z DOUBLE PRECISION,
+        wardrobe_x DOUBLE PRECISION,
+        wardrobe_y DOUBLE PRECISION,
+        wardrobe_z DOUBLE PRECISION,
+        wardrobe_rot_z DOUBLE PRECISION,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+    await client.query("ALTER TABLE house_interior_layouts ADD COLUMN IF NOT EXISTS entry_x DOUBLE PRECISION;");
+    await client.query("ALTER TABLE house_interior_layouts ADD COLUMN IF NOT EXISTS entry_y DOUBLE PRECISION;");
+    await client.query("ALTER TABLE house_interior_layouts ADD COLUMN IF NOT EXISTS entry_z DOUBLE PRECISION;");
+    await client.query("ALTER TABLE house_interior_layouts ADD COLUMN IF NOT EXISTS entry_rot_z DOUBLE PRECISION;");
+    await client.query("ALTER TABLE house_interior_layouts ADD COLUMN IF NOT EXISTS exit_x DOUBLE PRECISION;");
+    await client.query("ALTER TABLE house_interior_layouts ADD COLUMN IF NOT EXISTS exit_y DOUBLE PRECISION;");
+    await client.query("ALTER TABLE house_interior_layouts ADD COLUMN IF NOT EXISTS exit_z DOUBLE PRECISION;");
+    await client.query("ALTER TABLE house_interior_layouts ADD COLUMN IF NOT EXISTS exit_rot_z DOUBLE PRECISION;");
+    await client.query("ALTER TABLE house_interior_layouts ADD COLUMN IF NOT EXISTS storage_x DOUBLE PRECISION;");
+    await client.query("ALTER TABLE house_interior_layouts ADD COLUMN IF NOT EXISTS storage_y DOUBLE PRECISION;");
+    await client.query("ALTER TABLE house_interior_layouts ADD COLUMN IF NOT EXISTS storage_z DOUBLE PRECISION;");
+    await client.query("ALTER TABLE house_interior_layouts ADD COLUMN IF NOT EXISTS storage_rot_z DOUBLE PRECISION;");
+    await client.query("ALTER TABLE house_interior_layouts ADD COLUMN IF NOT EXISTS wardrobe_x DOUBLE PRECISION;");
+    await client.query("ALTER TABLE house_interior_layouts ADD COLUMN IF NOT EXISTS wardrobe_y DOUBLE PRECISION;");
+    await client.query("ALTER TABLE house_interior_layouts ADD COLUMN IF NOT EXISTS wardrobe_z DOUBLE PRECISION;");
+    await client.query("ALTER TABLE house_interior_layouts ADD COLUMN IF NOT EXISTS wardrobe_rot_z DOUBLE PRECISION;");
+    await client.query("ALTER TABLE house_interior_layouts ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();");
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS house_garage_vehicles (
+        garage_vehicle_id SERIAL PRIMARY KEY,
+        house_id INTEGER NOT NULL REFERENCES houses(house_id) ON DELETE CASCADE,
+        parking_type TEXT NOT NULL DEFAULT 'garage',
+        model_hash BIGINT NOT NULL,
+        display_name TEXT NOT NULL DEFAULT 'Fahrzeug',
+        number_plate TEXT NOT NULL DEFAULT '',
+        color_primary INTEGER NOT NULL DEFAULT 0,
+        color_secondary INTEGER NOT NULL DEFAULT 0,
+        fuel_level DOUBLE PRECISION NOT NULL DEFAULT 100.0,
+        health DOUBLE PRECISION NOT NULL DEFAULT 1000.0,
+        is_locked BOOLEAN NOT NULL DEFAULT FALSE,
+        stored_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+    await client.query("ALTER TABLE house_garage_vehicles ADD COLUMN IF NOT EXISTS parking_type TEXT NOT NULL DEFAULT 'garage';");
 
     // Add seed data if empty
     const catalogCountResult = await client.query("SELECT COUNT(*) FROM vehicle_catalog");

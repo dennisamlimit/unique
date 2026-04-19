@@ -55,6 +55,21 @@ export function getHeading(player: PlayerMp) {
   return Number(player.heading ?? player.rotation?.z ?? 0);
 }
 
+export function isPlayerVehicleDriver(player: any, vehicle = player?.vehicle) {
+  if (!player || !vehicle) {
+    return false;
+  }
+
+  const seatIndex = typeof player.seat === "number" ? Number(player.seat) : null;
+  const driverSeat = vehicle.getOccupant?.(-1);
+  const fallbackFrontSeat = vehicle.getOccupant?.(0);
+
+  return seatIndex === -1
+    || seatIndex === 0
+    || driverSeat === player
+    || fallbackFrontSeat === player;
+}
+
 export function setHeading(player: PlayerMp, rotZ: number) {
   if (typeof player.heading === "number") {
     player.heading = rotZ;
