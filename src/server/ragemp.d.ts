@@ -25,14 +25,19 @@ interface RageMpPlayer {
 }
 
 interface RageMpVehicle {
+  id?: number;
   dimension: number;
   position?: RageMpVector3;
+  heading?: number;
+  setVariable?(key: string, value: unknown): void;
+  destroy?(): void;
 }
 
 interface RageMpServer {
   Vector3: new (x: number, y: number, z: number) => RageMpVector3;
   vehicles: {
     new(model: string | number, position: RageMpVector3, options?: Record<string, unknown>): RageMpVehicle;
+    at?(id: number): RageMpVehicle | undefined;
   };
   events: {
     add(eventName: string, handler: (...args: any[]) => void): void;

@@ -1,4 +1,5 @@
 import { config } from "./config";
+import { findActiveChatMute } from "./db/chat";
 import { assertDatabaseConnection } from "./db/pool";
 import { canUseNoClip, handleAdminCommand, sendAdminPanelData, teleportAdminToWaypoint, updateAdminCommandPermission } from "./features/admin";
 import { loginAccount, registerAccount, sendAuthBootstrap } from "./features/auth";
@@ -15,6 +16,7 @@ import {
 } from "./features/characters";
 import { broadcastHudData } from "./features/hud";
 import { clearSession, getSession, listOnlinePlayers, registerOnlinePlayer } from "./features/session";
+import { closeSupportTicketsForDisconnect, handleAdminSupportTicketAction, handlePlayerSupportTicketAction, handleSupportTicketCreate, sendSupportTickets } from "./features/support";
 
 assertDatabaseConnection()
   .then(() => console.log("[Unique] Database connection ready."))
@@ -93,6 +95,13 @@ mp.events.add("unique:server:chatMessage", async (player: RageMpPlayer, payloadJ
 
     const mode = normalizeChatMode(payload.mode);
     const session = getSession(player);
+    if (session?.character) {
+      const mute = await findActiveChatMute(session.character.id);
+      if (mute) {
+        sendSystemChat(player, `Du bist vom Chat ausgeschlossen. Grund: ${mute.reason}`);
+        return;
+      }
+    }
     if (session?.isDead && mode !== "ooc") {
       sendSystemChat(player, "Bewusstlos kannst du nur OOC schreiben.");
       return;
@@ -128,6 +137,22 @@ mp.events.add("unique:server:teleportWaypoint", async (player: RageMpPlayer, pay
   await safe(player, async () => teleportAdminToWaypoint(player, payloadJson));
 });
 
+mp.events.add("unique:server:createSupportTicket", async (player: RageMpPlayer, payloadJson: string) => {
+  await safe(player, () => handleSupportTicketCreate(player, payloadJson));
+});
+
+mp.events.add("unique:server:requestSupportTickets", async (player: RageMpPlayer) => {
+  await safe(player, () => sendSupportTickets(player));
+});
+
+mp.events.add("unique:server:updateSupportTicket", async (player: RageMpPlayer, payloadJson: string) => {
+  await safe(player, () => handleAdminSupportTicketAction(player, payloadJson));
+});
+
+mp.events.add("unique:server:replySupportTicket", async (player: RageMpPlayer, payloadJson: string) => {
+  await safe(player, () => handlePlayerSupportTicketAction(player, payloadJson));
+});
+
 mp.events.add("unique:server:deathStarted", async (player: RageMpPlayer) => {
   await safe(player, () => markRoleplayCharacterDead(player));
 });
@@ -145,13 +170,16 @@ mp.events.add("playerQuit", (player: RageMpPlayer) => {
     deleteDraftCharacters(session.account.id).catch((error) => {
       console.error("[Unique] Draft cleanup failed:", error);
     });
+    closeSupportTicketsForDisconnect(player).catch((error) => {
+      console.error("[Unique] Ticket disconnect cleanup failed:", error);
+    });
   }
   clearSession(player);
-  broadcastHudData();
+  void broadcastHudData();
 });
 
 setInterval(() => {
-  broadcastHudData();
+  void broadcastHudData();
 }, 30000);
 
 mp.events.addCommand("pos", (player: RageMpPlayer) => {
@@ -162,7 +190,7 @@ mp.events.addCommand("pos", (player: RageMpPlayer) => {
   player.outputChatBox(`Position: ${position.x.toFixed(2)}, ${position.y.toFixed(2)}, ${position.z.toFixed(2)}`);
 });
 
-["admin", "heal", "revive", "setadmin", "addcash", "setcash", "addbank", "setbank", "adduniquecoins", "setuniquecoins", "dim", "setdim", "msg", "veh"].forEach((command) => {
+["admin", "heal", "armor", "revive", "setadmin", "addcash", "setcash", "addbank", "setbank", "adduniquecoins", "setuniquecoins", "dim", "setdim", "msg", "veh", "dl", "delveh", "getveh", "tmute", "tunmute", "mute", "unmute"].forEach((command) => {
   mp.events.addCommand(command, (player: RageMpPlayer, ...args: string[]) => {
     safe(player, async () => {
       await handleAdminCommand(player, command, args);

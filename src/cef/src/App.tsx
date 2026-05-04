@@ -4,17 +4,27 @@ import {
   BarChart3,
   Briefcase,
   Brush,
+  Bug,
+  CalendarDays,
+  CheckCircle2,
+  ChevronDown,
+  ClipboardList,
   Eye,
+  Flag,
   Heart,
   HelpCircle,
+  Home,
+  LayoutDashboard,
   Lock,
   LogIn,
   MapPin,
   Palette,
+  Package,
   Plane,
   Phone,
   Plus,
   Scissors,
+  Send,
   ShieldCheck,
   Shirt,
   ShoppingBag,
@@ -28,6 +38,8 @@ import {
   UserCog,
   UserRound,
   Users,
+  Wallet,
+  Wrench,
   X
 } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
@@ -148,6 +160,10 @@ export function App() {
     crossing: "",
     area: "Los Santos"
   });
+  const [supportTicketResult, setSupportTicketResult] = useState<{ ok: boolean; message: string } | null>(null);
+  const [supportTickets, setSupportTickets] = useState<SupportTicket[]>([]);
+  const [supportMuteNotice, setSupportMuteNotice] = useState<SupportMuteNoticePayload | null>(null);
+  const [chatMuteNotice, setChatMuteNotice] = useState<ChatMuteNoticePayload | null>(null);
   const [currentCharacter, setCurrentCharacter] = useState<CharacterInfo | null>(null);
   const [mainMenuOpen, setMainMenuOpen] = useState(false);
   const [adminOpen, setAdminOpen] = useState(false);
@@ -155,6 +171,7 @@ export function App() {
     admins: [],
     players: [],
     commands: [],
+    tickets: [],
     currentAdminLevel: 0,
     adminMode: false,
     canManagePermissions: false
@@ -205,10 +222,13 @@ export function App() {
           setHudData({
             characterId: event.payload.character.id,
             playerCount: 1,
+            maxPlayers: 100,
             cash: event.payload.character.cash,
             bankBalance: event.payload.character.bankBalance,
             uniqueCoins,
-            onlineSeconds: 0
+            onlineSeconds: 0,
+            adminMode: false,
+            tickets: 0
           });
           setScreen("world");
           return;
@@ -239,7 +259,11 @@ export function App() {
         }
 
         if (event.type === "menu:open") {
+          setChatOpen(false);
+          setAdminOpen(false);
+          setSupportTicketResult(null);
           setMainMenuOpen(true);
+          emitToClient("unique:cef:requestSupportTickets", {});
           return;
         }
 
@@ -248,11 +272,36 @@ export function App() {
           return;
         }
 
+        if (event.type === "support:ticketResult") {
+          setSupportTicketResult(event.payload);
+          return;
+        }
+
+        if (event.type === "support:tickets") {
+          setSupportTickets(event.payload.tickets ?? []);
+          return;
+        }
+
+        if (event.type === "support:muteNotice") {
+          setSupportMuteNotice(event.payload);
+          playPenaltyNoticeSound();
+          window.setTimeout(() => setSupportMuteNotice(null), 9000);
+          return;
+        }
+
+        if (event.type === "chat:muteNotice") {
+          setChatMuteNotice(event.payload);
+          playPenaltyNoticeSound();
+          window.setTimeout(() => setChatMuteNotice(null), 9000);
+          return;
+        }
+
         if (event.type === "death:show") {
           setDeathScreen(event.payload);
           setDeathScreenKey((current) => current + 1);
           setChatOpen(false);
           setAdminOpen(false);
+          setMainMenuOpen(false);
           return;
         }
 
@@ -265,7 +314,13 @@ export function App() {
         if (event.type === "admin:open") {
           setChatOpen(false);
           setDeadChatOnly(false);
+          setMainMenuOpen(false);
           setAdminOpen(true);
+          return;
+        }
+
+        if (event.type === "admin:close") {
+          setAdminOpen(false);
           return;
         }
 
@@ -275,11 +330,23 @@ export function App() {
       }
     };
 
+    const preventCopy = (event: Event) => event.preventDefault();
+    document.addEventListener("copy", preventCopy);
+    document.addEventListener("cut", preventCopy);
+    document.addEventListener("contextmenu", preventCopy);
+    document.addEventListener("dragstart", preventCopy);
+    document.addEventListener("selectstart", preventCopy);
+
     notifyReady();
     const timer = window.setTimeout(() => setScreen("auth"), 3000);
 
     return () => {
       window.clearTimeout(timer);
+      document.removeEventListener("copy", preventCopy);
+      document.removeEventListener("cut", preventCopy);
+      document.removeEventListener("contextmenu", preventCopy);
+      document.removeEventListener("dragstart", preventCopy);
+      document.removeEventListener("selectstart", preventCopy);
       delete window.uniqueBridge;
     };
   }, []);
@@ -317,11 +384,13 @@ export function App() {
       {screen === "world" ? (
         <>
           <WorldHud data={hudData} location={hudLocation} />
-          {!adminOpen ? <ChatHud messages={chatMessages} open={chatOpen} deadOnly={deadChatOnly} onClose={() => setChatOpen(false)} /> : null}
-          {mainMenuOpen ? <MainMenu character={currentCharacter} hudData={hudData} uniqueCoins={uniqueCoins} onClose={() => setMainMenuOpen(false)} /> : null}
-          {adminOpen ? <AdminPanel data={adminData} onClose={() => setAdminOpen(false)} /> : null}
+          {!adminOpen && !mainMenuOpen ? <ChatHud messages={chatMessages} open={chatOpen} deadOnly={deadChatOnly} onClose={() => setChatOpen(false)} /> : null}
+          {mainMenuOpen ? <MainMenu character={currentCharacter} hudData={hudData} uniqueCoins={uniqueCoins} supportTicketResult={supportTicketResult} supportTickets={supportTickets} onClose={() => setMainMenuOpen(false)} /> : null}
+          {adminOpen ? <AdminPanel data={adminData} result={supportTicketResult} onClose={() => setAdminOpen(false)} /> : null}
         </>
       ) : null}
+      {supportMuteNotice ? <SupportMuteNotice notice={supportMuteNotice} onClose={() => setSupportMuteNotice(null)} /> : null}
+      {chatMuteNotice ? <ChatMuteNotice notice={chatMuteNotice} onClose={() => setChatMuteNotice(null)} /> : null}
       {deathScreen ? <DeathScreen key={deathScreenKey} initialSeconds={deathScreen.seconds} /> : null}
     </main>
   );
@@ -336,6 +405,45 @@ function DisclaimerBackdrop() {
       <div className="fixed inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-unique-teal to-transparent" />
       <div className="fixed inset-x-0 bottom-0 h-64 bg-gradient-to-t from-black to-transparent" />
     </>
+  );
+}
+
+function SupportMuteNotice({ notice, onClose }: { notice: SupportMuteNoticePayload; onClose: () => void }) {
+  return <PenaltyNotice title="Du wurdest vom Support ausgeschlossen" tone="Support-Sperre" notice={notice} onClose={onClose} />;
+}
+
+function ChatMuteNotice({ notice, onClose }: { notice: ChatMuteNoticePayload; onClose: () => void }) {
+  return <PenaltyNotice title="Du wurdest vom Chat ausgeschlossen" tone="Chat-Mute" notice={notice} onClose={onClose} />;
+}
+
+function PenaltyNotice({ title, tone, notice, onClose }: { title: string; tone: string; notice: { administrator: string; reason: string; expiresAt: string }; onClose: () => void }) {
+  return (
+    <section className="fixed inset-0 z-[90] grid place-items-center bg-black/45 px-6">
+      <div className="w-full max-w-[560px] rounded-md border border-unique-danger/55 bg-[#111318]/96 p-6 text-center shadow-2xl shadow-black/60">
+        <div className="mx-auto grid h-14 w-14 place-items-center rounded-md border border-unique-danger/45 bg-unique-danger/15 text-red-100">
+          <Ticket className="h-7 w-7" aria-hidden />
+        </div>
+        <p className="mt-5 text-xs font-black uppercase tracking-[0.18em] text-unique-danger">{tone}</p>
+        <h2 className="mt-2 text-2xl font-black text-white">{title}</h2>
+        <div className="mt-5 grid gap-2 rounded-md border border-white/10 bg-black/25 p-4 text-left">
+          <SupportMuteRow label="Administrator" value={notice.administrator} />
+          <SupportMuteRow label="Ablauf" value={formatDateTime(notice.expiresAt)} />
+          <SupportMuteRow label="Grund" value={notice.reason} />
+        </div>
+        <button type="button" className="mt-5 rounded-md bg-unique-gold px-5 py-2 text-sm font-black text-unique-ink" onClick={onClose}>
+          Verstanden
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function SupportMuteRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="grid gap-1 sm:grid-cols-[130px_1fr]">
+      <span className="text-xs font-black uppercase text-white/35">{label}</span>
+      <strong className="break-words text-sm text-white">{value}</strong>
+    </div>
   );
 }
 
@@ -686,361 +794,644 @@ function SpawnSelect({ payload, message, onBack }: { payload: SpawnOptionsPayloa
   );
 }
 
+type MainMenuTab = "dashboard" | "stats" | "shop" | "battlepass" | "tasks" | "property" | "finance" | "faction" | "events" | "support" | "settings";
+type SupportCategoryId = "stuck" | "bug" | "player" | "account" | "shop" | "faction" | "event" | "other";
+
+const supportCategories: Array<{ id: SupportCategoryId; label: string; description: string; icon: React.ReactNode }> = [
+  { id: "stuck", label: "Stuck", description: "Feststecken, eingefroren oder Position kaputt.", icon: <Wrench className="h-4 w-4" aria-hidden /> },
+  { id: "bug", label: "Bug", description: "Fehlerhafte Funktion, Anzeige oder Systemverhalten.", icon: <Bug className="h-4 w-4" aria-hidden /> },
+  { id: "player", label: "Spieler", description: "Meldung zu Verhalten, RP-Situation oder Konflikt.", icon: <Users className="h-4 w-4" aria-hidden /> },
+  { id: "account", label: "Account", description: "Login, Charaktere, Coins oder Kontodaten.", icon: <UserRound className="h-4 w-4" aria-hidden /> },
+  { id: "shop", label: "Shop", description: "Kauf, Coins, Premium oder fehlende Inhalte.", icon: <ShoppingBag className="h-4 w-4" aria-hidden /> },
+  { id: "faction", label: "Fraktion", description: "Fraktionsrechte, Rang, Dienst oder Fahrzeuge.", icon: <Flag className="h-4 w-4" aria-hidden /> },
+  { id: "event", label: "Event", description: "Eventteilnahme, Belohnung oder Ablauf.", icon: <CalendarDays className="h-4 w-4" aria-hidden /> },
+  { id: "other", label: "Sonstiges", description: "Alles, was in keine andere Kategorie passt.", icon: <HelpCircle className="h-4 w-4" aria-hidden /> }
+];
+
 function MainMenu({
   character,
   hudData,
   uniqueCoins,
+  supportTicketResult,
+  supportTickets,
   onClose
 }: {
   character: CharacterInfo | null;
   hudData: HudDataPayload | null;
   uniqueCoins: number;
+  supportTicketResult: { ok: boolean; message: string } | null;
+  supportTickets: SupportTicket[];
   onClose: () => void;
 }) {
-  const [tab, setTab] = useState<"stats" | "shop" | "ticket" | "settings" | "help">("stats");
-  const tabs = [
-    ["stats", "Statistik", <BarChart3 className="h-4 w-4" aria-hidden />],
-    ["shop", "Shop", <ShoppingBag className="h-4 w-4" aria-hidden />],
-    ["ticket", "Ticket", <Ticket className="h-4 w-4" aria-hidden />],
-    ["settings", "Einstellung", <Settings className="h-4 w-4" aria-hidden />],
-    ["help", "Info", <HelpCircle className="h-4 w-4" aria-hidden />]
-  ] as const;
+  const [tab, setTab] = useState<MainMenuTab>("dashboard");
+  const [ticketCategory, setTicketCategory] = useState<SupportCategoryId>("stuck");
+  const [ticketMessage, setTicketMessage] = useState("");
+  const [ticketReply, setTicketReply] = useState("");
+  const [selectedTicketId, setSelectedTicketId] = useState<number | null>(null);
+  const [ticketPending, setTicketPending] = useState(false);
+  const [localTicketMessage, setLocalTicketMessage] = useState<{ ok: boolean; message: string } | null>(null);
+  const characterId = hudData?.characterId ?? character?.id ?? 0;
+  const characterName = character ? `${character.firstName} ${character.lastName}` : "Charakter";
+  const coins = hudData?.uniqueCoins ?? uniqueCoins;
+  const onlineSeconds = hudData?.onlineSeconds ?? 0;
+
+  const tabs: Array<{ id: MainMenuTab; label: string; icon: React.ReactNode }> = [
+    { id: "dashboard", label: "Dashboard", icon: <LayoutDashboard className="h-5 w-5" aria-hidden /> },
+    { id: "stats", label: "Statistik", icon: <BarChart3 className="h-5 w-5" aria-hidden /> },
+    { id: "shop", label: "Shop", icon: <ShoppingBag className="h-5 w-5" aria-hidden /> },
+    { id: "battlepass", label: "Battlepass", icon: <Trophy className="h-5 w-5" aria-hidden /> },
+    { id: "tasks", label: "Aufgaben", icon: <ClipboardList className="h-5 w-5" aria-hidden /> },
+    { id: "property", label: "Besitz", icon: <Package className="h-5 w-5" aria-hidden /> },
+    { id: "finance", label: "Finanzen", icon: <Wallet className="h-5 w-5" aria-hidden /> },
+    { id: "faction", label: "Fraktion", icon: <Flag className="h-5 w-5" aria-hidden /> },
+    { id: "events", label: "Events", icon: <CalendarDays className="h-5 w-5" aria-hidden /> },
+    { id: "support", label: "Support", icon: <Ticket className="h-5 w-5" aria-hidden /> },
+    { id: "settings", label: "Einstellungen", icon: <Settings className="h-5 w-5" aria-hidden /> }
+  ];
+
+  useEffect(() => {
+    if (!supportTicketResult) {
+      return;
+    }
+    setTicketPending(false);
+    setLocalTicketMessage(supportTicketResult);
+    if (supportTicketResult.ok) {
+      setTicketMessage("");
+    }
+  }, [supportTicketResult]);
 
   function close() {
     emitToClient("unique:cef:mainMenuClose", {});
     onClose();
   }
 
-  return (
-    <section className="fixed inset-0 z-50 overflow-hidden bg-[#070a0f] text-white">
-      <div className="absolute inset-0 app-grid opacity-35" />
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_16%_18%,rgba(29,183,166,0.18),transparent_30%),radial-gradient(circle_at_82%_18%,rgba(241,184,75,0.12),transparent_28%),linear-gradient(115deg,rgba(13,15,20,0.96),rgba(13,15,20,0.72)_48%,rgba(10,12,16,0.90))]" />
-      <div className="pointer-events-none absolute left-0 top-0 h-20 w-20 border-l-[6px] border-t-[6px] border-unique-gold/90" />
-      <div className="pointer-events-none absolute bottom-0 right-0 h-28 w-28 border-b-[6px] border-r-[6px] border-unique-teal/80" />
-      <div className="pointer-events-none absolute left-[7%] top-[31%] text-6xl font-light text-white/10">x</div>
-      <div className="pointer-events-none absolute right-[8%] bottom-[20%] text-7xl font-light text-unique-gold/25">x</div>
+  function submitTicket() {
+    if (ticketPending) {
+      return;
+    }
+    const message = ticketMessage.trim();
+    if (message.length < 10) {
+      setLocalTicketMessage({ ok: false, message: "Bitte beschreibe dein Anliegen etwas genauer." });
+      return;
+    }
 
-      <div className="relative flex h-full flex-col px-6 py-6">
-        <header className="mx-auto flex w-full max-w-[1720px] items-center justify-between gap-5">
-          <div className="flex items-baseline gap-4">
-            <h1 className="text-3xl font-black uppercase tracking-wide text-unique-gold">Unique</h1>
+    setTicketPending(true);
+    setLocalTicketMessage(null);
+    emitToClient("unique:cef:supportTicketCreate", { category: ticketCategory, message });
+  }
+
+  return (
+    <section className="fixed inset-0 z-50 overflow-hidden bg-[#090c11] text-white">
+      <div className="absolute inset-0 app-grid opacity-20" />
+      <div className="absolute inset-0 bg-[linear-gradient(115deg,rgba(9,12,17,0.98),rgba(17,19,24,0.92)_52%,rgba(8,10,14,0.98))]" />
+      <div className="relative grid h-full grid-cols-[260px_minmax(0,1fr)]">
+        <aside className="flex min-h-0 flex-col border-r border-white/10 bg-black/28 px-4 py-5">
+          <div className="flex items-start justify-between gap-3 px-2">
             <div>
-              <p className="text-sm font-semibold uppercase tracking-[0.22em] text-white/80">M Menu</p>
-              <p className="text-xs text-white/40">{character ? `${character.firstName} ${character.lastName}` : "Charakter"}</p>
+              <p className="text-2xl font-black leading-none">Unique<span className="text-unique-gold">RP</span></p>
+              <p className="mt-2 text-xs font-bold uppercase text-white/45">M Menu</p>
             </div>
+            <button type="button" className="grid h-9 w-9 place-items-center rounded-md border border-white/10 bg-white/5 text-white/65 transition hover:text-white" onClick={close}>
+              <X className="h-4 w-4" aria-hidden />
+            </button>
           </div>
 
-          <nav className="hidden items-center gap-2 lg:flex">
-            {tabs.map(([id, label, icon]) => (
+          <div className="mt-5 rounded-md border border-white/10 bg-white/5 p-3">
+            <p className="truncate text-sm font-black">{characterName}</p>
+            <p className="mt-1 text-xs text-white/45">ID {characterId || "0000"}</p>
+          </div>
+
+          <nav className="mt-4 grid min-h-0 flex-1 content-start gap-1 overflow-y-auto pr-1">
+            {tabs.map((item) => (
               <button
-                key={id}
+                key={item.id}
                 type="button"
-                className={`flex h-10 items-center gap-2 rounded-md border px-4 text-sm font-semibold transition ${
-                  tab === id ? "border-unique-gold/70 bg-unique-gold/15 text-unique-gold" : "border-white/10 bg-white/5 text-white/60 hover:text-white"
+                className={`flex h-11 items-center gap-3 rounded-md px-3 text-left text-sm font-bold transition ${
+                  tab === item.id ? "bg-unique-gold text-unique-ink" : "text-white/65 hover:bg-white/8 hover:text-white"
                 }`}
-                onClick={() => setTab(id)}
+                onClick={() => setTab(item.id)}
               >
-                {icon}
-                {label}
+                {item.icon}
+                <span className="truncate">{item.label}</span>
               </button>
             ))}
           </nav>
+        </aside>
 
-          <button className="rounded-md border border-white/10 bg-white/5 p-2 text-white/65 transition hover:text-white" onClick={close}>
-            <X className="h-4 w-4" aria-hidden />
-          </button>
-        </header>
-
-        <div className="mx-auto mt-4 min-h-0 w-full max-w-[1720px] flex-1 overflow-y-auto">
-          {tab === "stats" ? (
-            <MainMenuStats character={character} hudData={hudData} uniqueCoins={hudData?.uniqueCoins ?? uniqueCoins} />
+        <div className="relative min-h-0 overflow-y-auto px-7 py-6">
+          <MainMenuHeader tab={tabs.find((item) => item.id === tab) ?? tabs[0]} characterName={characterName} />
+          {tab === "dashboard" ? <MenuDashboard character={character} hudData={hudData} uniqueCoins={coins} onlineSeconds={onlineSeconds} onSupport={() => setTab("support")} /> : null}
+          {tab === "stats" ? <MenuStats character={character} hudData={hudData} uniqueCoins={coins} onlineSeconds={onlineSeconds} /> : null}
+          {tab === "shop" ? <MenuPlaceholder icon={<ShoppingBag className="h-7 w-7" />} title="Shop" items={["Unique Coins", "Premium Slot", "Kosmetik", "Fahrzeug Skins"]} /> : null}
+          {tab === "battlepass" ? <MenuBattlepass /> : null}
+          {tab === "tasks" ? <MenuTasks /> : null}
+          {tab === "property" ? <MenuPlaceholder icon={<Home className="h-7 w-7" />} title="Besitz" items={["Immobilien", "Fahrzeuge", "Lager", "Schluessel"]} /> : null}
+          {tab === "finance" ? <MenuFinance character={character} hudData={hudData} uniqueCoins={coins} /> : null}
+          {tab === "faction" ? <MenuFaction character={character} /> : null}
+          {tab === "events" ? <MenuPlaceholder icon={<CalendarDays className="h-7 w-7" />} title="Events" items={["Aktive Events", "Anmeldungen", "Belohnungen", "Historie"]} /> : null}
+          {tab === "support" ? (
+            <MenuSupport
+              category={ticketCategory}
+              message={ticketMessage}
+              tickets={supportTickets}
+              selectedTicketId={selectedTicketId}
+              pending={ticketPending}
+              result={localTicketMessage}
+              onCategory={setTicketCategory}
+              onMessage={setTicketMessage}
+              reply={ticketReply}
+              onReply={setTicketReply}
+              onSelectedTicket={setSelectedTicketId}
+              onSubmitReply={(ticketId) => {
+                const reply = ticketReply.trim();
+                if (reply.length < 2) {
+                  setLocalTicketMessage({ ok: false, message: "Antwort ist zu kurz." });
+                  return;
+                }
+                setLocalTicketMessage(null);
+                emitToClient("unique:cef:replySupportTicket", { ticketId, message: reply });
+                setTicketReply("");
+              }}
+              onSubmit={submitTicket}
+            />
           ) : null}
-
-          {tab === "shop" ? (
-            <MainMenuPanel title="Shop" icon={<ShoppingBag className="h-5 w-5" />}>
-              <MenuTile title="Unique Coins" value="Demnaechst" />
-              <MenuTile title="Premium Slot" value="Vorbereitet" />
-              <MenuTile title="Kosmetik" value="Vorbereitet" />
-            </MainMenuPanel>
-          ) : null}
-
-          {tab === "ticket" ? (
-            <MainMenuPanel title="Ticket" icon={<Ticket className="h-5 w-5" />}>
-              <div className="grid gap-4 xl:grid-cols-[1fr_280px]">
-                <textarea className="min-h-64 rounded-md border border-white/10 bg-black/30 p-4 text-sm text-white outline-none placeholder:text-white/35" placeholder="Tickettext" />
-                <div className="grid content-start gap-3">
-                  <MenuTile title="Kategorie" value="Support" />
-                  <button className="rounded-md bg-unique-gold px-4 py-3 text-sm font-black text-unique-ink">Ticket vorbereiten</button>
-                </div>
-              </div>
-            </MainMenuPanel>
-          ) : null}
-
-          {tab === "settings" ? (
-            <MainMenuPanel title="Einstellung" icon={<Settings className="h-5 w-5" />}>
-              <label className="flex items-center justify-between rounded-md border border-white/10 bg-white/5 px-4 py-3">
-                <span>HUD anzeigen</span>
-                <input type="checkbox" className="h-5 w-5 accent-unique-gold" defaultChecked />
-              </label>
-              <label className="flex items-center justify-between rounded-md border border-white/10 bg-white/5 px-4 py-3">
-                <span>Chat sichtbar</span>
-                <input type="checkbox" className="h-5 w-5 accent-unique-gold" defaultChecked />
-              </label>
-            </MainMenuPanel>
-          ) : null}
-
-          {tab === "help" ? (
-            <MainMenuPanel title="Info" icon={<HelpCircle className="h-5 w-5" />}>
-              <MenuTile title="Online Spieler" value={String(hudData?.playerCount ?? 0)} />
-              <MenuTile title="Standort" value="Siehe Minimap HUD" />
-              <MenuTile title="Admin" value="F3 Dashboard" />
-            </MainMenuPanel>
-          ) : null}
+          {tab === "settings" ? <MenuSettings /> : null}
         </div>
       </div>
     </section>
   );
 }
 
-function MainMenuStats({ character, hudData, uniqueCoins }: { character: CharacterInfo | null; hudData: HudDataPayload | null; uniqueCoins: number }) {
-  const [now, setNow] = useState(() => Date.now());
-  const [onlineBase, setOnlineBase] = useState(() => ({
-    seconds: hudData?.onlineSeconds ?? 0,
-    receivedAt: Date.now()
-  }));
-  const characterId = hudData?.characterId ?? character?.id ?? 0;
+function MainMenuHeader({ tab, characterName }: { tab: { label: string; icon: React.ReactNode }; characterName: string }) {
+  return (
+    <header className="mb-5 flex items-center justify-between gap-4 border-b border-white/10 pb-5">
+      <div>
+        <p className="flex items-center gap-2 text-sm font-black uppercase text-unique-gold">{tab.icon}{tab.label}</p>
+        <h1 className="mt-2 text-3xl font-black leading-none">{characterName}</h1>
+      </div>
+      <div className="hidden text-right text-xs font-bold uppercase text-white/40 md:block">
+        Unique Roleplay<br />Spielermenue
+      </div>
+    </header>
+  );
+}
+
+function MenuDashboard({ character, hudData, uniqueCoins, onlineSeconds, onSupport }: { character: CharacterInfo | null; hudData: HudDataPayload | null; uniqueCoins: number; onlineSeconds: number; onSupport: () => void }) {
   const level = Math.max(1, Number(character?.level ?? 1));
   const experience = Math.max(0, Number(character?.experience ?? 0));
   const nextLevelExperience = getNextLevelExperience(level);
   const progress = Math.min(100, Math.round((experience / nextLevelExperience) * 100));
-  const org = character?.organization?.trim() || "Kein Unternehmen";
-  const orgRank = character?.organizationRank?.trim() || "Keine";
-  const married = character?.maritalStatus === "married";
-  const displayedOnlineSeconds = Math.max(0, onlineBase.seconds + Math.floor((now - onlineBase.receivedAt) / 1000));
-
-  useEffect(() => {
-    const timer = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(timer);
-  }, []);
-
-  useEffect(() => {
-    setOnlineBase({ seconds: hudData?.onlineSeconds ?? 0, receivedAt: Date.now() });
-  }, [hudData?.onlineSeconds]);
-
-  const sideStats = [
-    ["Unique Coins", formatNumber(uniqueCoins), <BadgeCent className="h-8 w-8" aria-hidden />],
-    ["Kriminelle Aktivitaeten", "Keine Eintraege", <ShieldCheck className="h-8 w-8" aria-hidden />],
-    ["Strafen insgesamt", "0", <Ticket className="h-8 w-8" aria-hidden />],
-    ["Krankheiten", "N/A", <Heart className="h-8 w-8" aria-hidden />],
-    ["Krankheitsimmunitaet", "Nicht verfuegbar", <Sparkles className="h-8 w-8" aria-hidden />],
-    ["Telefonnummer", String(100000 + characterId), <Phone className="h-8 w-8" aria-hidden />],
-    ["Heute online", formatOnlineDuration(displayedOnlineSeconds), <BarChart3 className="h-8 w-8" aria-hidden />],
-    ["Familienname", "-", <Users className="h-8 w-8" aria-hidden />],
-    ["Position in der Familie", "-", <Star className="h-8 w-8" aria-hidden />],
-    ["VIP Tage", "0", <Star className="h-8 w-8 fill-white" aria-hidden />],
-    ["Ehepartner", married ? "Verheiratet" : "Nicht verheiratet", <Heart className="h-8 w-8" aria-hidden />]
-  ] as const;
-
-  const licenses = [
-    "Fuehrerschein",
-    "Bootsschein",
-    "Luftverkehrslizenz",
-    "Waffenschein",
-    "Militaerische ID",
-    "Anwaltslizenz",
-    "Krankenversicherung"
-  ] as const;
 
   return (
-    <div className="grid min-h-full grid-cols-1 gap-6 pb-4 lg:grid-cols-[310px_minmax(0,1fr)_420px]">
-      <aside className="grid content-start gap-4 pt-8">
-        {sideStats.map(([label, value, icon]) => (
-          <div key={label} className="grid grid-cols-[42px_1fr] items-center gap-4">
-            <span className="text-white">{icon}</span>
-            <span>
-              <span className="block text-[11px] font-black uppercase tracking-[0.12em] text-white/35">{label}</span>
-              <strong className="mt-1 block text-sm uppercase text-white">{value}</strong>
-            </span>
-          </div>
-        ))}
-      </aside>
+    <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
+      <section className="rounded-md border border-white/10 bg-white/5 p-5">
+        <div className="grid gap-3 md:grid-cols-4">
+          <MenuMetric label="Level" value={String(level)} icon={<Star className="h-5 w-5" aria-hidden />} />
+          <MenuMetric label="Bargeld" value={formatHudMoney(hudData?.cash ?? character?.cash ?? 0)} icon={<Banknote className="h-5 w-5" aria-hidden />} />
+          <MenuMetric label="Bank" value={formatHudMoney(hudData?.bankBalance ?? character?.bankBalance ?? 0)} icon={<Wallet className="h-5 w-5" aria-hidden />} />
+          <MenuMetric label="Coins" value={formatNumber(uniqueCoins)} icon={<BadgeCent className="h-5 w-5" aria-hidden />} />
+        </div>
 
-      <section className="flex min-w-0 flex-col items-center pt-8">
-        <div className="text-center">
-          <p className="text-3xl font-black uppercase leading-none">
-            Konto <span className="text-unique-gold">#{characterId || "0000"}</span>
-          </p>
-          <div className="mt-7 flex flex-wrap items-center justify-center gap-8">
-            <div className="flex items-center gap-4">
-              <div className="relative h-14 w-14 rounded-full" style={{ background: `conic-gradient(#f1b84b ${progress}%, rgba(255,255,255,0.10) 0)` }}>
-                <div className="absolute inset-2 rounded-full bg-[#10141b]" />
-              </div>
-              <div className="text-left">
-                <p className="text-2xl font-black uppercase text-unique-gold">Lvl {level}</p>
-                <p className="mt-1 text-lg font-semibold text-white">{formatNumber(experience)} / {formatNumber(nextLevelExperience)}</p>
-              </div>
+        <div className="mt-5 rounded-md border border-white/10 bg-black/25 p-5">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <p className="text-xs font-black uppercase text-white/40">Fortschritt</p>
+              <p className="mt-1 text-xl font-black">Level {level}</p>
             </div>
-            <div className="text-left">
-              <p className="text-[11px] font-black uppercase tracking-[0.14em] text-white/45">VIP Status</p>
-              <p className="mt-1 flex items-center gap-2 text-xl font-black uppercase text-white">VIP inaktiv <Star className="h-6 w-6 fill-unique-gold text-unique-gold" aria-hidden /></p>
-            </div>
+            <p className="text-sm font-bold text-white/55">{formatNumber(experience)} / {formatNumber(nextLevelExperience)} XP</p>
+          </div>
+          <div className="mt-4 h-3 overflow-hidden rounded bg-white/10">
+            <div className="h-full bg-unique-gold" style={{ width: `${progress}%` }} />
           </div>
         </div>
 
-        <div className="mt-9 grid w-full max-w-[760px] gap-3 md:grid-cols-2">
-          <div className="min-h-40 rounded-md border border-white/10 bg-black/25 p-5">
-            <div className="flex items-start justify-between gap-4 text-white/35">
-              <p className="text-xs font-black uppercase tracking-[0.16em]">Unternehmen</p>
-              <Briefcase className="h-7 w-7" aria-hidden />
-            </div>
-            <p className="mt-16 max-w-48 text-xl font-semibold uppercase text-white/50">{org}</p>
-          </div>
-
-          <div className="relative min-h-40 overflow-hidden rounded-md border border-white/10 bg-[linear-gradient(135deg,rgba(29,183,166,0.34),rgba(241,184,75,0.12)),radial-gradient(circle_at_78%_20%,rgba(255,255,255,0.22),transparent_34%)] p-5">
-            <div className="absolute inset-0 app-grid opacity-20" />
-            <div className="relative">
-              <p className="text-xs font-black uppercase tracking-[0.16em] text-white/70">Organisation</p>
-              <p className="mt-12 text-sm font-black uppercase text-white/80">{orgRank}</p>
-              <h2 className="mt-2 text-2xl font-black uppercase text-white">{org}</h2>
-            </div>
-          </div>
-        </div>
-
-        <div className="mt-3 grid w-full max-w-[760px] gap-3 md:grid-cols-[1fr_190px]">
-          <div className="relative min-h-72 overflow-hidden rounded-md border border-unique-teal/25 bg-[linear-gradient(120deg,rgba(29,183,166,0.34),rgba(17,19,24,0.72)),radial-gradient(circle_at_80%_50%,rgba(241,184,75,0.20),transparent_36%)] p-8">
-            <div className="absolute inset-0 app-grid opacity-20" />
-            <div className="relative">
-              <h2 className="max-w-xs text-4xl font-black uppercase leading-tight text-white">Meine Faehigkeiten</h2>
-              <button type="button" className="mt-24 rounded-md border border-unique-teal bg-black/30 px-5 py-2 text-xs font-black uppercase text-white transition hover:bg-unique-teal hover:text-unique-ink">
-                Ansehen
-              </button>
-            </div>
-          </div>
-          <div className="grid gap-3">
-            <StatsMoneyTile label="Bargeld" value={formatMoney(hudData?.cash ?? character?.cash ?? 0)} icon={<Banknote className="h-5 w-5" aria-hidden />} />
-            <StatsMoneyTile label="Bank" value={formatMoney(hudData?.bankBalance ?? character?.bankBalance ?? 0)} icon={<Briefcase className="h-5 w-5" aria-hidden />} />
-            <StatsMoneyTile label="Geschlecht" value={character?.appearance?.gender === "female" ? "Weiblich" : "Maennlich"} icon={<UserRound className="h-5 w-5" aria-hidden />} />
-          </div>
-        </div>
-
-        <div className="mt-3 flex w-full max-w-[760px] items-center justify-between gap-5 rounded-md border border-unique-gold bg-unique-gold/10 px-7 py-4">
-          <p className="text-xl font-black uppercase leading-tight text-white">Sammlerstueck<br />Karte</p>
-          <Trophy className="h-12 w-12 fill-unique-gold text-unique-gold" aria-hidden />
-          <p className="text-right text-sm font-black uppercase text-white">
-            Insgesamt gesammelt:<br /><span className="text-2xl text-unique-gold">0 Figuren</span>
-          </p>
+        <div className="mt-5 grid gap-3 md:grid-cols-3">
+          <MenuAction title="Support" text="Ticket erstellen" icon={<Ticket className="h-5 w-5" aria-hidden />} onClick={onSupport} />
+          <MenuAction title="Battlepass" text="Saison vorbereitet" icon={<Trophy className="h-5 w-5" aria-hidden />} />
+          <MenuAction title="Aufgaben" text="Tagesziele vorbereitet" icon={<ClipboardList className="h-5 w-5" aria-hidden />} />
         </div>
       </section>
 
-      <aside className="grid content-center gap-6 pt-8">
-        <section className="rounded-md border border-unique-gold/25 bg-unique-gold/10 p-5">
-          <div className="flex items-center justify-between gap-5">
-            <div>
-              <p className="text-[11px] font-black uppercase tracking-[0.18em] text-unique-gold">Aktive Warnungen</p>
-              <p className="mt-2 text-sm font-semibold text-white/60">Verwarnsystem vorbereitet</p>
-            </div>
-            <strong className="text-5xl font-black text-white">0</strong>
-          </div>
-          <div className="mt-6 rounded-md border border-white/10 bg-black/20 px-4 py-5 text-center text-sm font-bold uppercase text-white/40">
-            Keine aktiven Warnungen
-          </div>
-        </section>
-
-        <div className="rounded-md border border-white/10 bg-white/5 p-5">
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <p className="text-[11px] font-black uppercase tracking-[0.18em] text-white/45">Aktive Lizenzen</p>
-              <h3 className="mt-2 text-xl font-black uppercase text-white">Leer</h3>
-            </div>
-            <Ticket className="h-8 w-8 text-white/30" aria-hidden />
-          </div>
-          <div className="mt-5 grid gap-2">
-            {licenses.map((label) => (
-              <div key={label} className="flex items-center justify-between gap-3 rounded-md border border-dashed border-white/10 bg-black/20 px-4 py-3">
-                <span className="text-sm font-black uppercase text-white/50">{label}</span>
-                <span className="text-xs font-bold uppercase text-white/30">-</span>
-              </div>
-            ))}
-          </div>
-        </div>
+      <aside className="grid content-start gap-3">
+        <MenuPanel title="Status">
+          <MenuInfoRow label="Online heute" value={formatOnlineDuration(onlineSeconds)} />
+          <MenuInfoRow label="Fraktion" value={character?.organization || "Zivilist"} />
+          <MenuInfoRow label="Rang" value={character?.organizationRank || "Keine"} />
+          <MenuInfoRow label="Telefon" value={String(100000 + (hudData?.characterId ?? character?.id ?? 0))} />
+        </MenuPanel>
       </aside>
     </div>
   );
 }
 
-function StatsMoneyTile({ label, value, icon }: { label: string; value: string; icon: React.ReactNode }) {
+function MenuStats({ character, hudData, uniqueCoins, onlineSeconds }: { character: CharacterInfo | null; hudData: HudDataPayload | null; uniqueCoins: number; onlineSeconds: number }) {
+  const rows = [
+    ["Charakter-ID", String(hudData?.characterId ?? character?.id ?? 0)],
+    ["Level", String(character?.level ?? 1)],
+    ["Erfahrung", formatNumber(character?.experience ?? 0)],
+    ["Online heute", formatOnlineDuration(onlineSeconds)],
+    ["Unique Coins", formatNumber(uniqueCoins)],
+    ["Familienstand", character?.maritalStatus === "married" ? "Verheiratet" : "Single"],
+    ["Geschlecht", character?.appearance?.gender === "female" ? "Weiblich" : "Maennlich"],
+    ["Warnungen", "0"]
+  ];
+
   return (
-    <div className="rounded-md border border-white/10 bg-black/20 p-4">
-      <p className="flex items-center gap-2 text-xs font-black uppercase tracking-[0.14em] text-white/35">{icon}{label}</p>
-      <p className="mt-2 text-lg font-black text-white">{value}</p>
+    <MenuPanel title="Statistik">
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        {rows.map(([label, value]) => <MenuMetric key={label} label={label} value={value} icon={<BarChart3 className="h-5 w-5" aria-hidden />} />)}
+      </div>
+    </MenuPanel>
+  );
+}
+
+function MenuFinance({ character, hudData, uniqueCoins }: { character: CharacterInfo | null; hudData: HudDataPayload | null; uniqueCoins: number }) {
+  return (
+    <div className="grid gap-5 lg:grid-cols-3">
+      <MenuMetric label="Bargeld" value={formatMoney(hudData?.cash ?? character?.cash ?? 0)} icon={<Banknote className="h-6 w-6" aria-hidden />} />
+      <MenuMetric label="Bankkonto" value={formatMoney(hudData?.bankBalance ?? character?.bankBalance ?? 0)} icon={<Wallet className="h-6 w-6" aria-hidden />} />
+      <MenuMetric label="Unique Coins" value={formatNumber(uniqueCoins)} icon={<BadgeCent className="h-6 w-6" aria-hidden />} />
+      <MenuPanel title="Transaktionen">
+        <MenuEmpty text="Transaktionsverlauf vorbereitet." />
+      </MenuPanel>
     </div>
   );
 }
 
-function MainMenuPanel({ title, icon, children }: { title: string; icon: React.ReactNode; children: React.ReactNode }) {
+function MenuFaction({ character }: { character: CharacterInfo | null }) {
   return (
-    <section className="animate-panel rounded-md border border-white/10 bg-[#111318]/64 p-6 shadow-2xl shadow-black/30 backdrop-blur-sm">
-      <h3 className="mb-5 flex items-center gap-2 text-xl font-semibold text-white">
-        <span className="text-unique-gold">{icon}</span>
-        {title}
-      </h3>
-      <div className="grid gap-4">{children}</div>
+    <MenuPanel title="Fraktion">
+      <div className="grid gap-3 md:grid-cols-2">
+        <MenuMetric label="Organisation" value={character?.organization || "Zivilist"} icon={<Flag className="h-5 w-5" aria-hidden />} />
+        <MenuMetric label="Rang" value={character?.organizationRank || "Keine"} icon={<ShieldCheck className="h-5 w-5" aria-hidden />} />
+      </div>
+      <MenuEmpty text="Dienststatus, Mitglieder und Rechte werden hier angebunden." />
+    </MenuPanel>
+  );
+}
+
+function MenuBattlepass() {
+  return (
+    <MenuPanel title="Battlepass">
+      <div className="grid gap-4 lg:grid-cols-[1fr_280px]">
+        <div className="rounded-md border border-unique-gold/30 bg-unique-gold/10 p-5">
+          <p className="text-xs font-black uppercase text-unique-gold">Saison 1</p>
+          <h2 className="mt-2 text-2xl font-black">Vorbereitet</h2>
+          <div className="mt-6 h-3 overflow-hidden rounded bg-black/35">
+            <div className="h-full w-[12%] bg-unique-gold" />
+          </div>
+        </div>
+        <MenuEmpty text="Belohnungen und Missionen folgen." />
+      </div>
+    </MenuPanel>
+  );
+}
+
+function MenuTasks() {
+  const tasks = ["Tagesaufgabe abschliessen", "Arbeitsroute fahren", "Event besuchen", "Support-Regeln lesen"];
+  return (
+    <MenuPanel title="Aufgaben">
+      <div className="grid gap-3">
+        {tasks.map((task) => (
+          <div key={task} className="flex items-center justify-between rounded-md border border-white/10 bg-black/20 px-4 py-3">
+            <span className="font-bold text-white/75">{task}</span>
+            <span className="text-xs font-black uppercase text-white/35">Offen</span>
+          </div>
+        ))}
+      </div>
+    </MenuPanel>
+  );
+}
+
+function MenuPlaceholder({ icon, title, items }: { icon: React.ReactNode; title: string; items: string[] }) {
+  return (
+    <MenuPanel title={title}>
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        {items.map((item) => <MenuMetric key={item} label={item} value="Vorbereitet" icon={icon} />)}
+      </div>
+    </MenuPanel>
+  );
+}
+
+function MenuSupport({
+  category,
+  message,
+  tickets,
+  selectedTicketId,
+  pending,
+  result,
+  reply,
+  onCategory,
+  onMessage,
+  onReply,
+  onSelectedTicket,
+  onSubmitReply,
+  onSubmit
+}: {
+  category: SupportCategoryId;
+  message: string;
+  tickets: SupportTicket[];
+  selectedTicketId: number | null;
+  pending: boolean;
+  result: { ok: boolean; message: string } | null;
+  reply: string;
+  onCategory: (category: SupportCategoryId) => void;
+  onMessage: (value: string) => void;
+  onReply: (value: string) => void;
+  onSelectedTicket: (ticketId: number | null) => void;
+  onSubmitReply: (ticketId: number) => void;
+  onSubmit: () => void;
+}) {
+  const selectedTicket = tickets.find((ticket) => ticket.id === selectedTicketId) ?? tickets[0] ?? null;
+
+  return (
+    <div className="grid gap-5 xl:grid-cols-[minmax(0,520px)_minmax(0,1fr)]">
+      <MenuPanel title="Neues Ticket">
+        <div className="grid gap-4">
+          <SupportCategoryCombobox value={category} onChange={onCategory} />
+          <label className="block">
+            <span className="text-xs font-black uppercase text-white/45">Beschreibung</span>
+            <textarea
+              className="mt-2 min-h-72 w-full resize-none rounded-md border border-white/12 bg-black/35 p-4 text-sm leading-6 text-white outline-none transition placeholder:text-white/30 focus:border-unique-gold"
+              value={message}
+              maxLength={1200}
+              placeholder="Was ist passiert? Wo bist du? Was soll ein Teammitglied pruefen?"
+              onChange={(event) => onMessage(event.target.value)}
+            />
+          </label>
+          {result ? (
+            <div className={`rounded-md border px-4 py-3 text-sm font-bold ${result.ok ? "border-unique-teal/40 bg-unique-teal/10 text-unique-teal" : "border-unique-danger/40 bg-unique-danger/10 text-red-100"}`}>
+              {result.message}
+            </div>
+          ) : null}
+          <button type="button" className="flex h-12 items-center justify-center gap-2 rounded-md bg-unique-gold px-4 text-sm font-black text-unique-ink transition hover:bg-[#ffd077] disabled:cursor-wait disabled:opacity-60" disabled={pending} onClick={onSubmit}>
+            <Send className="h-4 w-4" aria-hidden />
+            {pending ? "Wird gesendet" : "Ticket erstellen"}
+          </button>
+        </div>
+      </MenuPanel>
+
+      <MenuPanel title="Meine offenen Tickets">
+        <div className="grid gap-4 lg:grid-cols-[280px_minmax(0,1fr)]">
+          <div className="grid content-start gap-2">
+            {tickets.length ? tickets.map((ticket) => (
+              <button
+                key={ticket.id}
+                type="button"
+                className={`rounded-md border px-3 py-3 text-left transition ${selectedTicket?.id === ticket.id ? "border-unique-gold bg-unique-gold/10" : "border-white/10 bg-black/20 hover:border-white/25"}`}
+                onClick={() => onSelectedTicket(ticket.id)}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-sm font-black">Ticket #{ticket.id}</span>
+                  <SupportBadge label={supportCategoryLabel(ticket.category)} />
+                </div>
+                <p className="mt-2 line-clamp-2 text-xs leading-5 text-white/50">{ticket.message}</p>
+                <p className="mt-2 text-[11px] font-bold uppercase text-white/35">{supportStatusLabel(ticket.status)} / {supportPriorityLabel(ticket.priority)}</p>
+              </button>
+            )) : <MenuEmpty text="Du hast aktuell keine offenen Tickets." />}
+          </div>
+
+          <div className="min-h-[430px] rounded-md border border-white/10 bg-black/18 p-4">
+            {selectedTicket ? (
+              <>
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 pb-3">
+                  <div>
+                    <p className="text-lg font-black">Ticket #{selectedTicket.id}</p>
+                    <p className="mt-1 text-xs font-bold uppercase text-white/40">{supportCategoryLabel(selectedTicket.category)} / {supportStatusLabel(selectedTicket.status)}</p>
+                  </div>
+                  {selectedTicket.assignedAdminName ? <SupportBadge label={selectedTicket.assignedAdminName} /> : <SupportBadge label="Nicht geclaimed" />}
+                </div>
+                <TicketTimeline messages={selectedTicket.messages} />
+                <label className="mt-4 block">
+                  <span className="text-xs font-black uppercase text-white/45">Antwort</span>
+                  <textarea
+                    className="mt-2 min-h-24 w-full resize-none rounded-md border border-white/12 bg-black/35 p-3 text-sm leading-6 text-white outline-none transition placeholder:text-white/30 focus:border-unique-gold"
+                    value={reply}
+                    maxLength={1200}
+                    placeholder="Weitere Informationen oder Rueckfrage beantworten"
+                    onChange={(event) => onReply(event.target.value)}
+                  />
+                </label>
+                <button type="button" className="mt-3 flex h-10 items-center justify-center gap-2 rounded-md border border-unique-gold/40 bg-unique-gold/10 px-4 text-sm font-black text-unique-gold transition hover:bg-unique-gold hover:text-unique-ink" onClick={() => onSubmitReply(selectedTicket.id)}>
+                  <Send className="h-4 w-4" aria-hidden />
+                  Antworten
+                </button>
+              </>
+            ) : (
+              <MenuEmpty text="Waehle links ein Ticket aus, um den Verlauf zu lesen." />
+            )}
+          </div>
+        </div>
+      </MenuPanel>
+    </div>
+  );
+}
+
+function SupportCategoryCombobox({ value, onChange }: { value: SupportCategoryId; onChange: (value: SupportCategoryId) => void }) {
+  const [open, setOpen] = useState(false);
+  const selected = supportCategories.find((item) => item.id === value) ?? supportCategories[0];
+
+  return (
+    <div className="relative z-40">
+      <span className="text-xs font-black uppercase text-white/45">Kategorie</span>
+      <button
+        type="button"
+        className="mt-2 flex h-12 w-full items-center justify-between gap-3 rounded-md border border-white/12 bg-[#111722] px-4 text-left text-sm font-black text-white outline-none transition hover:border-unique-gold"
+        onClick={() => setOpen((current) => !current)}
+      >
+        <span className="flex min-w-0 items-center gap-2">
+          <span className="text-unique-gold">{selected.icon}</span>
+          <span className="truncate">{selected.label}</span>
+        </span>
+        <ChevronDown className={`h-4 w-4 shrink-0 text-white/55 transition ${open ? "rotate-180" : ""}`} aria-hidden />
+      </button>
+      {open ? (
+        <div className="absolute left-0 right-0 top-[76px] z-[80] max-h-80 overflow-y-auto rounded-md border border-unique-gold/45 bg-[#0d1118] p-2 shadow-2xl shadow-black">
+          {supportCategories.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              className={`flex w-full items-start gap-3 rounded-md px-3 py-3 text-left transition ${item.id === value ? "bg-unique-gold text-unique-ink" : "text-white/75 hover:bg-white/10 hover:text-white"}`}
+              onClick={() => {
+                onChange(item.id);
+                setOpen(false);
+              }}
+            >
+              <span className={item.id === value ? "mt-0.5 text-unique-ink" : "mt-0.5 text-unique-gold"}>{item.icon}</span>
+              <span>
+                <span className="block text-sm font-black">{item.label}</span>
+                <span className={item.id === value ? "mt-1 block text-xs leading-5 text-unique-ink/70" : "mt-1 block text-xs leading-5 text-white/45"}>{item.description}</span>
+              </span>
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function TicketTimeline({ messages }: { messages: SupportTicketMessage[] }) {
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const node = scrollRef.current;
+    if (!node) {
+      return;
+    }
+    node.scrollTop = node.scrollHeight;
+  }, [messages.length]);
+
+  return (
+    <div ref={scrollRef} className="mt-4 max-h-[360px] space-y-3 overflow-y-auto pr-2">
+      {messages.length ? messages.map((entry) => (
+        <div key={entry.id} className={`rounded-md border px-3 py-3 ${entry.authorRole === "admin" ? "border-unique-gold/25 bg-unique-gold/10" : entry.authorRole === "system" ? "border-white/10 bg-white/5" : "border-unique-teal/20 bg-unique-teal/10"}`}>
+          <div className="flex items-center justify-between gap-3">
+            <p className="flex min-w-0 items-center gap-2 text-sm font-black">
+              {entry.authorRole === "admin" ? <span className="rounded bg-unique-gold px-1.5 py-0.5 text-[10px] font-black text-unique-ink">ADMIN</span> : null}
+              <span className="truncate">{entry.authorName}</span>
+            </p>
+            <span className="text-[11px] font-bold uppercase text-white/35">{formatDateTime(entry.createdAt)}</span>
+          </div>
+          <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-white/75">{entry.message}</p>
+        </div>
+      )) : <MenuEmpty text="Noch kein Verlauf vorhanden." />}
+    </div>
+  );
+}
+
+function SupportBadge({ label }: { label: string }) {
+  return <span className="rounded border border-white/10 bg-white/8 px-2 py-1 text-[11px] font-black uppercase text-white/65">{label}</span>;
+}
+
+function supportCategoryLabel(category: SupportTicket["category"] | SupportCategoryId) {
+  return supportCategories.find((item) => item.id === category)?.label ?? "Sonstiges";
+}
+
+function supportStatusLabel(status: SupportTicket["status"]) {
+  if (status === "in_progress") {
+    return "In Bearbeitung";
+  }
+  if (status === "closed") {
+    return "Geschlossen";
+  }
+  return "Offen";
+}
+
+function supportPriorityLabel(priority: SupportTicket["priority"]) {
+  if (priority === "critical") {
+    return "Kritisch";
+  }
+  if (priority === "high") {
+    return "Hoch";
+  }
+  if (priority === "low") {
+    return "Niedrig";
+  }
+  return "Normal";
+}
+
+function MenuSettings() {
+  return (
+    <MenuPanel title="Einstellungen">
+      <div className="grid gap-3 md:grid-cols-2">
+        <MenuToggle label="HUD anzeigen" defaultChecked />
+        <MenuToggle label="Chat sichtbar" defaultChecked />
+        <MenuToggle label="Benachrichtigungen" defaultChecked />
+        <MenuToggle label="Minimaler Modus" />
+      </div>
+    </MenuPanel>
+  );
+}
+
+function MenuPanel({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <section className="rounded-md border border-white/10 bg-[#111722]/86 p-5 shadow-xl shadow-black/20">
+      <h2 className="mb-4 text-lg font-black">{title}</h2>
+      {children}
     </section>
   );
 }
 
-function MenuTile({ title, value }: { title: string; value: string }) {
+function MenuMetric({ label, value, icon }: { label: string; value: string; icon: React.ReactNode }) {
   return (
-    <div className="rounded-md border border-white/10 bg-white/5 p-4">
-      <p className="text-xs uppercase tracking-[0.16em] text-white/35">{title}</p>
-      <p className="mt-2 text-xl font-semibold text-white">{value}</p>
+    <div className="rounded-md border border-white/10 bg-black/22 p-4">
+      <p className="flex items-center gap-2 text-xs font-black uppercase text-white/40"><span className="text-unique-gold">{icon}</span>{label}</p>
+      <p className="mt-3 truncate text-xl font-black text-white">{value}</p>
     </div>
+  );
+}
+
+function MenuAction({ title, text, icon, onClick }: { title: string; text: string; icon: React.ReactNode; onClick?: () => void }) {
+  return (
+    <button type="button" className="rounded-md border border-white/10 bg-black/20 p-4 text-left transition hover:border-unique-gold/60 hover:bg-unique-gold/10" onClick={onClick}>
+      <p className="flex items-center gap-2 text-sm font-black text-white">{icon}{title}</p>
+      <p className="mt-2 text-sm text-white/45">{text}</p>
+    </button>
+  );
+}
+
+function MenuInfoRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-center justify-between gap-4 border-b border-white/8 py-3 last:border-b-0">
+      <span className="text-sm text-white/45">{label}</span>
+      <strong className="max-w-[180px] truncate text-right text-sm text-white">{value}</strong>
+    </div>
+  );
+}
+
+function MenuEmpty({ text }: { text: string }) {
+  return <div className="rounded-md border border-dashed border-white/12 bg-black/18 p-5 text-sm font-bold text-white/45">{text}</div>;
+}
+
+function MenuToggle({ label, defaultChecked = false }: { label: string; defaultChecked?: boolean }) {
+  return (
+    <label className="flex items-center justify-between rounded-md border border-white/10 bg-black/20 px-4 py-3">
+      <span className="font-bold text-white/75">{label}</span>
+      <input type="checkbox" className="h-5 w-5 accent-unique-gold" defaultChecked={defaultChecked} />
+    </label>
   );
 }
 
 function WorldHud({ data, location }: { data: HudDataPayload | null; location: HudLocationPayload }) {
   const [now, setNow] = useState(() => new Date());
+  const previousMoney = useRef<{ cash: number | null; bank: number | null }>({ cash: null, bank: null });
+  const [moneyDelta, setMoneyDelta] = useState({ cash: 0, bank: 0 });
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(new Date()), 1000);
     return () => window.clearInterval(timer);
   }, []);
 
+  useEffect(() => {
+    if (!data) {
+      return;
+    }
+
+    const nextDelta = {
+      cash: previousMoney.current.cash === null ? 0 : data.cash - previousMoney.current.cash,
+      bank: previousMoney.current.bank === null ? 0 : data.bankBalance - previousMoney.current.bank
+    };
+    previousMoney.current = { cash: data.cash, bank: data.bankBalance };
+    setMoneyDelta(nextDelta);
+
+    if (nextDelta.cash !== 0 || nextDelta.bank !== 0) {
+      const timer = window.setTimeout(() => setMoneyDelta({ cash: 0, bank: 0 }), 1450);
+      return () => window.clearTimeout(timer);
+    }
+  }, [data?.cash, data?.bankBalance]);
+
+  const playerCount = data?.playerCount ?? 0;
+  const maxPlayers = Math.max(playerCount, data?.maxPlayers ?? 100);
+  const tickets = Math.max(0, Number(data?.tickets ?? 0));
+
   return (
-    <section className="pointer-events-none fixed inset-0 z-20">
-      <div className="absolute right-8 top-5 flex w-[360px] flex-col items-end text-right drop-shadow-[0_2px_2px_rgba(0,0,0,.55)]">
-        <div className="flex items-start justify-end gap-3">
-          <div>
-            <p className="text-[34px] font-black italic leading-none text-white">
-              unique<span className="text-unique-gold">rp</span>
-            </p>
-            <div className="mt-2 flex items-center justify-end gap-4 text-[18px] font-black text-white">
-              <span><span className="text-unique-gold">ID:</span> {data?.characterId ?? 0}</span>
-              <span className="flex items-center gap-1.5">
-                <Users className="h-5 w-5 fill-unique-gold text-unique-gold" aria-hidden />
-                {data?.playerCount ?? 0}
-              </span>
-            </div>
-          </div>
-          <div className="relative grid h-16 w-12 place-items-center bg-unique-gold text-xl font-black text-unique-ink shadow-[0_0_24px_rgba(241,184,75,.36)] after:absolute after:bottom-0 after:h-0 after:w-0 after:border-x-[24px] after:border-b-[12px] after:border-x-unique-gold after:border-b-transparent">
-            1
-          </div>
-        </div>
+    <section className="pointer-events-none fixed inset-0 z-20 text-white">
+      <div className="absolute right-6 top-5 flex w-[380px] flex-col items-end text-right drop-shadow-[0_2px_2px_rgba(0,0,0,.65)]">
+        <HudServerHeader characterId={data?.characterId ?? 0} online={playerCount} maxOnline={maxPlayers} />
 
-        <div className="mt-28 flex flex-col items-end gap-4">
-          <div className="flex items-center gap-3 text-unique-teal/95">
-            <ShieldCheck className="h-9 w-9" aria-hidden />
-            <span className="text-3xl font-black uppercase tracking-[0.08em]">Green</span>
-            <span className="origin-center rotate-90 text-[10px] font-black uppercase tracking-[0.16em] text-unique-gold">Zone</span>
-          </div>
-
-          <div>
-            <p className="text-[42px] font-black leading-none text-white">{formatMoney(data?.cash ?? 0)}</p>
-            <div className="mt-4 flex items-center justify-end gap-3 text-[21px] font-black text-white/90">
-              <Banknote className="h-7 w-7 text-white" aria-hidden />
-              {formatMoney(data?.bankBalance ?? 0)}
-            </div>
-          </div>
+        <div className="mt-3 grid gap-1">
+          <HudMoneyLine icon={<BadgeCent className="h-6 w-6" aria-hidden />} value={formatHudMoney(data?.cash ?? 0)} delta={moneyDelta.cash} />
+          <HudMoneyLine icon={<Banknote className="h-5 w-5" aria-hidden />} value={formatHudMoney(data?.bankBalance ?? 0)} delta={moneyDelta.bank} muted />
         </div>
       </div>
 
@@ -1051,15 +1442,65 @@ function WorldHud({ data, location }: { data: HudDataPayload | null; location: H
         </div>
         <p className="mt-2 truncate text-xl font-semibold text-white">{location.street}</p>
         <p className="mt-1 truncate text-sm text-white/55">
-          {location.crossing ? `${location.crossing} · ${location.area}` : location.area}
+          {location.crossing ? `${location.crossing} / ${location.area}` : location.area}
         </p>
       </div>
+
+      {data?.adminMode ? <AdminTicketCounter tickets={tickets} /> : null}
 
       <div className="absolute bottom-8 right-8 text-right drop-shadow-[0_2px_2px_rgba(0,0,0,.7)]">
         <p className="font-mono text-3xl font-black text-white">{formatClock(now)}</p>
         <p className="mt-1 font-mono text-sm font-bold uppercase tracking-[0.16em] text-white/60">{formatDate(now)}</p>
       </div>
     </section>
+  );
+}
+
+function HudServerHeader({ characterId, online, maxOnline }: { characterId: number; online: number; maxOnline: number }) {
+  return (
+    <div className="text-right">
+      <div className="text-3xl font-black italic leading-none">
+        Unique<span className="text-unique-gold"> Roleplay</span>
+      </div>
+      <div className="mt-2 flex items-center justify-end gap-3 text-sm font-black">
+        <span className="text-unique-gold">ID: <span className="text-white">{characterId}</span></span>
+        <span className="h-4 w-px bg-unique-gold/35" />
+        <span className="flex items-center gap-1 text-white">
+          <Users className="h-4 w-4 text-unique-gold" aria-hidden />
+          {online}/{maxOnline}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function HudMoneyLine({ icon, value, delta, muted = false }: { icon: React.ReactNode; value: string; delta: number; muted?: boolean }) {
+  const deltaText = formatHudDelta(delta);
+
+  return (
+    <div className={`relative flex items-center justify-end gap-2 ${muted ? "text-white/65" : "text-white"}`}>
+      {deltaText ? (
+        <div className={`absolute right-0 -top-5 animate-[moneyFloat_1.45s_ease-out_forwards] text-sm font-black ${delta > 0 ? "text-unique-teal" : "text-unique-gold"}`}>
+          {deltaText}
+        </div>
+      ) : null}
+      <span className={muted ? "text-white/65" : "text-unique-gold"}>{icon}</span>
+      <span className={muted ? "text-lg font-black" : "text-3xl font-black"}>{value}</span>
+    </div>
+  );
+}
+
+function AdminTicketCounter({ tickets }: { tickets: number }) {
+  const danger = tickets > 5;
+
+  return (
+    <div className="absolute bottom-6 left-1/2 -translate-x-1/2 text-center drop-shadow-[0_2px_2px_rgba(0,0,0,.75)]">
+      <div className={`flex items-center justify-center gap-2 text-3xl font-black ${danger ? "text-red-400" : "text-white"}`}>
+        <Ticket className={`h-7 w-7 ${danger ? "text-red-400" : "text-unique-gold"}`} aria-hidden />
+        {tickets}
+      </div>
+      <div className="mt-1 text-xs font-bold uppercase tracking-[0.18em] text-white/55">Tickets</div>
+    </div>
   );
 }
 
@@ -1645,8 +2086,8 @@ function ChatLine({ message }: { message: ChatMessage }) {
   );
 }
 
-function AdminPanel({ data, onClose }: { data: AdminPanelPayload; onClose: () => void }) {
-  const [tab, setTab] = useState<"admins" | "players" | "commands" | "permissions">("players");
+function AdminPanel({ data, result, onClose }: { data: AdminPanelPayload; result: { ok: boolean; message: string } | null; onClose: () => void }) {
+  const [tab, setTab] = useState<"admins" | "players" | "tickets" | "commands" | "permissions">("players");
   const onlineAdmins = data.admins.filter((admin) => admin.online);
   const offlineAdmins = data.admins.filter((admin) => !admin.online);
   const commandHelp = [
@@ -1656,8 +2097,17 @@ function AdminPanel({ data, onClose }: { data: AdminPanelPayload; onClose: () =>
     ["/setdim <charId> <dimension>", "Spieler in Dimension setzen"],
     ["/msg <nachricht>", "Serverweite Admin-Nachricht senden"],
     ["/veh [modell] [r g b] [kennzeichen]", "Fahrzeug spawnen"],
+    ["/dl", "Fahrzeug-Debug mit IDs ein- oder ausblenden"],
+    ["/delveh <id>", "Fahrzeug anhand der /dl-ID loeschen"],
+    ["/getveh <id>", "Fahrzeug anhand der /dl-ID zu dir teleportieren"],
+    ["/tmute <charId> <dauer> <grund>", "Spieler vom Ticketsupport ausschliessen"],
+    ["/tunmute <charId>", "Ticketsupport-Sperre aufheben"],
+    ["/mute <charId> <dauer> <grund>", "Spieler vom Chat ausschliessen"],
+    ["/unmute <charId>", "Chat-Sperre aufheben"],
     ["/heal", "Dich selbst heilen"],
     ["/heal <charId>", "Spieler per Charakter-ID heilen"],
+    ["/armor", "Dir selbst Armor geben"],
+    ["/armor <charId>", "Spieler per Charakter-ID Armor geben"],
     ["/revive", "Dich selbst wiederbeleben"],
     ["/revive <charId>", "Spieler per Charakter-ID wiederbeleben"],
     ["/addcash [charId] <betrag>", "Bargeld hinzufuegen"],
@@ -1698,11 +2148,13 @@ function AdminPanel({ data, onClose }: { data: AdminPanelPayload; onClose: () =>
           <div className="mt-7 grid gap-3 text-sm text-white/70">
             <AdminSummary icon={<Users className="h-4 w-4" />} label="Spieler online" value={String(data.players.length)} />
             <AdminSummary icon={<ShieldCheck className="h-4 w-4" />} label="Admins online" value={String(onlineAdmins.length)} />
+            <AdminSummary icon={<Ticket className="h-4 w-4" />} label="Offene Tickets" value={String(data.tickets.length)} />
             <AdminSummary icon={<Terminal className="h-4 w-4" />} label="Befehle" value={String(data.commands.length)} />
           </div>
 
           <nav className="mt-7 grid gap-2">
             <AdminTab active={tab === "players"} label="Online Spieler" onClick={() => setTab("players")} />
+            <AdminTab active={tab === "tickets"} label="Tickets" onClick={() => setTab("tickets")} />
             <AdminTab active={tab === "admins"} label="Admins" onClick={() => setTab("admins")} />
             <AdminTab active={tab === "commands"} label="Befehle" onClick={() => setTab("commands")} />
             {data.canManagePermissions ? <AdminTab active={tab === "permissions"} label="Berechtigungen" onClick={() => setTab("permissions")} /> : null}
@@ -1710,6 +2162,12 @@ function AdminPanel({ data, onClose }: { data: AdminPanelPayload; onClose: () =>
         </aside>
 
         <div className="min-h-0 overflow-y-auto p-6">
+          {result ? (
+            <div className={`mb-4 rounded-md border px-4 py-3 text-sm font-black ${result.ok ? "border-unique-teal/35 bg-unique-teal/10 text-unique-teal" : "border-unique-danger/45 bg-unique-danger/10 text-red-100"}`}>
+              {result.message}
+            </div>
+          ) : null}
+
           {tab === "players" ? (
             <div className="grid gap-4 xl:grid-cols-3">
               {data.players.length ? data.players.map((player) => (
@@ -1733,6 +2191,8 @@ function AdminPanel({ data, onClose }: { data: AdminPanelPayload; onClose: () =>
               )) : <EmptyAdminText text="Keine Spieler online." />}
             </div>
           ) : null}
+
+          {tab === "tickets" ? <AdminTicketsSection tickets={data.tickets} currentAdminLevel={data.currentAdminLevel} /> : null}
 
           {tab === "admins" ? (
             <div className="grid gap-5 xl:grid-cols-2">
@@ -1799,6 +2259,191 @@ function AdminTab({ active, label, onClick }: { active: boolean; label: string; 
     >
       {label}
     </button>
+  );
+}
+
+function AdminTicketsSection({ tickets, currentAdminLevel }: { tickets: SupportTicket[]; currentAdminLevel: number }) {
+  const [selectedTicketId, setSelectedTicketId] = useState<number | null>(tickets[0]?.id ?? null);
+  const [reply, setReply] = useState("");
+  const selected = tickets.find((ticket) => ticket.id === selectedTicketId) ?? tickets[0] ?? null;
+
+  useEffect(() => {
+    if (!selectedTicketId || !tickets.some((ticket) => ticket.id === selectedTicketId)) {
+      setSelectedTicketId(tickets[0]?.id ?? null);
+    }
+  }, [tickets, selectedTicketId]);
+
+  function updateTicket(ticketId: number, payload: Record<string, unknown>) {
+    emitToClient("unique:cef:updateSupportTicket", { ticketId, ...payload });
+  }
+
+  function submitReply(closeAfter = false) {
+    if (!selected) {
+      return;
+    }
+    const message = reply.trim();
+    if (closeAfter) {
+      updateTicket(selected.id, { action: "close", message });
+      setReply("");
+      return;
+    }
+    if (message.length < 2) {
+      return;
+    }
+    updateTicket(selected.id, { action: "reply", message });
+    setReply("");
+  }
+
+  if (!tickets.length) {
+    return <AdminSection title="Tickets"><EmptyAdminText text="Keine offenen Tickets." /></AdminSection>;
+  }
+
+  return (
+    <div className="grid items-start gap-4 xl:grid-cols-[360px_minmax(0,1fr)]">
+      <AdminSection title="Offene Tickets" className="max-h-[calc(100vh-13rem)] overflow-hidden">
+        <div className="grid max-h-[calc(100vh-18rem)] content-start gap-2 overflow-y-auto pr-1">
+          {tickets.map((ticket) => (
+            <button
+              key={ticket.id}
+              type="button"
+              className={`rounded-md border px-3 py-3 text-left transition ${selected?.id === ticket.id ? "border-unique-gold bg-unique-gold/10" : "border-white/10 bg-white/5 hover:border-white/25"}`}
+              onClick={() => setSelectedTicketId(ticket.id)}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-black">#{ticket.id} {ticket.characterName}</span>
+                <SupportBadge label={supportPriorityLabel(ticket.priority)} />
+              </div>
+              <p className="mt-2 line-clamp-2 text-xs leading-5 text-white/50">{ticket.message}</p>
+              <p className="mt-2 text-[11px] font-bold uppercase text-white/35">
+                {supportCategoryLabel(ticket.category)} / {supportStatusLabel(ticket.status)}{ticket.assignedAdminName ? ` / ${ticket.assignedAdminName}` : ""}
+              </p>
+            </button>
+          ))}
+        </div>
+      </AdminSection>
+
+      {selected ? (
+        <AdminSection title={`Ticket #${selected.id}`}>
+          <div className="grid gap-4 2xl:grid-cols-[minmax(0,1fr)_320px]">
+            <div>
+              <div className="grid gap-2 md:grid-cols-4">
+                <AdminTicketCombobox label="Kategorie" value={selected.category} options={supportCategories.map((item) => ({ value: item.id, label: item.label, icon: item.icon }))} onChange={(category) => updateTicket(selected.id, { action: "classify", category, priority: selected.priority })} />
+                <AdminTicketCombobox label="Schwere" value={selected.priority} options={[{ value: "low", label: "Niedrig" }, { value: "normal", label: "Normal" }, { value: "high", label: "Hoch" }, { value: "critical", label: "Kritisch" }]} onChange={(priority) => updateTicket(selected.id, { action: "classify", category: selected.category, priority })} />
+                <AdminInfoBox label="Status" value={supportStatusLabel(selected.status)} />
+                <AdminInfoBox label="Claim" value={selected.assignedAdminName ?? "Offen"} />
+              </div>
+
+              <TicketTimeline messages={selected.messages} />
+
+              <label className="mt-4 block">
+                <span className="text-xs font-black uppercase tracking-[0.12em] text-white/45">Antwort / Abschlussnotiz</span>
+                <textarea
+                  className="mt-2 min-h-28 w-full resize-none rounded-md border border-white/10 bg-black/30 p-3 text-sm leading-6 text-white outline-none focus:border-unique-gold"
+                  value={reply}
+                  maxLength={1200}
+                  onChange={(event) => setReply(event.target.value)}
+                  placeholder="Antwort an den Spieler oder interne Abschlussnotiz"
+                />
+              </label>
+
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button type="button" className="rounded-md bg-unique-gold px-4 py-2 text-sm font-black text-unique-ink" onClick={() => updateTicket(selected.id, { action: "claim" })}>Claimen</button>
+                <button type="button" className="rounded-md border border-white/10 bg-white/5 px-4 py-2 text-sm font-black text-white" onClick={() => submitReply(false)}>Antworten</button>
+                <button type="button" className="rounded-md border border-unique-teal/40 bg-unique-teal/10 px-4 py-2 text-sm font-black text-unique-teal" onClick={() => updateTicket(selected.id, { action: "request_help", level: Math.min(10, currentAdminLevel + 1) })}>Höhere Admins anfragen</button>
+                <button type="button" className="rounded-md border border-unique-danger/45 bg-unique-danger/10 px-4 py-2 text-sm font-black text-red-100" onClick={() => submitReply(true)}>Schließen</button>
+              </div>
+            </div>
+
+            <aside className="grid content-start gap-3">
+              <div className="grid gap-2 rounded-md border border-white/10 bg-white/5 p-3">
+                <p className="text-[11px] font-black uppercase text-white/35">Shortcuts</p>
+                <AdminTicketShortcutButton icon={<MapPin className="h-4 w-4" />} label="Zum Spieler" disabled={!selected.ownerOnline} onClick={() => updateTicket(selected.id, { action: "goto_player" })} />
+                <AdminTicketShortcutButton icon={<Users className="h-4 w-4" />} label="Spieler zu mir" disabled={!selected.ownerOnline} onClick={() => updateTicket(selected.id, { action: "bring_player" })} />
+                <AdminTicketShortcutButton icon={<Eye className="h-4 w-4" />} label="Spectate" disabled={!selected.ownerOnline} onClick={() => updateTicket(selected.id, { action: "spectate_player" })} />
+              </div>
+              <AdminInfoBox label="Spieler" value={`${selected.characterName} (#${selected.characterId})`} />
+              <AdminInfoBox label="Verbindung" value={selected.ownerOnline ? "Online" : "Offline"} />
+              <AdminInfoBox label="Erstellt" value={formatDateTime(selected.createdAt)} />
+              <AdminInfoBox label="Aktualisiert" value={formatDateTime(selected.updatedAt)} />
+              <AdminInfoBox label="Eskalation" value={selected.escalatedToLevel ? `Ab Admin Level ${selected.escalatedToLevel}` : "Keine"} />
+            </aside>
+          </div>
+        </AdminSection>
+      ) : null}
+    </div>
+  );
+}
+
+function AdminTicketShortcutButton({ icon, label, disabled = false, onClick }: { icon: React.ReactNode; label: string; disabled?: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      className="flex h-10 items-center justify-start gap-2 rounded-md border border-white/10 bg-[#111318] px-3 text-sm font-black text-white transition hover:border-unique-gold hover:text-unique-gold disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-white/10 disabled:hover:text-white"
+      disabled={disabled}
+      onClick={onClick}
+    >
+      <span className="text-unique-gold">{icon}</span>
+      {label}
+    </button>
+  );
+}
+
+function AdminTicketCombobox({
+  label,
+  value,
+  options,
+  onChange
+}: {
+  label: string;
+  value: string;
+  options: Array<{ value: string; label: string; icon?: React.ReactNode }>;
+  onChange: (value: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const selected = options.find((option) => option.value === value) ?? options[0];
+
+  return (
+    <div className="relative z-30 rounded-md border border-white/10 bg-white/5 p-3">
+      <span className="text-[11px] font-black uppercase text-white/35">{label}</span>
+      <button
+        type="button"
+        className="mt-2 flex h-10 w-full items-center justify-between gap-2 rounded-md border border-white/10 bg-[#111318] px-3 text-left text-sm font-bold text-white outline-none transition hover:border-unique-gold"
+        onClick={() => setOpen((current) => !current)}
+      >
+        <span className="flex min-w-0 items-center gap-2">
+          {selected?.icon ? <span className="text-unique-gold">{selected.icon}</span> : null}
+          <span className="truncate">{selected?.label ?? "-"}</span>
+        </span>
+        <ChevronDown className={`h-4 w-4 shrink-0 text-white/55 transition ${open ? "rotate-180" : ""}`} aria-hidden />
+      </button>
+      {open ? (
+        <div className="absolute left-3 right-3 top-[78px] z-[90] max-h-72 overflow-y-auto rounded-md border border-unique-gold/45 bg-[#0d1118] p-2 shadow-2xl shadow-black">
+          {options.map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              className={`flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm font-black transition ${option.value === value ? "bg-unique-gold text-unique-ink" : "text-white/75 hover:bg-white/10 hover:text-white"}`}
+              onClick={() => {
+                onChange(option.value);
+                setOpen(false);
+              }}
+            >
+              {option.icon ? <span className={option.value === value ? "text-unique-ink" : "text-unique-gold"}>{option.icon}</span> : null}
+              {option.label}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function AdminInfoBox({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-md border border-white/10 bg-white/5 p-3">
+      <p className="text-[11px] font-black uppercase text-white/35">{label}</p>
+      <p className="mt-2 break-words text-sm font-black text-white">{value}</p>
+    </div>
   );
 }
 
@@ -2000,6 +2645,19 @@ function formatMoney(value: number) {
   }).format(value);
 }
 
+function formatHudMoney(value: number) {
+  return `$${new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(Math.max(0, Math.trunc(value)))}`;
+}
+
+function formatHudDelta(value: number) {
+  const amount = Math.trunc(value);
+  if (!amount) {
+    return "";
+  }
+
+  return `${amount > 0 ? "+" : "-"}${formatHudMoney(Math.abs(amount))}`;
+}
+
 function formatNumber(value: number) {
   return new Intl.NumberFormat("de-DE", { maximumFractionDigits: 0 }).format(value);
 }
@@ -2023,6 +2681,37 @@ function formatClock(date: Date) {
 
 function formatDate(date: Date) {
   return `${String(date.getDate()).padStart(2, "0")}.${String(date.getMonth() + 1).padStart(2, "0")}.${date.getFullYear()}`;
+}
+
+function formatDateTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "-";
+  }
+  return `${formatDate(date)} ${formatClock(date)}`;
+}
+
+function playPenaltyNoticeSound() {
+  try {
+    const AudioContextClass = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!AudioContextClass) {
+      return;
+    }
+    const context = new AudioContextClass();
+    const oscillator = context.createOscillator();
+    const gain = context.createGain();
+    oscillator.type = "sine";
+    oscillator.frequency.setValueAtTime(620, context.currentTime);
+    oscillator.frequency.exponentialRampToValueAtTime(360, context.currentTime + 0.22);
+    gain.gain.setValueAtTime(0.001, context.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.12, context.currentTime + 0.025);
+    gain.gain.exponentialRampToValueAtTime(0.001, context.currentTime + 0.28);
+    oscillator.connect(gain);
+    gain.connect(context.destination);
+    oscillator.start();
+    oscillator.stop(context.currentTime + 0.3);
+    window.setTimeout(() => context.close(), 420);
+  } catch {}
 }
 
 function getNextLevelExperience(level: number) {

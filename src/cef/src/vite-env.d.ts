@@ -23,9 +23,14 @@ type UiMessage =
   | { type: "chat:open"; payload: ChatOpenPayload }
   | { type: "menu:open"; payload: Record<string, never> }
   | { type: "menu:close"; payload: Record<string, never> }
+  | { type: "support:ticketResult"; payload: { ok: boolean; message: string } }
+  | { type: "support:tickets"; payload: { tickets: SupportTicket[] } }
+  | { type: "support:muteNotice"; payload: SupportMuteNoticePayload }
+  | { type: "chat:muteNotice"; payload: ChatMuteNoticePayload }
   | { type: "death:show"; payload: DeathScreenPayload }
   | { type: "death:hide"; payload: Record<string, never> }
   | { type: "admin:open"; payload: Record<string, never> }
+  | { type: "admin:close"; payload: Record<string, never> }
   | { type: "admin:data"; payload: AdminPanelPayload };
 
 interface AuthBootstrap {
@@ -81,10 +86,13 @@ interface DeathScreenPayload {
 interface HudDataPayload {
   characterId: number;
   playerCount: number;
+  maxPlayers?: number;
   cash: number;
   bankBalance: number;
   uniqueCoins?: number;
   onlineSeconds?: number;
+  adminMode?: boolean;
+  tickets?: number;
 }
 
 interface HudLocationPayload {
@@ -104,6 +112,18 @@ interface ChatOpenPayload {
   dead?: boolean;
 }
 
+interface SupportMuteNoticePayload {
+  administrator: string;
+  reason: string;
+  expiresAt: string;
+}
+
+interface ChatMuteNoticePayload {
+  administrator: string;
+  reason: string;
+  expiresAt: string;
+}
+
 interface AdminPanelPayload {
   admins: Array<{ accountId: number; characterId: number | null; name: string; level: number; online: boolean }>;
   players: Array<{
@@ -116,9 +136,40 @@ interface AdminPanelPayload {
     uniqueCoins: number;
   }>;
   commands: Array<{ command: string; minLevel: number }>;
+  tickets: SupportTicket[];
   currentAdminLevel: number;
   adminMode: boolean;
   canManagePermissions: boolean;
+}
+
+interface SupportTicket {
+  id: number;
+  characterId: number;
+  accountId: number;
+  characterName: string;
+  category: "stuck" | "bug" | "player" | "account" | "shop" | "faction" | "event" | "other";
+  subject: string;
+  message: string;
+  status: "open" | "in_progress" | "closed";
+  priority: "low" | "normal" | "high" | "critical";
+  assignedAdminAccountId: number | null;
+  assignedAdminName: string | null;
+  escalatedToLevel: number | null;
+  ownerOnline?: boolean;
+  createdAt: string;
+  updatedAt: string;
+  messages: SupportTicketMessage[];
+}
+
+interface SupportTicketMessage {
+  id: number;
+  ticketId: number;
+  authorCharacterId: number | null;
+  authorAccountId: number | null;
+  authorName: string;
+  authorRole: "player" | "admin" | "system";
+  message: string;
+  createdAt: string;
 }
 
 interface CharacterAppearance {

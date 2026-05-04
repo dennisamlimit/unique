@@ -14,6 +14,9 @@ let lastHudLocationUpdate = 0;
 let lastHudLocationKey = "";
 let vehicleOverlayBatch: RageMpEntityOverlayBatch | null = null;
 let vehicleOverlaySupported: boolean | null = null;
+let adminModeEnabled = false;
+let vehicleDebugEnabled = false;
+let spectateTargetRemoteId: number | null = null;
 
 const headOverlayIds = [0, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
 const propIds = [0, 1, 2, 6, 7];
@@ -39,6 +42,8 @@ mp.events.add("playerReady", () => {
 });
 
 mp.events.add("unique:client:startAuth", (payloadJson: string) => {
+  adminModeEnabled = false;
+  vehicleDebugEnabled = false;
   pendingBootstrap = safeParse(payloadJson);
   showAuthExperience();
 });
@@ -64,7 +69,14 @@ mp.events.add("unique:client:chatPush", (payloadJson: string) => {
 });
 
 mp.events.add("unique:client:hudData", (payloadJson: string) => {
-  sendToUi("hud:data", safeParse(payloadJson));
+  const payload = safeParse(payloadJson);
+  if (isObject(payload)) {
+    adminModeEnabled = Boolean(payload.adminMode);
+    if (!adminModeEnabled) {
+      vehicleDebugEnabled = false;
+    }
+  }
+  sendToUi("hud:data", payload);
 });
 
 mp.events.add("unique:client:deathHide", () => {
@@ -82,9 +94,17 @@ mp.events.add("unique:client:deathShow", (payloadJson: string) => {
 });
 
 mp.events.add("unique:client:openAdminPanel", () => {
+  chatInputOpen = false;
+  mainMenuOpen = false;
   adminPanelOpen = true;
   mp.gui.cursor.show(true, true);
   sendToUi("admin:open", {});
+});
+
+mp.events.add("unique:client:closeAdminPanel", () => {
+  adminPanelOpen = false;
+  mp.gui.cursor.show(chatInputOpen || deathScreenOpen || mainMenuOpen, chatInputOpen || deathScreenOpen || mainMenuOpen);
+  sendToUi("admin:close", {});
 });
 
 mp.events.add("unique:client:adminPanelData", (payloadJson: string) => {
@@ -92,9 +112,31 @@ mp.events.add("unique:client:adminPanelData", (payloadJson: string) => {
 });
 
 mp.events.add("unique:client:openMainMenu", () => {
+  chatInputOpen = false;
+  adminPanelOpen = false;
   mainMenuOpen = true;
   mp.gui.cursor.show(true, true);
   sendToUi("menu:open", {});
+});
+
+mp.events.add("unique:client:supportTicketResult", (payloadJson: string) => {
+  sendToUi("support:ticketResult", safeParse(payloadJson));
+});
+
+mp.events.add("unique:client:supportTickets", (payloadJson: string) => {
+  sendToUi("support:tickets", safeParse(payloadJson));
+});
+
+mp.events.add("unique:client:supportMuteNotice", (payloadJson: string) => {
+  sendToUi("support:muteNotice", safeParse(payloadJson));
+});
+
+mp.events.add("unique:client:chatMuteNotice", (payloadJson: string) => {
+  sendToUi("chat:muteNotice", safeParse(payloadJson));
+});
+
+mp.events.add("unique:client:spectatePlayer", (payloadJson: string) => {
+  toggleSpectateTarget(safeParse(payloadJson));
 });
 
 mp.events.add("unique:client:toggleNoClip", () => {
@@ -104,6 +146,18 @@ mp.events.add("unique:client:toggleNoClip", () => {
 mp.events.add("unique:client:stopNoClip", () => {
   if (noClipEnabled) {
     stopNoClip();
+  }
+});
+
+mp.events.add("unique:client:toggleVehicleDebug", () => {
+  vehicleDebugEnabled = !vehicleDebugEnabled;
+  mp.gui.chat.push(`[Unique DL] Fahrzeug-Debug ${vehicleDebugEnabled ? "aktiviert" : "deaktiviert"}.`);
+});
+
+mp.events.add("unique:client:setVehicleDebug", (enabled: boolean) => {
+  vehicleDebugEnabled = Boolean(enabled);
+  if (!vehicleDebugEnabled) {
+    adminModeEnabled = false;
   }
 });
 
@@ -194,6 +248,22 @@ mp.events.add("unique:cef:adminClose", () => {
 mp.events.add("unique:cef:mainMenuClose", () => {
   mainMenuOpen = false;
   mp.gui.cursor.show(chatInputOpen || deathScreenOpen || adminPanelOpen, chatInputOpen || deathScreenOpen || adminPanelOpen);
+});
+
+mp.events.add("unique:cef:supportTicketCreate", (payloadJson: string) => {
+  mp.events.callRemote("unique:server:createSupportTicket", payloadJson);
+});
+
+mp.events.add("unique:cef:requestSupportTickets", () => {
+  mp.events.callRemote("unique:server:requestSupportTickets");
+});
+
+mp.events.add("unique:cef:updateSupportTicket", (payloadJson: string) => {
+  mp.events.callRemote("unique:server:updateSupportTicket", payloadJson);
+});
+
+mp.events.add("unique:cef:replySupportTicket", (payloadJson: string) => {
+  mp.events.callRemote("unique:server:replySupportTicket", payloadJson);
 });
 
 mp.events.add("unique:cef:setCommandPermission", (payloadJson: string) => {
@@ -321,6 +391,7 @@ mp.events.add("render", () => {
   updateNoClip();
   updateHudLocation();
   updateVehicleFocusHint();
+  updateVehicleDebugOverlay();
 });
 
 mp.events.add("playerDeath", () => {
@@ -521,6 +592,77 @@ function stopNoClip(positionOverride?: RageMpVector3) {
   mp.game.graphics.notify("NoClip deaktiviert");
 }
 
+function toggleSpectateTarget(payload: unknown) {
+  if (!isObject(payload)) {
+    return;
+  }
+
+  const remoteId = Math.trunc(Number(payload.remoteId));
+  const targetName = String(payload.name ?? "Spieler");
+  if (!Number.isInteger(remoteId) || remoteId < 0) {
+    stopSpectate();
+    return;
+  }
+
+  if (spectateTargetRemoteId === remoteId) {
+    stopSpectate();
+    mp.game.graphics.notify("Spectate beendet");
+    return;
+  }
+
+  startSpectate(remoteId, targetName, 0);
+}
+
+function startSpectate(remoteId: number, targetName: string, attempt: number) {
+  const target = findRemotePlayer(remoteId);
+  const targetHandle = target?.handle;
+  if (!target || typeof targetHandle !== "number") {
+    if (attempt < 10) {
+      setTimeout(() => startSpectate(remoteId, targetName, attempt + 1), 250);
+      return;
+    }
+    mp.game.graphics.notify("Spectate-Ziel nicht gefunden");
+    return;
+  }
+
+  if (noClipEnabled) {
+    stopNoClip();
+  }
+
+  const player = mp.players.local;
+  mp.game.network?.setInSpectatorMode?.(true, targetHandle);
+  player.freezePosition(true);
+  player.setInvincible?.(true);
+  player.setVisible?.(false, false);
+  player.setCollision?.(false, false);
+  spectateTargetRemoteId = remoteId;
+  mp.game.graphics.notify(`Spectate: ${targetName}`);
+}
+
+function stopSpectate() {
+  if (spectateTargetRemoteId === null) {
+    return;
+  }
+
+  mp.game.network?.setInSpectatorMode?.(false, 0);
+  const player = mp.players.local;
+  player.freezePosition(false);
+  player.setInvincible?.(false);
+  player.setVisible?.(true, false);
+  player.setCollision?.(true, false);
+  spectateTargetRemoteId = null;
+}
+
+function findRemotePlayer(remoteId: number): RageMpRemotePlayer | null {
+  const direct = mp.players.atRemoteId?.(remoteId);
+  if (direct) {
+    return direct;
+  }
+
+  const players = mp.players.toArray?.() ?? [];
+  return players.find((player) => player.remoteId === remoteId) ?? null;
+}
+
 function dropNoClipToGround() {
   const cameraPosition = noClipCamera?.getCoord?.();
   if (!cameraPosition) {
@@ -624,7 +766,7 @@ function sanitizeGameLabel(value: unknown) {
 }
 
 function updateVehicleFocusHint() {
-  if (!inWorld || chatInputOpen || adminPanelOpen || deathScreenOpen || mainMenuOpen || mp.players.local.vehicle) {
+  if (!adminModeEnabled || !inWorld || chatInputOpen || adminPanelOpen || deathScreenOpen || mainMenuOpen || mp.players.local.vehicle) {
     return;
   }
 
@@ -635,6 +777,75 @@ function updateVehicleFocusHint() {
 
   drawVehicleOutline(vehicle);
   drawVehicleArrow(vehicle);
+}
+
+function updateVehicleDebugOverlay() {
+  if (!adminModeEnabled || !vehicleDebugEnabled || !inWorld) {
+    return;
+  }
+
+  const playerPosition = mp.players.local.position;
+  getStreamedVehicles().forEach((vehicle) => {
+    if (!vehicle?.position || getDistance(playerPosition, vehicle.position) > 18) {
+      return;
+    }
+
+    drawVehicleDebug(vehicle);
+  });
+}
+
+function drawVehicleDebug(vehicle: RageMpVehicle) {
+  const position = vehicle.position;
+  const drawPosition: [number, number, number] = [position.x, position.y, position.z + 1.15];
+  const health = readVehicleHealth(vehicle);
+  const modelName = getVehicleModelName(vehicle);
+  const vehicleId = Number.isInteger(vehicle.remoteId) ? vehicle.remoteId : -1;
+
+  drawVehicleArrow(vehicle);
+  mp.game.graphics.drawText(
+    `~y~ID: ~w~${vehicleId}\n~y~Model: ~w~${modelName}\n~y~Pos: ~w~${position.x.toFixed(2)}, ${position.y.toFixed(2)}, ${position.z.toFixed(2)}\n~y~Health~w~: ${health}`,
+    drawPosition,
+    {
+      font: 0,
+      color: [255, 255, 255, 220],
+      scale: [0.25, 0.25],
+      outline: true,
+      centre: true
+    }
+  );
+}
+
+function getVehicleModelName(vehicle: RageMpVehicle) {
+  const model = Number((vehicle as { model?: number }).model ?? 0);
+  const syncedModelName = sanitizeGameLabel(vehicle.getVariable?.("unique:vehicle:modelName"));
+  if (syncedModelName && vehicleModelMatchesName(model, syncedModelName)) {
+    return syncedModelName;
+  }
+
+  const displayName = mp.game.vehicle?.getDisplayNameFromVehicleModel?.(model) ?? "";
+  return sanitizeGameLabel(displayName).toLowerCase() || "unbekannt";
+}
+
+function vehicleModelMatchesName(model: number, modelName: string) {
+  const expected = mp.game.joaat?.(modelName);
+  if (!Number.isFinite(expected) || !Number.isFinite(model)) {
+    return false;
+  }
+
+  return toUint32(Number(expected)) === toUint32(model);
+}
+
+function toUint32(value: number) {
+  return value >>> 0;
+}
+
+function readVehicleHealth(vehicle: RageMpVehicle) {
+  try {
+    const health = vehicle.getHealth?.();
+    return Number.isFinite(health) ? Math.trunc(Number(health)) : 0;
+  } catch {
+    return 0;
+  }
 }
 
 function findVehicleInView() {

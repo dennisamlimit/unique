@@ -1,12 +1,15 @@
 import { getAdminCommandPermission, listAdminCommandPermissions, setAdminCommandPermission } from "../db/admin";
 import { listAdminAccounts, setAccountAdminLevel, setAccountUniqueCoins } from "../db/accounts";
+import { clearChatMute, createChatMute } from "../db/chat";
 import { setCharacterBankBalance, setCharacterCash, setCharacterDead } from "../db/characters";
+import { clearSupportTicketMute, createSupportTicketMute, listOpenSupportTicketsForAdmin } from "../db/support";
 import { sendHudData } from "./hud";
 import { findOnlineCharacter, getSession, listOnlinePlayers, listSessions, setSession } from "./session";
 
 const adminCommands = [
   "admin",
   "heal",
+  "armor",
   "revive",
   "setadmin",
   "addcash",
@@ -18,7 +21,14 @@ const adminCommands = [
   "dim",
   "setdim",
   "msg",
-  "veh"
+  "veh",
+  "dl",
+  "delveh",
+  "getveh",
+  "tmute",
+  "tunmute",
+  "mute",
+  "unmute"
 ];
 
 const permissionKeys = [...adminCommands, "noclip"];
@@ -38,8 +48,16 @@ export async function handleAdminCommand(player: RageMpPlayer, command: string, 
     return toggleAdminMode(player);
   }
 
+  if (!ensureAdminMode(player)) {
+    return true;
+  }
+
   if (normalized === "heal") {
     return healCommand(player, rawArgs);
+  }
+
+  if (normalized === "armor") {
+    return armorCommand(player, rawArgs);
   }
 
   if (normalized === "revive") {
@@ -78,6 +96,34 @@ export async function handleAdminCommand(player: RageMpPlayer, command: string, 
     return vehicleCommand(player, rawArgs);
   }
 
+  if (normalized === "dl") {
+    return vehicleDebugCommand(player);
+  }
+
+  if (normalized === "delveh") {
+    return deleteVehicleCommand(player, rawArgs);
+  }
+
+  if (normalized === "getveh") {
+    return getVehicleCommand(player, rawArgs);
+  }
+
+  if (normalized === "tmute") {
+    return ticketMuteCommand(player, rawArgs);
+  }
+
+  if (normalized === "tunmute") {
+    return ticketUnmuteCommand(player, rawArgs);
+  }
+
+  if (normalized === "mute") {
+    return chatMuteCommand(player, rawArgs);
+  }
+
+  if (normalized === "unmute") {
+    return chatUnmuteCommand(player, rawArgs);
+  }
+
   return false;
 }
 
@@ -92,6 +138,7 @@ export async function sendAdminPanelData(player: RageMpPlayer) {
   }
 
   const permissions = await listAdminCommandPermissions();
+  const tickets = await listOpenSupportTicketsForAdmin(session.account.adminLevel);
   const onlineSessions = listSessions();
   const onlineAccountIds = new Set(onlineSessions.map(({ session: onlineSession }) => onlineSession.account.id));
   const adminAccounts = await listAdminAccounts();
@@ -124,6 +171,33 @@ export async function sendAdminPanelData(player: RageMpPlayer) {
       admins,
       players,
       commands: permissions.filter((permission) => permissionKeys.includes(permission.command)),
+      tickets: tickets.map((ticket) => ({
+        id: ticket.id,
+        characterId: ticket.characterId,
+        accountId: ticket.accountId,
+        characterName: ticket.characterName,
+        category: ticket.category,
+        subject: ticket.subject,
+        message: ticket.message,
+        status: ticket.status,
+        priority: ticket.priority,
+        assignedAdminAccountId: ticket.assignedAdminAccountId,
+        assignedAdminName: ticket.assignedAdminName,
+        escalatedToLevel: ticket.escalatedToLevel,
+        ownerOnline: Boolean(findOnlineCharacter(ticket.characterId)),
+        createdAt: ticket.createdAt.toISOString(),
+        updatedAt: ticket.updatedAt.toISOString(),
+        messages: ticket.messages.map((message) => ({
+          id: message.id,
+          ticketId: message.ticketId,
+          authorCharacterId: message.authorCharacterId,
+          authorAccountId: message.authorAccountId,
+          authorName: message.authorName,
+          authorRole: message.authorRole,
+          message: message.message,
+          createdAt: message.createdAt.toISOString()
+        }))
+      })),
       currentAdminLevel: session.account.adminLevel,
       adminMode: Boolean(session.adminMode),
       canManagePermissions: session.account.adminLevel >= 10
@@ -135,6 +209,10 @@ export async function sendAdminPanelData(player: RageMpPlayer) {
 export async function updateAdminCommandPermission(player: RageMpPlayer, payloadJson: string) {
   const session = getSession(player);
   if (!session || session.account.adminLevel < 10) {
+    return;
+  }
+  if (!session.adminMode) {
+    sendAdminFeedback(player, "Aktiviere zuerst den Adminmodus mit /admin.");
     return;
   }
 
@@ -201,7 +279,9 @@ function toggleAdminMode(player: RageMpPlayer) {
   setSession(player, { ...session, adminMode });
   if (!adminMode) {
     player.call("unique:client:stopNoClip");
+    player.call("unique:client:setVehicleDebug", [false]);
   }
+  void sendHudData(player);
   sendAdminFeedback(player, `Adminmodus ${adminMode ? "aktiviert" : "deaktiviert"}.`);
   return true;
 }
@@ -209,10 +289,19 @@ function toggleAdminMode(player: RageMpPlayer) {
 function healCommand(player: RageMpPlayer, args: string[]) {
   const target = findTarget(args[0]) ?? player;
   target.health = 100;
-  target.armour = 100;
   sendAdminFeedback(player, `${getDisplayName(target)} geheilt.`);
   if (target.id !== player.id) {
     sendAdminFeedback(target, `Du wurdest von ${getDisplayName(player)} geheilt.`, player);
+  }
+  return true;
+}
+
+function armorCommand(player: RageMpPlayer, args: string[]) {
+  const target = findTarget(args[0]) ?? player;
+  target.armour = 100;
+  sendAdminFeedback(player, `${getDisplayName(target)} hat Armor erhalten.`);
+  if (target.id !== player.id) {
+    sendAdminFeedback(target, `Du hast von ${getDisplayName(player)} Armor erhalten.`, player);
   }
   return true;
 }
@@ -263,7 +352,7 @@ async function balanceCommand(player: RageMpPlayer, args: string[], wallet: "cas
 
   if (updated) {
     setSession(parsed.target, { ...session, character: updated });
-    sendHudData(parsed.target);
+    void sendHudData(parsed.target);
   }
 
   sendAdminFeedback(player, `${wallet === "cash" ? "Bargeld" : "Bank"} fuer ${getDisplayName(parsed.target)}: ${nextAmount}.`);
@@ -312,6 +401,11 @@ async function setAdminCommand(player: RageMpPlayer, args: string[]) {
   const updated = await setAccountAdminLevel(session.account.id, level);
   if (updated) {
     setSession(target, { ...session, account: updated, adminMode: level > 0 ? session.adminMode : false });
+    if (level <= 0) {
+      target.call("unique:client:stopNoClip");
+      target.call("unique:client:setVehicleDebug", [false]);
+    }
+    void sendHudData(target);
   }
 
   sendAdminFeedback(player, `Adminlevel fuer ${getDisplayName(target)} auf ${level} gesetzt.`);
@@ -385,17 +479,240 @@ function vehicleCommand(player: RageMpPlayer, args: string[]) {
       dimension: player.dimension
     });
     vehicle.dimension = player.dimension;
+    vehicle.setVariable?.("unique:vehicle:modelName", parsed.model);
 
     if (typeof player.putIntoVehicle === "function") {
       player.putIntoVehicle(vehicle, 0);
     }
 
-    sendAdminFeedback(player, `Fahrzeug ${parsed.model} gespawnt (${parsed.plate}).`);
+    sendAdminFeedback(player, `Fahrzeug ${parsed.model} gespawnt: ID ${getVehicleId(vehicle)} (${parsed.plate}).`);
   } catch {
     sendAdminFeedback(player, `Fahrzeug konnte nicht gespawnt werden: ${parsed.model}.`);
   }
 
   return true;
+}
+
+function vehicleDebugCommand(player: RageMpPlayer) {
+  if (!ensureAdminMode(player)) {
+    return true;
+  }
+
+  player.call("unique:client:toggleVehicleDebug");
+  return true;
+}
+
+function deleteVehicleCommand(player: RageMpPlayer, args: string[]) {
+  if (!ensureAdminMode(player)) {
+    return true;
+  }
+
+  const vehicleId = Number(args[0]);
+  if (!Number.isInteger(vehicleId) || vehicleId < 0) {
+    sendAdminFeedback(player, "Nutzung: /delveh <fahrzeug-id>");
+    return true;
+  }
+
+  const vehicle = (mp as unknown as { vehicles: { at?: (id: number) => RageMpVehicle | undefined } }).vehicles.at?.(vehicleId);
+  if (!vehicle) {
+    sendAdminFeedback(player, `Fahrzeug ID ${vehicleId} nicht gefunden.`);
+    return true;
+  }
+
+  try {
+    vehicle.destroy?.();
+    sendAdminFeedback(player, `Fahrzeug ID ${vehicleId} geloescht.`);
+  } catch {
+    sendAdminFeedback(player, `Fahrzeug ID ${vehicleId} konnte nicht geloescht werden.`);
+  }
+
+  return true;
+}
+
+function getVehicleCommand(player: RageMpPlayer, args: string[]) {
+  if (!ensureAdminMode(player)) {
+    return true;
+  }
+
+  const vehicleId = Number(args[0]);
+  if (!Number.isInteger(vehicleId) || vehicleId < 0) {
+    sendAdminFeedback(player, "Nutzung: /getveh <fahrzeug-id>");
+    return true;
+  }
+
+  const vehicle = (mp as unknown as { vehicles: { at?: (id: number) => RageMpVehicle | undefined } }).vehicles.at?.(vehicleId);
+  if (!vehicle) {
+    sendAdminFeedback(player, `Fahrzeug ID ${vehicleId} nicht gefunden.`);
+    return true;
+  }
+
+  const position = player.position;
+  if (!position) {
+    sendAdminFeedback(player, "Deine Position konnte nicht gelesen werden.");
+    return true;
+  }
+
+  const heading = Number.isFinite(player.heading) ? Number(player.heading) : 0;
+  const radians = heading * Math.PI / 180;
+  vehicle.position = new mp.Vector3(
+    position.x - Math.sin(radians) * 4.0,
+    position.y + Math.cos(radians) * 4.0,
+    position.z + 0.5
+  );
+  vehicle.dimension = player.dimension;
+  vehicle.heading = heading;
+
+  sendAdminFeedback(player, `Fahrzeug ID ${vehicleId} zu dir teleportiert.`);
+  return true;
+}
+
+async function ticketMuteCommand(player: RageMpPlayer, args: string[]) {
+  if (!ensureAdminMode(player)) {
+    return true;
+  }
+
+  const target = findTarget(args[0]);
+  const duration = parseTicketMuteDuration(args[1]);
+  if (!target || !duration) {
+    sendAdminFeedback(player, "Nutzung: /tmute <charId> <dauer> <grund>");
+    return true;
+  }
+
+  const targetSession = getSession(target);
+  const adminSession = getSession(player);
+  if (!targetSession?.character || !targetSession.account) {
+    sendAdminFeedback(player, "Zielspieler ist nicht eingeloggt.");
+    return true;
+  }
+
+  const reason = args.slice(2).join(" ").trim() || "Kein Grund angegeben";
+  const expiresAt = new Date(Date.now() + duration.ms);
+  await createSupportTicketMute({
+    characterId: targetSession.character.id,
+    accountId: targetSession.account.id,
+    mutedByAccountId: adminSession?.account.id ?? null,
+    mutedByName: getDisplayName(player),
+    reason,
+    expiresAt
+  });
+
+  const message = `hat ${getDisplayName(target)} vom Support ausgeschlossen. Grund: ${reason}`;
+  broadcastAdminChat(message, player);
+  target.call("unique:client:supportMuteNotice", [
+    JSON.stringify({
+      administrator: getDisplayName(player),
+      reason,
+      expiresAt: expiresAt.toISOString()
+    })
+  ]);
+  return true;
+}
+
+async function ticketUnmuteCommand(player: RageMpPlayer, args: string[]) {
+  if (!ensureAdminMode(player)) {
+    return true;
+  }
+
+  const target = findTarget(args[0]);
+  if (!target) {
+    sendAdminFeedback(player, "Nutzung: /tunmute <charId>");
+    return true;
+  }
+
+  const targetSession = getSession(target);
+  if (!targetSession?.character) {
+    sendAdminFeedback(player, "Zielspieler ist nicht eingeloggt.");
+    return true;
+  }
+
+  await clearSupportTicketMute(targetSession.character.id);
+  const message = `hat ${getDisplayName(target)} wieder fuer den Support freigegeben.`;
+  broadcastAdminChat(message, player);
+  return true;
+}
+
+async function chatMuteCommand(player: RageMpPlayer, args: string[]) {
+  if (!ensureAdminMode(player)) {
+    return true;
+  }
+
+  const target = findTarget(args[0]);
+  const targetSession = target ? getSession(target) : null;
+  const adminSession = getSession(player);
+  if (!target || !targetSession?.character || !targetSession.account) {
+    sendAdminFeedback(player, "Nutzung: /mute <charId> <dauer> <grund> oder /mute <eigeneId> zum Entmuten als Admin");
+    return true;
+  }
+
+  const isSelfUnmute = target.id === player.id && adminSession && adminSession.account.adminLevel > 0 && args.length === 1;
+  if (isSelfUnmute) {
+    await clearChatMute(targetSession.character.id);
+    sendAdminFeedback(player, "Du hast deinen Chat-Mute aufgehoben.");
+    return true;
+  }
+
+  const duration = parseTicketMuteDuration(args[1]);
+  if (!duration) {
+    sendAdminFeedback(player, "Nutzung: /mute <charId> <dauer> <grund>");
+    return true;
+  }
+
+  const reason = args.slice(2).join(" ").trim() || "Kein Grund angegeben";
+  const expiresAt = new Date(Date.now() + duration.ms);
+  await createChatMute({
+    characterId: targetSession.character.id,
+    accountId: targetSession.account.id,
+    mutedByAccountId: adminSession?.account.id ?? null,
+    mutedByName: getDisplayName(player),
+    reason,
+    expiresAt
+  });
+
+  broadcastAdminChat(`hat ${getDisplayName(target)} vom Chat ausgeschlossen. Grund: ${reason}`, player);
+  target.call("unique:client:chatMuteNotice", [
+    JSON.stringify({
+      administrator: getDisplayName(player),
+      reason,
+      expiresAt: expiresAt.toISOString()
+    })
+  ]);
+  return true;
+}
+
+async function chatUnmuteCommand(player: RageMpPlayer, args: string[]) {
+  if (!ensureAdminMode(player)) {
+    return true;
+  }
+
+  const target = findTarget(args[0]);
+  if (!target) {
+    sendAdminFeedback(player, "Nutzung: /unmute <charId>");
+    return true;
+  }
+
+  const targetSession = getSession(target);
+  if (!targetSession?.character) {
+    sendAdminFeedback(player, "Zielspieler ist nicht eingeloggt.");
+    return true;
+  }
+
+  await clearChatMute(targetSession.character.id);
+  broadcastAdminChat(`hat ${getDisplayName(target)} wieder fuer den Chat freigegeben.`, player);
+  return true;
+}
+
+function ensureAdminMode(player: RageMpPlayer) {
+  const session = getSession(player);
+  if (!session?.adminMode) {
+    sendAdminFeedback(player, "Aktiviere zuerst den Adminmodus mit /admin.");
+    return false;
+  }
+
+  return true;
+}
+
+function getVehicleId(vehicle: RageMpVehicle) {
+  return Number.isInteger(vehicle.id) ? vehicle.id : "?";
 }
 
 function parseVehicleArgs(args: string[]) {
@@ -438,6 +755,31 @@ function normalizePlate(value: string) {
 
 function isNumericToken(value?: string) {
   return typeof value === "string" && /^-?\d+$/.test(value);
+}
+
+function parseTicketMuteDuration(value?: string) {
+  const match = String(value ?? "").trim().toLowerCase().match(/^(\d+)([smh])?$/);
+  if (!match) {
+    return null;
+  }
+
+  const amount = Number(match[1]);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return null;
+  }
+
+  const unit = match[2] ?? "m";
+  const multiplier = unit === "s" ? 1000 : unit === "h" ? 60 * 60 * 1000 : 60 * 1000;
+  return { ms: Math.trunc(amount) * multiplier };
+}
+
+function formatTicketMuteDate(date: Date) {
+  return date.toLocaleString("de-DE", {
+    day: "2-digit",
+    month: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
 }
 
 function parseTargetAmount(player: RageMpPlayer, args: string[]) {
@@ -508,6 +850,10 @@ function getDisplayName(player: RageMpPlayer) {
 
 function sendAdminFeedback(target: RageMpPlayer, message: string, authorPlayer = target) {
   target.call("unique:client:chatPush", [JSON.stringify({ tone: "admin", author: getDisplayName(authorPlayer), text: message })]);
+}
+
+function broadcastAdminChat(message: string, authorPlayer: RageMpPlayer) {
+  listOnlinePlayers().forEach((target) => sendAdminFeedback(target, message, authorPlayer));
 }
 
 function parsePayload(payloadJson: string) {

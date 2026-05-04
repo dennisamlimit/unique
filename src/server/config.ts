@@ -1,6 +1,7 @@
 export const config = {
   databaseUrl: process.env.DATABASE_URL ?? "postgres://unique:unique@localhost:5432/unique",
   thirdCharacterPrice: Number(process.env.UNIQUE_THIRD_CHARACTER_PRICE ?? 500),
+  maxPlayers: Number(process.env.UNIQUE_MAX_PLAYERS ?? 100),
   authDimensionOffset: 5000,
   creator: {
     x: -1037.71,

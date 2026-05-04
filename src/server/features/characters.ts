@@ -173,7 +173,7 @@ export async function chooseRoleplaySpawn(player: RageMpPlayer, payloadJson: str
       character: selectedCharacter
     })
   ]);
-  broadcastHudData();
+  void broadcastHudData();
   player.call("unique:client:chatPush", [
     JSON.stringify({
       tone: "info",
@@ -247,7 +247,7 @@ async function enterWorldDead(player: RageMpPlayer, character: CharacterRecord) 
   player.armour = 0;
   player.call("unique:client:enterWorld", [JSON.stringify({ character })]);
   player.call("unique:client:deathShow", [JSON.stringify({ seconds: 150 })]);
-  broadcastHudData();
+  void broadcastHudData();
 }
 
 function buildSpawnOptions(lastSpawn: { x: number; y: number; z: number; heading: number } | null) {

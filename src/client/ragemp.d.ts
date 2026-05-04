@@ -12,6 +12,16 @@ interface RageMpBrowser {
 }
 
 interface RageMpVehicle {
+  remoteId?: number;
+  model?: number;
+  position: RageMpVector3;
+  getHealth?(): number;
+  getVariable?(key: string): unknown;
+}
+
+interface RageMpRemotePlayer {
+  remoteId?: number;
+  handle?: number;
   position: RageMpVector3;
 }
 
@@ -31,8 +41,11 @@ interface RageMpClient {
     new: (url: string) => RageMpBrowser;
   };
   players: {
+    atRemoteId?(remoteId: number): RageMpRemotePlayer | null;
+    toArray?(): RageMpRemotePlayer[];
     local: {
       model: number;
+      handle?: number;
       heading?: number;
       vehicle?: RageMpVehicle | null;
       freezePosition(toggle: boolean): void;
@@ -79,6 +92,17 @@ interface RageMpClient {
     };
     graphics: {
       notify(message: string): void;
+      drawText(
+        text: string,
+        position: [number, number, number] | RageMpVector3,
+        options: {
+          font?: number;
+          color?: [number, number, number, number];
+          scale?: [number, number];
+          outline?: boolean;
+          centre?: boolean;
+        }
+      ): void;
       drawMarker(
         type: number,
         x: number,
@@ -119,6 +143,9 @@ interface RageMpClient {
       getGameplayCamRot?(rotationOrder: number): RageMpVector3;
       getGameplayCamCoord?(): RageMpVector3;
     };
+    network?: {
+      setInSpectatorMode?(toggle: boolean, targetHandle: number): void;
+    };
     ui: {
       getLabelText?(key: string): string;
       getStreetNameFromHashKey?(hash: number): string;
@@ -127,6 +154,9 @@ interface RageMpClient {
       getFirstBlipInfoId?(blipSprite: number): number;
       doesBlipExist?(blip: number): boolean;
       getBlipInfoIdCoord?(blip: number): RageMpVector3;
+    };
+    vehicle?: {
+      getDisplayNameFromVehicleModel?(model: number): string;
     };
     zone?: {
       getNameOfZone?(x: number, y: number, z: number): string;
