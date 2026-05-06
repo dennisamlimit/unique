@@ -21,8 +21,10 @@ interface RageMpVehicle {
 
 interface RageMpRemotePlayer {
   remoteId?: number;
+  name?: string;
   handle?: number;
   position: RageMpVector3;
+  getVariable?(key: string): unknown;
 }
 
 interface RageMpEntityOverlayBatch {
@@ -136,7 +138,9 @@ interface RageMpClient {
       getGroundZFor3dCoord(x: number, y: number, z: number, groundZ: number, ignoreWater: boolean): number;
     };
     player: {
+      playerId?(): number;
       setModel(model: number): void;
+      setRunSprintMultiplierFor?(playerId: number, multiplier: number): void;
     };
     cam: {
       renderScriptCams(toggle: boolean, ease: boolean, easeTime: number, p3: boolean, p4: boolean): void;

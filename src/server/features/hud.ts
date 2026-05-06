@@ -8,7 +8,7 @@ export async function sendHudData(player: RageMpPlayer) {
     return;
   }
 
-  const tickets = session.account.adminLevel > 0 && session.adminMode ? await countOpenSupportTickets() : 0;
+  const tickets = session.character.adminLevel > 0 && session.adminMode ? await countOpenSupportTickets() : 0;
 
   player.call("unique:client:hudData", [
     JSON.stringify({

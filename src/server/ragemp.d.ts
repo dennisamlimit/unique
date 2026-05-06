@@ -21,6 +21,7 @@ interface RageMpPlayer {
   outputChatBox(message: string): void;
   kick(reason?: string): void;
   spawn(position: RageMpVector3): void;
+  setVariable?(key: string, value: unknown): void;
   putIntoVehicle?(vehicle: RageMpVehicle, seat: number): void;
 }
 

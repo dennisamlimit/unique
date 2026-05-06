@@ -9,12 +9,14 @@ export default {
       },
       colors: {
         unique: {
-          ink: "#111318",
-          panel: "#191d24",
-          line: "#2f3742",
-          teal: "#1db7a6",
-          gold: "#f1b84b",
-          danger: "#e85d75"
+          ink: "rgb(var(--unique-ink-rgb) / <alpha-value>)",
+          panel: "rgb(var(--unique-panel-rgb) / <alpha-value>)",
+          line: "rgb(var(--unique-line-rgb) / <alpha-value>)",
+          bg: "rgb(var(--unique-bg-rgb) / <alpha-value>)",
+          deep: "rgb(var(--unique-deep-rgb) / <alpha-value>)",
+          teal: "rgb(var(--unique-teal-rgb) / <alpha-value>)",
+          gold: "rgb(var(--unique-gold-rgb) / <alpha-value>)",
+          danger: "rgb(var(--unique-danger-rgb) / <alpha-value>)"
         }
       }
     }

@@ -2,6 +2,25 @@
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  --unique-ink: #111318;
+  --unique-panel: #191d24;
+  --unique-line: #2f3742;
+  --unique-bg: #070a0f;
+  --unique-deep: #05070a;
+  --unique-teal: #1db7a6;
+  --unique-gold: #f1b84b;
+  --unique-danger: #e85d75;
+  --unique-ink-rgb: 17 19 24;
+  --unique-panel-rgb: 25 29 36;
+  --unique-line-rgb: 47 55 66;
+  --unique-bg-rgb: 7 10 15;
+  --unique-deep-rgb: 5 7 10;
+  --unique-teal-rgb: 29 183 166;
+  --unique-gold-rgb: 241 184 75;
+  --unique-danger-rgb: 232 93 117;
+}
+
 html,
 body,
 #root {
@@ -27,7 +46,7 @@ textarea {
 
 * {
   scrollbar-width: thin;
-  scrollbar-color: rgba(241, 184, 75, 0.72) rgba(0, 0, 0, 0.28);
+  scrollbar-color: rgb(var(--unique-gold-rgb) / 0.78) rgb(var(--unique-deep-rgb) / 0.42);
 }
 
 *::-webkit-scrollbar {
@@ -36,24 +55,24 @@ textarea {
 }
 
 *::-webkit-scrollbar-track {
-  background: rgba(0, 0, 0, 0.28);
+  background: rgb(var(--unique-deep-rgb) / 0.42);
   border-radius: 999px;
 }
 
 *::-webkit-scrollbar-thumb {
-  background: linear-gradient(180deg, rgba(241, 184, 75, 0.95), rgba(29, 183, 166, 0.72));
+  background: linear-gradient(180deg, rgb(var(--unique-gold-rgb) / 0.95), rgb(var(--unique-teal-rgb) / 0.72));
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 999px;
 }
 
 *::-webkit-scrollbar-thumb:hover {
-  background: linear-gradient(180deg, rgba(255, 208, 119, 1), rgba(36, 216, 196, 0.92));
+  background: linear-gradient(180deg, rgb(var(--unique-gold-rgb) / 1), rgb(var(--unique-teal-rgb) / 0.92));
 }
 
 .disclaimer-tiles {
   background-image:
-    linear-gradient(135deg, rgba(46, 111, 255, 0.16) 0 1px, transparent 1px 44px),
-    linear-gradient(45deg, rgba(241, 184, 75, 0.12) 0 1px, transparent 1px 44px),
+    linear-gradient(135deg, rgb(var(--unique-teal-rgb) / 0.16) 0 1px, transparent 1px 44px),
+    linear-gradient(45deg, rgb(var(--unique-gold-rgb) / 0.12) 0 1px, transparent 1px 44px),
     linear-gradient(rgba(255, 255, 255, 0.055) 1px, transparent 1px),
     linear-gradient(90deg, rgba(255, 255, 255, 0.055) 1px, transparent 1px);
   background-size: 88px 88px, 88px 88px, 44px 44px, 44px 44px;
@@ -62,9 +81,35 @@ textarea {
 
 .app-grid {
   background-image:
-    linear-gradient(rgba(46, 111, 255, 0.12) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(241, 184, 75, 0.08) 1px, transparent 1px);
+    linear-gradient(rgb(var(--unique-teal-rgb) / 0.12) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(var(--unique-gold-rgb) / 0.08) 1px, transparent 1px);
   background-size: 54px 54px;
+}
+
+.theme-disclaimer-gradient {
+  background:
+    radial-gradient(circle at 22% 18%, rgb(var(--unique-teal-rgb) / 0.24), transparent 32%),
+    radial-gradient(circle at 78% 72%, rgb(var(--unique-gold-rgb) / 0.16), transparent 30%),
+    linear-gradient(135deg, rgb(var(--unique-deep-rgb) / 0.45), rgb(0 0 0 / 0.90));
+}
+
+.theme-app-gradient {
+  background:
+    radial-gradient(circle at top left, rgb(var(--unique-teal-rgb) / 0.20), transparent 34%),
+    radial-gradient(circle at 80% 22%, rgb(var(--unique-gold-rgb) / 0.12), transparent 30%),
+    linear-gradient(115deg, rgb(var(--unique-ink-rgb) / 0.94), rgb(var(--unique-ink-rgb) / 0.52) 50%, rgb(var(--unique-deep-rgb) / 0.82));
+}
+
+.theme-menu-gradient {
+  background:
+    linear-gradient(115deg, rgb(var(--unique-bg-rgb) / 0.98), rgb(var(--unique-ink-rgb) / 0.92) 52%, rgb(var(--unique-deep-rgb) / 0.98));
+}
+
+.theme-admin-gradient {
+  background:
+    radial-gradient(circle at 14% 16%, rgb(var(--unique-teal-rgb) / 0.18), transparent 30%),
+    radial-gradient(circle at 84% 20%, rgb(var(--unique-gold-rgb) / 0.12), transparent 28%),
+    linear-gradient(115deg, rgb(var(--unique-ink-rgb) / 0.96), rgb(var(--unique-ink-rgb) / 0.76) 48%, rgb(var(--unique-deep-rgb) / 0.92));
 }
 
 .disclaimer-progress {
@@ -94,6 +139,12 @@ textarea {
   to {
     opacity: 1;
     transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes fadeIn {
+  to {
+    opacity: 0.9;
   }
 }
 

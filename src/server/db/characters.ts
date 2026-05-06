@@ -8,6 +8,7 @@ export interface CharacterRecord {
   firstName: string;
   lastName: string;
   level: number;
+  adminLevel: number;
   experience: number;
   organization: string;
   organizationRank: string;
@@ -65,6 +66,7 @@ function mapCharacter(row: any): CharacterRecord {
     firstName: row.first_name,
     lastName: row.last_name,
     level: row.level,
+    adminLevel: row.admin_level ?? 0,
     experience: row.experience ?? 0,
     organization: row.organization ?? "Zivilist",
     organizationRank: row.organization_rank ?? "Keine",
@@ -94,6 +96,11 @@ export async function findCharacter(accountId: number, characterId: number) {
   return result.rows[0] ? mapCharacter(result.rows[0]) : null;
 }
 
+export async function findCharacterById(characterId: number) {
+  const result = await pool.query("SELECT * FROM characters WHERE id = $1 AND is_draft = false", [characterId]);
+  return result.rows[0] ? mapCharacter(result.rows[0]) : null;
+}
+
 export async function setCharacterCash(characterId: number, cash: number) {
   const result = await pool.query("UPDATE characters SET cash = $2, updated_at = NOW() WHERE id = $1 RETURNING *", [
     characterId,
@@ -108,6 +115,33 @@ export async function setCharacterBankBalance(characterId: number, bankBalance: 
     bankBalance
   ]);
   return result.rows[0] ? mapCharacter(result.rows[0]) : null;
+}
+
+export async function setCharacterAdminLevel(characterId: number, adminLevel: number) {
+  const result = await pool.query("UPDATE characters SET admin_level = $2, updated_at = NOW() WHERE id = $1 RETURNING *", [
+    characterId,
+    adminLevel
+  ]);
+  return result.rows[0] ? mapCharacter(result.rows[0]) : null;
+}
+
+export async function listAdminCharacters() {
+  const result = await pool.query(
+    `
+      SELECT
+        c.*,
+        a.social_club_name
+      FROM characters c
+      JOIN accounts a ON a.id = c.account_id
+      WHERE c.admin_level > 0 AND c.is_draft = false
+      ORDER BY c.admin_level DESC, c.first_name ASC, c.last_name ASC
+    `
+  );
+
+  return result.rows.map((row) => ({
+    character: mapCharacter(row),
+    socialClubName: row.social_club_name as string
+  }));
 }
 
 export async function updateCharacterPosition(characterId: number, position: CharacterRecord["position"]) {

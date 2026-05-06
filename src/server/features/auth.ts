@@ -1,6 +1,8 @@
 import bcrypt from "bcryptjs";
-import { createAccount, findAccountByEmail, findAccountBySocialClubId } from "../db/accounts";
+import { createAccount, findAccountByEmail, findAccountBySocialClubId, setAccountUiTheme } from "../db/accounts";
 import { listCharacters } from "../db/characters";
+import { findActiveAccountBan } from "../db/punishments";
+import { kickAfterAdminScreen, sendPunishmentScreen } from "./adminScreens";
 import { getSession, setSession } from "./session";
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -19,7 +21,8 @@ export async function sendAuthBootstrap(player: RageMpPlayer) {
     JSON.stringify({
       socialClubName: identity.socialClubName,
       socialClubId: identity.socialClubId,
-      knownEmail: account?.email ?? null
+      knownEmail: account?.email ?? null,
+      uiTheme: account?.uiTheme ?? null
     })
   ]);
 }
@@ -86,8 +89,31 @@ export async function loginAccount(player: RageMpPlayer, payloadJson: string) {
 
 export async function sendCharacters(player: RageMpPlayer, accountId: number) {
   const session = getSession(player);
+  if (session?.account) {
+    const accountBan = await findActiveAccountBan(session.account.id);
+    if (accountBan) {
+      sendPunishmentScreen(player, accountBan);
+      kickAfterAdminScreen(player, "Account gebannt.");
+      return;
+    }
+  }
+
   const characters = await listCharacters(accountId);
-  player.call("unique:client:characters", [JSON.stringify({ characters, uniqueCoins: session?.account.uniqueCoins ?? 0 })]);
+  player.call("unique:client:characters", [JSON.stringify({ characters, uniqueCoins: session?.account.uniqueCoins ?? 0, uiTheme: session?.account.uiTheme ?? null })]);
+}
+
+export async function saveUiTheme(player: RageMpPlayer, payloadJson: string) {
+  const session = getSession(player);
+  if (!session) {
+    return;
+  }
+
+  const payload = parsePayload(payloadJson);
+  const uiTheme = JSON.stringify(payload).slice(0, 4000);
+  const updated = await setAccountUiTheme(session.account.id, uiTheme);
+  if (updated) {
+    setSession(player, { ...session, account: updated });
+  }
 }
 
 function sendAuthError(player: RageMpPlayer, message: string) {

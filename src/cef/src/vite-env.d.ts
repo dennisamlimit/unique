@@ -16,7 +16,7 @@ type UiMessage =
   | { type: "creator:start"; payload: CreatorStartPayload }
   | { type: "characters:list"; payload: CharacterListPayload }
   | { type: "spawn:options"; payload: SpawnOptionsPayload }
-  | { type: "world:enter"; payload: { character: CharacterInfo } }
+  | { type: "world:enter"; payload: { character: CharacterInfo; uiTheme?: string | null } }
   | { type: "hud:data"; payload: HudDataPayload }
   | { type: "hud:location"; payload: HudLocationPayload }
   | { type: "chat:push"; payload: ChatMessage }
@@ -27,20 +27,34 @@ type UiMessage =
   | { type: "support:tickets"; payload: { tickets: SupportTicket[] } }
   | { type: "support:muteNotice"; payload: SupportMuteNoticePayload }
   | { type: "chat:muteNotice"; payload: ChatMuteNoticePayload }
+  | { type: "admin:screen"; payload: AdminScreenNoticePayload }
+  | { type: "admin:jailStatus"; payload: AdminJailStatusPayload }
   | { type: "death:show"; payload: DeathScreenPayload }
   | { type: "death:hide"; payload: Record<string, never> }
   | { type: "admin:open"; payload: Record<string, never> }
   | { type: "admin:close"; payload: Record<string, never> }
+  | { type: "inventory:open"; payload: Record<string, never> }
+  | { type: "inventory:close"; payload: Record<string, never> }
+  | { type: "inventory:nearbyPlayers"; payload: InventoryNearbyPlayersPayload }
   | { type: "admin:data"; payload: AdminPanelPayload };
 
 interface AuthBootstrap {
   socialClubName: string;
   socialClubId: string;
   knownEmail: string | null;
+  uiTheme?: string | null;
 }
 
 interface ErrorPayload {
   message: string;
+}
+
+interface InventoryNearbyPlayersPayload {
+  players: Array<{
+    remoteId: number;
+    name: string;
+    distance: number;
+  }>;
 }
 
 interface CharacterInfo {
@@ -62,6 +76,7 @@ interface CharacterInfo {
 interface CharacterListPayload {
   characters: CharacterInfo[];
   uniqueCoins: number;
+  uiTheme?: string | null;
 }
 
 interface CreatorStartPayload {
@@ -124,6 +139,28 @@ interface ChatMuteNoticePayload {
   expiresAt: string;
 }
 
+interface AdminScreenNoticePayload {
+  type: "amsg" | "ban" | "iban" | "jail" | "warn" | "mute";
+  title: string;
+  administrator: string;
+  administratorId: number | null;
+  targetName?: string;
+  reason?: string;
+  message?: string;
+  duration?: string;
+  expiresAt?: string;
+  createdAt?: string;
+}
+
+interface AdminJailStatusPayload {
+  active: boolean;
+  type?: "jail" | "warn";
+  administrator?: string;
+  reason?: string;
+  expiresAt?: string;
+  durationSeconds?: number;
+}
+
 interface AdminPanelPayload {
   admins: Array<{ accountId: number; characterId: number | null; name: string; level: number; online: boolean }>;
   players: Array<{
@@ -136,10 +173,24 @@ interface AdminPanelPayload {
     uniqueCoins: number;
   }>;
   commands: Array<{ command: string; minLevel: number }>;
+  logs: AdminLogEntry[];
   tickets: SupportTicket[];
   currentAdminLevel: number;
   adminMode: boolean;
   canManagePermissions: boolean;
+  canViewLogs: boolean;
+}
+
+interface AdminLogEntry {
+  id: number;
+  adminAccountId: number | null;
+  adminCharacterId: number | null;
+  adminName: string;
+  command: string;
+  rawArgs: string;
+  details: string | null;
+  success: boolean;
+  createdAt: string;
 }
 
 interface SupportTicket {

@@ -1,6 +1,8 @@
 import {
+  AlertTriangle,
   BadgeCent,
   Banknote,
+  Ban,
   BarChart3,
   Briefcase,
   Brush,
@@ -18,6 +20,7 @@ import {
   Lock,
   LogIn,
   MapPin,
+  MessageSquare,
   Palette,
   Package,
   Plane,
@@ -42,13 +45,20 @@ import {
   Wrench,
   X
 } from "lucide-react";
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, type PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from "react";
+import { InventoryUI, type NearbyInventoryPlayer } from "./components/Inventory";
 import { emitToClient, notifyReady } from "./lib/ragemp";
 
 type Screen = "disclaimer" | "auth" | "characters" | "spawn" | "world";
 type AuthMode = "login" | "register";
 type CreatorTab = "identity" | "genetics" | "face" | "details" | "hair" | "clothing";
 type ChatMode = "ic" | "ooc" | "me" | "do" | "try";
+type ThemeColorKey = "ink" | "panel" | "line" | "bg" | "deep" | "teal" | "gold" | "danger";
+
+interface ThemeSettings {
+  preset: string;
+  colors: Record<ThemeColorKey, string>;
+}
 
 const chatModes: ChatMode[] = ["ic", "ooc", "me", "do", "try"];
 const chatModeLabels: Record<ChatMode, string> = {
@@ -58,6 +68,106 @@ const chatModeLabels: Record<ChatMode, string> = {
   do: "DO",
   try: "TRY"
 };
+
+const themeColorFields: Array<{ key: ThemeColorKey; label: string }> = [
+  { key: "gold", label: "Primaer" },
+  { key: "teal", label: "Sekundaer" },
+  { key: "danger", label: "Warnung" },
+  { key: "ink", label: "Flaeche dunkel" },
+  { key: "panel", label: "Panel" },
+  { key: "line", label: "Linien" },
+  { key: "bg", label: "Hintergrund" },
+  { key: "deep", label: "Tiefe" }
+];
+
+const themePresets: Array<{ id: string; label: string; colors: Record<ThemeColorKey, string> }> = [
+  {
+    id: "classic",
+    label: "Original",
+    colors: {
+      ink: "#111318",
+      panel: "#191d24",
+      line: "#2f3742",
+      bg: "#070a0f",
+      deep: "#05070a",
+      teal: "#1db7a6",
+      gold: "#f1b84b",
+      danger: "#e85d75"
+    }
+  },
+  {
+    id: "midnight",
+    label: "Midnight",
+    colors: {
+      ink: "#0d1320",
+      panel: "#151d2d",
+      line: "#2c3a56",
+      bg: "#060912",
+      deep: "#03050a",
+      teal: "#38bdf8",
+      gold: "#fbbf24",
+      danger: "#fb7185"
+    }
+  },
+  {
+    id: "lilac",
+    label: "Flieder",
+    colors: {
+      ink: "#15101d",
+      panel: "#21172f",
+      line: "#4c3a66",
+      bg: "#0b0711",
+      deep: "#050308",
+      teal: "#c084fc",
+      gold: "#f0abfc",
+      danger: "#fb7185"
+    }
+  },
+  {
+    id: "mono-light",
+    label: "Weiss/Grau",
+    colors: {
+      ink: "#2b3038",
+      panel: "#3a404a",
+      line: "#8b95a3",
+      bg: "#15181d",
+      deep: "#0c0e12",
+      teal: "#e5e7eb",
+      gold: "#ffffff",
+      danger: "#f87171"
+    }
+  },
+  {
+    id: "blackout",
+    label: "Schwarz",
+    colors: {
+      ink: "#050505",
+      panel: "#0b0b0d",
+      line: "#252529",
+      bg: "#000000",
+      deep: "#000000",
+      teal: "#9ca3af",
+      gold: "#f5f5f5",
+      danger: "#dc2626"
+    }
+  },
+  {
+    id: "ice",
+    label: "Ice",
+    colors: {
+      ink: "#071016",
+      panel: "#0d1b24",
+      line: "#254255",
+      bg: "#03080c",
+      deep: "#010406",
+      teal: "#67e8f9",
+      gold: "#bae6fd",
+      danger: "#f43f5e"
+    }
+  }
+];
+
+const defaultTheme = themePresets[0];
 
 const hairColors = [
   "#0c0c0c", "#1d1a17", "#281d18", "#3d1f15", "#682e19", "#954b29", "#a35234", "#9b5f3d",
@@ -138,7 +248,116 @@ const defaultAppearance: CharacterAppearance = {
   propTextures: Array.from({ length: 5 }, () => 0)
 };
 
+function loadThemeSettings(): ThemeSettings {
+  try {
+    const stored = window.localStorage.getItem("unique-ui-theme");
+    if (!stored) {
+      return { preset: defaultTheme.id, colors: { ...defaultTheme.colors } };
+    }
+    const parsed = JSON.parse(stored) as Partial<ThemeSettings>;
+    return {
+      preset: parsed.preset ?? "custom",
+      colors: normalizeThemeColors(parsed.colors)
+    };
+  } catch {
+    return { preset: defaultTheme.id, colors: { ...defaultTheme.colors } };
+  }
+}
+
+function normalizeThemeColors(value: unknown): Record<ThemeColorKey, string> {
+  const colors = typeof value === "object" && value ? value as Partial<Record<ThemeColorKey, string>> : {};
+  return themeColorFields.reduce((next, field) => {
+    next[field.key] = normalizeHexColor(colors[field.key], defaultTheme.colors[field.key]);
+    return next;
+  }, {} as Record<ThemeColorKey, string>);
+}
+
+function normalizeHexColor(value: unknown, fallback: string) {
+  const color = String(value ?? "").trim();
+  return /^#[0-9a-fA-F]{6}$/.test(color) ? color.toLowerCase() : fallback;
+}
+
+function applyThemeSettings(theme: ThemeSettings) {
+  const root = document.documentElement;
+  themeColorFields.forEach((field) => {
+    const hex = normalizeHexColor(theme.colors[field.key], defaultTheme.colors[field.key]);
+    root.style.setProperty(`--unique-${field.key}`, hex);
+    root.style.setProperty(`--unique-${field.key}-rgb`, hexToRgbTriplet(hex));
+  });
+}
+
+function hexToRgbTriplet(hex: string) {
+  const normalized = normalizeHexColor(hex, "#000000").slice(1);
+  const number = Number.parseInt(normalized, 16);
+  const red = (number >> 16) & 255;
+  const green = (number >> 8) & 255;
+  const blue = number & 255;
+  return `${red} ${green} ${blue}`;
+}
+
+function hslToHex(hue: number, saturation: number, lightness: number) {
+  const chroma = (1 - Math.abs(2 * lightness - 1)) * saturation;
+  const segment = hue / 60;
+  const x = chroma * (1 - Math.abs(segment % 2 - 1));
+  const match = lightness - chroma / 2;
+  const [red, green, blue] = segment < 1
+    ? [chroma, x, 0]
+    : segment < 2
+      ? [x, chroma, 0]
+      : segment < 3
+        ? [0, chroma, x]
+        : segment < 4
+          ? [0, x, chroma]
+          : segment < 5
+            ? [x, 0, chroma]
+            : [chroma, 0, x];
+
+  return [red, green, blue]
+    .map((value) => Math.round((value + match) * 255).toString(16).padStart(2, "0"))
+    .join("");
+}
+
+const customPickerColors = [
+  "#ffffff", "#d1d5db", "#9ca3af", "#4b5563", "#111827", "#000000",
+  ...[0, 18, 36, 52, 74, 100, 130, 160, 188, 210, 235, 260, 282, 304, 328, 348].flatMap((hue) => [
+    `#${hslToHex(hue, 0.86, 0.68)}`,
+    `#${hslToHex(hue, 0.82, 0.52)}`,
+    `#${hslToHex(hue, 0.76, 0.34)}`
+  ])
+];
+function encodeThemeCode(colors: Record<ThemeColorKey, string>) {
+  const payload = JSON.stringify({ v: 1, colors: normalizeThemeColors(colors) });
+  try {
+    return window.btoa(payload);
+  } catch {
+    return "";
+  }
+}
+
+function decodeThemeCode(code: string) {
+  try {
+    const decoded = window.atob(code.trim());
+    const parsed = JSON.parse(decoded) as { colors?: unknown };
+    return normalizeThemeColors(parsed.colors);
+  } catch {
+    return null;
+  }
+}
+
+function readThemeFromPayload(payload: unknown) {
+  if (typeof payload !== "string" || !payload.trim()) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(payload) as { colors?: unknown };
+    return normalizeThemeColors(parsed.colors);
+  } catch {
+    return null;
+  }
+}
+
 export function App() {
+  const [theme, setTheme] = useState<ThemeSettings>(() => loadThemeSettings());
   const [screen, setScreen] = useState<Screen>("disclaimer");
   const [authMode, setAuthMode] = useState<AuthMode>("register");
   const [bootstrap, setBootstrap] = useState<AuthBootstrap | null>(null);
@@ -164,23 +383,48 @@ export function App() {
   const [supportTickets, setSupportTickets] = useState<SupportTicket[]>([]);
   const [supportMuteNotice, setSupportMuteNotice] = useState<SupportMuteNoticePayload | null>(null);
   const [chatMuteNotice, setChatMuteNotice] = useState<ChatMuteNoticePayload | null>(null);
+  const [adminScreenNotice, setAdminScreenNotice] = useState<AdminScreenNoticePayload | null>(null);
+  const [adminJailStatus, setAdminJailStatus] = useState<AdminJailStatusPayload | null>(null);
   const [currentCharacter, setCurrentCharacter] = useState<CharacterInfo | null>(null);
   const [mainMenuOpen, setMainMenuOpen] = useState(false);
   const [adminOpen, setAdminOpen] = useState(false);
+  const [inventoryOpen, setInventoryOpen] = useState(false);
+  const [inventoryNearbyPlayers, setInventoryNearbyPlayers] = useState<NearbyInventoryPlayer[]>([]);
+  const adminScreenTimer = useRef<number | null>(null);
   const [adminData, setAdminData] = useState<AdminPanelPayload>({
     admins: [],
     players: [],
     commands: [],
+    logs: [],
     tickets: [],
     currentAdminLevel: 0,
     adminMode: false,
-    canManagePermissions: false
+    canManagePermissions: false,
+    canViewLogs: false
   });
+
+  useEffect(() => {
+    applyThemeSettings(theme);
+    try {
+      window.localStorage.setItem("unique-ui-theme", JSON.stringify(theme));
+    } catch {}
+  }, [theme]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      emitToClient("unique:cef:saveUiTheme", { colors: normalizeThemeColors(theme.colors) });
+    }, 650);
+    return () => window.clearTimeout(timer);
+  }, [theme]);
 
   useEffect(() => {
     window.uniqueBridge = {
       receive: (event) => {
         if (event.type === "auth:bootstrap") {
+          const savedTheme = readThemeFromPayload(event.payload.uiTheme);
+          if (savedTheme) {
+            setTheme({ preset: "custom", colors: savedTheme });
+          }
           setBootstrap(event.payload);
           setAuthMode(event.payload.knownEmail ? "login" : "register");
           return;
@@ -203,6 +447,10 @@ export function App() {
           setSpawnOptions(null);
           setCharacters(event.payload.characters);
           setUniqueCoins(event.payload.uniqueCoins ?? 0);
+          const savedTheme = readThemeFromPayload(event.payload.uiTheme);
+          if (savedTheme) {
+            setTheme({ preset: "custom", colors: savedTheme });
+          }
           setScreen("characters");
         }
 
@@ -215,6 +463,10 @@ export function App() {
         }
 
         if (event.type === "world:enter") {
+          const savedTheme = readThemeFromPayload(event.payload.uiTheme);
+          if (savedTheme) {
+            setTheme({ preset: "custom", colors: savedTheme });
+          }
           setMessage("");
           setCreatorDraft(null);
           setSpawnOptions(null);
@@ -254,6 +506,7 @@ export function App() {
 
         if (event.type === "chat:open") {
           setDeadChatOnly(Boolean(event.payload.dead));
+          setInventoryOpen(false);
           setChatOpen(true);
           return;
         }
@@ -261,6 +514,7 @@ export function App() {
         if (event.type === "menu:open") {
           setChatOpen(false);
           setAdminOpen(false);
+          setInventoryOpen(false);
           setSupportTicketResult(null);
           setMainMenuOpen(true);
           emitToClient("unique:cef:requestSupportTickets", {});
@@ -296,12 +550,31 @@ export function App() {
           return;
         }
 
+        if (event.type === "admin:screen") {
+          if (adminScreenTimer.current) {
+            window.clearTimeout(adminScreenTimer.current);
+          }
+          setAdminScreenNotice(event.payload);
+          adminScreenTimer.current = window.setTimeout(() => {
+            setAdminScreenNotice(null);
+            adminScreenTimer.current = null;
+          }, 5000);
+          playPenaltyNoticeSound();
+          return;
+        }
+
+        if (event.type === "admin:jailStatus") {
+          setAdminJailStatus(event.payload.active ? event.payload : null);
+          return;
+        }
+
         if (event.type === "death:show") {
           setDeathScreen(event.payload);
           setDeathScreenKey((current) => current + 1);
           setChatOpen(false);
           setAdminOpen(false);
           setMainMenuOpen(false);
+          setInventoryOpen(false);
           return;
         }
 
@@ -315,6 +588,7 @@ export function App() {
           setChatOpen(false);
           setDeadChatOnly(false);
           setMainMenuOpen(false);
+          setInventoryOpen(false);
           setAdminOpen(true);
           return;
         }
@@ -324,29 +598,66 @@ export function App() {
           return;
         }
 
+        if (event.type === "inventory:open") {
+          setChatOpen(false);
+          setDeadChatOnly(false);
+          setMainMenuOpen(false);
+          setAdminOpen(false);
+          setInventoryOpen(true);
+          return;
+        }
+
+        if (event.type === "inventory:close") {
+          setInventoryOpen(false);
+          return;
+        }
+
+        if (event.type === "inventory:nearbyPlayers") {
+          setInventoryNearbyPlayers(event.payload.players ?? []);
+          return;
+        }
+
         if (event.type === "admin:data") {
           setAdminData(event.payload);
         }
       }
     };
 
-    const preventCopy = (event: Event) => event.preventDefault();
+    const preventCopy = (event: Event) => {
+      if (event.type === "dragstart" && event.target instanceof Element && event.target.closest("[data-inventory-draggable]")) {
+        return;
+      }
+      event.preventDefault();
+    };
+    const sendFocusState = (focused: boolean) => emitToClient("unique:cef:uiFocus", { focused });
+    const updateFocusState = () => {
+      const active = document.activeElement;
+      sendFocusState(Boolean(active && ["INPUT", "TEXTAREA"].includes(active.tagName)));
+    };
+    const handleFocusOut = () => window.setTimeout(updateFocusState, 0);
     document.addEventListener("copy", preventCopy);
     document.addEventListener("cut", preventCopy);
     document.addEventListener("contextmenu", preventCopy);
     document.addEventListener("dragstart", preventCopy);
     document.addEventListener("selectstart", preventCopy);
+    document.addEventListener("focusin", updateFocusState);
+    document.addEventListener("focusout", handleFocusOut);
 
     notifyReady();
     const timer = window.setTimeout(() => setScreen("auth"), 3000);
 
     return () => {
       window.clearTimeout(timer);
+      if (adminScreenTimer.current) {
+        window.clearTimeout(adminScreenTimer.current);
+      }
       document.removeEventListener("copy", preventCopy);
       document.removeEventListener("cut", preventCopy);
       document.removeEventListener("contextmenu", preventCopy);
       document.removeEventListener("dragstart", preventCopy);
       document.removeEventListener("selectstart", preventCopy);
+      document.removeEventListener("focusin", updateFocusState);
+      document.removeEventListener("focusout", handleFocusOut);
       delete window.uniqueBridge;
     };
   }, []);
@@ -384,13 +695,28 @@ export function App() {
       {screen === "world" ? (
         <>
           <WorldHud data={hudData} location={hudLocation} />
-          {!adminOpen && !mainMenuOpen ? <ChatHud messages={chatMessages} open={chatOpen} deadOnly={deadChatOnly} onClose={() => setChatOpen(false)} /> : null}
-          {mainMenuOpen ? <MainMenu character={currentCharacter} hudData={hudData} uniqueCoins={uniqueCoins} supportTicketResult={supportTicketResult} supportTickets={supportTickets} onClose={() => setMainMenuOpen(false)} /> : null}
+          {adminJailStatus ? <AdminJailOverlay status={adminJailStatus} onExpired={() => setAdminJailStatus(null)} /> : null}
+          {!adminOpen && !mainMenuOpen && !inventoryOpen ? <ChatHud messages={chatMessages} open={chatOpen} deadOnly={deadChatOnly} onClose={() => setChatOpen(false)} /> : null}
+          {mainMenuOpen ? (
+            <MainMenu
+              character={currentCharacter}
+              hudData={hudData}
+              uniqueCoins={uniqueCoins}
+              supportTicketResult={supportTicketResult}
+              supportTickets={supportTickets}
+              theme={theme}
+              onThemeChange={(colors) => setTheme({ preset: "custom", colors })}
+              onThemePreset={(preset) => setTheme({ preset: preset.id, colors: { ...preset.colors } })}
+              onClose={() => setMainMenuOpen(false)}
+            />
+          ) : null}
           {adminOpen ? <AdminPanel data={adminData} result={supportTicketResult} onClose={() => setAdminOpen(false)} /> : null}
+          {inventoryOpen ? <InventoryUI nearbyPlayers={inventoryNearbyPlayers} /> : null}
         </>
       ) : null}
       {supportMuteNotice ? <SupportMuteNotice notice={supportMuteNotice} onClose={() => setSupportMuteNotice(null)} /> : null}
       {chatMuteNotice ? <ChatMuteNotice notice={chatMuteNotice} onClose={() => setChatMuteNotice(null)} /> : null}
+      {adminScreenNotice ? <AdminScreenNotice notice={adminScreenNotice} onClose={() => setAdminScreenNotice(null)} /> : null}
       {deathScreen ? <DeathScreen key={deathScreenKey} initialSeconds={deathScreen.seconds} /> : null}
     </main>
   );
@@ -399,9 +725,9 @@ export function App() {
 function DisclaimerBackdrop() {
   return (
     <>
-      <div className="fixed inset-0 bg-[#05070a]" />
+      <div className="fixed inset-0 bg-unique-deep" />
       <div className="disclaimer-tiles fixed inset-0 opacity-70" />
-      <div className="fixed inset-0 bg-[radial-gradient(circle_at_22%_18%,rgba(46,111,255,0.24),transparent_32%),radial-gradient(circle_at_78%_72%,rgba(241,184,75,0.16),transparent_30%),linear-gradient(135deg,rgba(3,5,9,0.45),rgba(0,0,0,0.90))]" />
+      <div className="theme-disclaimer-gradient fixed inset-0" />
       <div className="fixed inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-unique-teal to-transparent" />
       <div className="fixed inset-x-0 bottom-0 h-64 bg-gradient-to-t from-black to-transparent" />
     </>
@@ -416,10 +742,153 @@ function ChatMuteNotice({ notice, onClose }: { notice: ChatMuteNoticePayload; on
   return <PenaltyNotice title="Du wurdest vom Chat ausgeschlossen" tone="Chat-Mute" notice={notice} onClose={onClose} />;
 }
 
+function AdminScreenNotice({ notice }: { notice: AdminScreenNoticePayload; onClose: () => void }) {
+  const Icon = getAdminScreenIcon(notice.type);
+  const headline = notice.type === "amsg" ? `Nachricht vom Administrator (${notice.administrator})` : getAdminScreenHeadline(notice);
+  const message = notice.message ?? getAdminScreenMessage(notice.type);
+
+  return (
+    <div className="fixed inset-0 z-[120] flex h-screen w-screen items-center justify-center overflow-hidden bg-[#05080b]/80 text-white">
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_18%_16%,rgba(0,185,170,0.14),transparent_30%),radial-gradient(circle_at_82%_20%,rgba(246,185,48,0.13),transparent_28%),linear-gradient(90deg,rgba(1,18,20,0.75),rgba(7,8,11,0.92),rgba(23,15,5,0.72))]" />
+      <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.025)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.025)_1px,transparent_1px)] bg-[size:42px_42px] opacity-35" />
+      <div className="pointer-events-none absolute left-0 top-0 h-20 w-20 border-l-4 border-t-4 border-[#f6b930]" />
+      <div className="pointer-events-none absolute bottom-0 right-0 h-20 w-20 border-b-4 border-r-4 border-[#00c7b7]" />
+
+      <section className="relative flex w-[min(90vw,520px)] flex-col items-center text-center">
+        <div className="mb-7 flex h-[74px] w-[74px] items-center justify-center rounded-full border border-[#f6b930]/45 bg-black/35 text-[#f6b930] shadow-2xl shadow-[#f6b930]/15 backdrop-blur-md">
+          <Icon className="h-[42px] w-[42px]" aria-hidden />
+        </div>
+
+        <p className="mb-3 text-xs font-black uppercase tracking-[0.38em] text-[#f6b930]/80">
+          Administration
+        </p>
+
+        <h1 className="text-[28px] font-semibold tracking-normal text-white drop-shadow-[0_2px_10px_rgba(0,0,0,0.85)] md:text-[34px]">
+          {headline}
+        </h1>
+
+        <div className="mt-7 w-full rounded-2xl border border-white/10 bg-black/28 p-5 shadow-2xl shadow-black/30 backdrop-blur-md">
+          <div className="space-y-3 text-left text-sm md:text-[15px]">
+            <AdminScreenInfoRow label="Administrator" value={notice.administrator} />
+            {notice.targetName ? <AdminScreenInfoRow label="Spieler" value={notice.targetName} /> : null}
+            {notice.reason ? <AdminScreenInfoRow label="Grund" value={notice.reason} /> : null}
+            {notice.duration ? <AdminScreenInfoRow label="Dauer" value={notice.duration} /> : null}
+            {notice.expiresAt ? <AdminScreenInfoRow label="Verbleibend" value={formatRemainingUntil(notice.expiresAt)} /> : null}
+            <AdminScreenInfoRow label="Datum" value={formatDateTime(notice.createdAt ?? new Date().toISOString())} />
+          </div>
+        </div>
+
+        <p className="mt-6 max-w-md text-sm leading-6 text-white/45">
+          {message}
+        </p>
+      </section>
+    </div>
+  );
+}
+
+function AdminScreenInfoRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-center justify-between gap-5 border-b border-white/[0.06] pb-3 last:border-b-0 last:pb-0">
+      <span className="text-xs font-bold uppercase tracking-[0.18em] text-white/35">{label}</span>
+      <span className="text-right font-semibold text-white/90">{value}</span>
+    </div>
+  );
+}
+
+function AdminJailOverlay({ status, onExpired }: { status: AdminJailStatusPayload; onExpired: () => void }) {
+  const [now, setNow] = useState(() => Date.now());
+  const expiresAt = status.expiresAt ? new Date(status.expiresAt).getTime() : now;
+  const remainingSeconds = Math.max(0, Math.ceil((expiresAt - now) / 1000));
+  const startSeconds = Math.max(1, Math.trunc(status.durationSeconds ?? remainingSeconds));
+  const progress = Math.max(0, Math.min(100, (remainingSeconds / startSeconds) * 100));
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    if (remainingSeconds <= 0) {
+      onExpired();
+    }
+  }, [remainingSeconds, onExpired]);
+
+  return (
+    <div className="pointer-events-none fixed inset-x-0 top-4 z-[35] flex justify-center px-4 text-white">
+      <div className="relative flex max-w-[calc(100vw-2rem)] items-center gap-3 overflow-hidden rounded-xl border border-unique-gold/30 bg-unique-ink/80 px-4 py-2 shadow-2xl shadow-black/35 backdrop-blur-md">
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-unique-gold/40 bg-unique-gold/10 text-unique-gold">
+          <Lock className="h-[18px] w-[18px]" aria-hidden />
+        </div>
+        <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1 text-xs">
+          <span className="font-black uppercase text-white">{status.type === "warn" ? "Warn-Jail" : "Admin-Jail"}</span>
+          <span className="text-white/60">{status.administrator ?? "Administration"}</span>
+          <span className="hidden text-white/30 sm:inline">/</span>
+          <span className="max-w-[220px] truncate text-white/60">{status.reason ?? "Kein Grund angegeben"}</span>
+          <span className="font-black text-unique-gold">{formatAdminJailTime(remainingSeconds)}</span>
+        </div>
+        <div className="absolute bottom-0 left-0 h-[2px] w-full bg-white/10">
+          <div className="h-full bg-unique-gold transition-all duration-1000 ease-linear" style={{ width: `${progress}%` }} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function getAdminScreenIcon(type: AdminScreenNoticePayload["type"]) {
+  if (type === "amsg") {
+    return MessageSquare;
+  }
+  if (type === "ban" || type === "iban") {
+    return Ban;
+  }
+  if (type === "mute") {
+    return Lock;
+  }
+  if (type === "warn") {
+    return AlertTriangle;
+  }
+  return ShieldCheck;
+}
+
+function getAdminScreenHeadline(notice: AdminScreenNoticePayload) {
+  if (notice.type === "ban") {
+    return "Dein Charakter wurde gesperrt";
+  }
+  if (notice.type === "iban") {
+    return "Dein Account wurde gesperrt";
+  }
+  if (notice.type === "jail") {
+    return "Du wurdest ins Admin-Jail gesetzt";
+  }
+  if (notice.type === "warn") {
+    return "Du hast eine Verwarnung erhalten";
+  }
+  if (notice.type === "mute") {
+    return "Du wurdest vom Chat ausgeschlossen";
+  }
+  return notice.title;
+}
+
+function getAdminScreenMessage(type: AdminScreenNoticePayload["type"]) {
+  if (type === "ban" || type === "iban") {
+    return "Du wurdest voruebergehend vom Server ausgeschlossen.";
+  }
+  if (type === "jail") {
+    return "Du befindest dich bis zum Ablauf der Strafe im Admin-Jail.";
+  }
+  if (type === "warn") {
+    return "Die Verwarnung ist 7 Tage gueltig. Ab 3 aktiven Warns folgt automatisch ein Bann.";
+  }
+  if (type === "mute") {
+    return "Du kannst bis zum Ablauf der Strafe nicht im Chat schreiben.";
+  }
+  return "";
+}
+
 function PenaltyNotice({ title, tone, notice, onClose }: { title: string; tone: string; notice: { administrator: string; reason: string; expiresAt: string }; onClose: () => void }) {
   return (
     <section className="fixed inset-0 z-[90] grid place-items-center bg-black/45 px-6">
-      <div className="w-full max-w-[560px] rounded-md border border-unique-danger/55 bg-[#111318]/96 p-6 text-center shadow-2xl shadow-black/60">
+      <div className="w-full max-w-[560px] rounded-md border border-unique-danger/55 bg-unique-ink/96 p-6 text-center shadow-2xl shadow-black/60">
         <div className="mx-auto grid h-14 w-14 place-items-center rounded-md border border-unique-danger/45 bg-unique-danger/15 text-red-100">
           <Ticket className="h-7 w-7" aria-hidden />
         </div>
@@ -454,9 +923,9 @@ function AppBackdrop({ transparentPreview = false }: { transparentPreview?: bool
 
   return (
     <>
-      <div className="fixed inset-0 bg-[#070a0f]" />
+      <div className="fixed inset-0 bg-unique-bg" />
       <div className="app-grid fixed inset-0 opacity-40" />
-      <div className="fixed inset-0 bg-[radial-gradient(circle_at_top_left,rgba(29,183,166,0.20),transparent_34%),radial-gradient(circle_at_80%_22%,rgba(241,184,75,0.12),transparent_30%),linear-gradient(115deg,rgba(13,15,20,0.94),rgba(13,15,20,0.52)_50%,rgba(10,12,16,0.82))]" />
+      <div className="theme-app-gradient fixed inset-0" />
       <div className="fixed inset-x-0 bottom-0 h-48 bg-gradient-to-t from-black/80 to-transparent" />
     </>
   );
@@ -466,7 +935,7 @@ function Disclaimer() {
   return (
     <section className="relative flex min-h-screen items-center justify-center px-6">
       <div className="w-full max-w-xl text-center">
-        <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-full border border-unique-teal/30 bg-black/45 shadow-[0_0_60px_rgba(29,183,166,0.20)]">
+        <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-full border border-unique-teal/30 bg-black/45 shadow-[0_0_60px_rgb(var(--unique-teal-rgb)/0.20)]">
           <ShieldCheck className="h-8 w-8 text-unique-teal" aria-hidden />
         </div>
         <p className="text-sm font-semibold uppercase tracking-[0.28em] text-unique-gold">Unique Roleplay</p>
@@ -476,7 +945,7 @@ function Disclaimer() {
           Take-Two Interactive oder offiziellen Grand Theft Auto Online Diensten.
         </p>
         <div className="mt-9 h-2 overflow-hidden rounded-full border border-white/10 bg-black/55 shadow-inner">
-          <div className="h-full rounded-full bg-gradient-to-r from-unique-teal via-[#2e6fff] to-unique-gold disclaimer-progress" />
+          <div className="h-full rounded-full bg-gradient-to-r from-unique-teal via-unique-teal to-unique-gold disclaimer-progress" />
         </div>
       </div>
     </section>
@@ -678,9 +1147,9 @@ function CharacterSlot({
               </div>
               <div
                 className="grid h-12 w-12 shrink-0 place-items-center rounded-full text-sm font-semibold text-white"
-                style={{ background: `conic-gradient(#f1b84b ${progress}%, rgba(255,255,255,0.12) 0)` }}
+                style={{ background: `conic-gradient(var(--unique-gold) ${progress}%, rgba(255,255,255,0.12) 0)` }}
               >
-                <div className="grid h-9 w-9 place-items-center rounded-full bg-[#12151b]">{level}</div>
+                <div className="grid h-9 w-9 place-items-center rounded-full bg-unique-panel">{level}</div>
               </div>
             </div>
           </div>
@@ -814,6 +1283,9 @@ function MainMenu({
   uniqueCoins,
   supportTicketResult,
   supportTickets,
+  theme,
+  onThemeChange,
+  onThemePreset,
   onClose
 }: {
   character: CharacterInfo | null;
@@ -821,6 +1293,9 @@ function MainMenu({
   uniqueCoins: number;
   supportTicketResult: { ok: boolean; message: string } | null;
   supportTickets: SupportTicket[];
+  theme: ThemeSettings;
+  onThemeChange: (colors: Record<ThemeColorKey, string>) => void;
+  onThemePreset: (preset: (typeof themePresets)[number]) => void;
   onClose: () => void;
 }) {
   const [tab, setTab] = useState<MainMenuTab>("dashboard");
@@ -881,9 +1356,9 @@ function MainMenu({
   }
 
   return (
-    <section className="fixed inset-0 z-50 overflow-hidden bg-[#090c11] text-white">
+    <section className="fixed inset-0 z-50 overflow-hidden bg-unique-bg text-white">
       <div className="absolute inset-0 app-grid opacity-20" />
-      <div className="absolute inset-0 bg-[linear-gradient(115deg,rgba(9,12,17,0.98),rgba(17,19,24,0.92)_52%,rgba(8,10,14,0.98))]" />
+      <div className="theme-menu-gradient absolute inset-0" />
       <div className="relative grid h-full grid-cols-[260px_minmax(0,1fr)]">
         <aside className="flex min-h-0 flex-col border-r border-white/10 bg-black/28 px-4 py-5">
           <div className="flex items-start justify-between gap-3 px-2">
@@ -955,7 +1430,7 @@ function MainMenu({
               onSubmit={submitTicket}
             />
           ) : null}
-          {tab === "settings" ? <MenuSettings /> : null}
+          {tab === "settings" ? <MenuSettings theme={theme} onThemeChange={onThemeChange} onThemePreset={onThemePreset} /> : null}
         </div>
       </div>
     </section>
@@ -1164,7 +1639,7 @@ function MenuSupport({
               {result.message}
             </div>
           ) : null}
-          <button type="button" className="flex h-12 items-center justify-center gap-2 rounded-md bg-unique-gold px-4 text-sm font-black text-unique-ink transition hover:bg-[#ffd077] disabled:cursor-wait disabled:opacity-60" disabled={pending} onClick={onSubmit}>
+          <button type="button" className="flex h-12 items-center justify-center gap-2 rounded-md bg-unique-gold px-4 text-sm font-black text-unique-ink transition hover:bg-unique-gold/85 disabled:cursor-wait disabled:opacity-60" disabled={pending} onClick={onSubmit}>
             <Send className="h-4 w-4" aria-hidden />
             {pending ? "Wird gesendet" : "Ticket erstellen"}
           </button>
@@ -1236,7 +1711,7 @@ function SupportCategoryCombobox({ value, onChange }: { value: SupportCategoryId
       <span className="text-xs font-black uppercase text-white/45">Kategorie</span>
       <button
         type="button"
-        className="mt-2 flex h-12 w-full items-center justify-between gap-3 rounded-md border border-white/12 bg-[#111722] px-4 text-left text-sm font-black text-white outline-none transition hover:border-unique-gold"
+        className="mt-2 flex h-12 w-full items-center justify-between gap-3 rounded-md border border-white/12 bg-unique-panel px-4 text-left text-sm font-black text-white outline-none transition hover:border-unique-gold"
         onClick={() => setOpen((current) => !current)}
       >
         <span className="flex min-w-0 items-center gap-2">
@@ -1246,7 +1721,7 @@ function SupportCategoryCombobox({ value, onChange }: { value: SupportCategoryId
         <ChevronDown className={`h-4 w-4 shrink-0 text-white/55 transition ${open ? "rotate-180" : ""}`} aria-hidden />
       </button>
       {open ? (
-        <div className="absolute left-0 right-0 top-[76px] z-[80] max-h-80 overflow-y-auto rounded-md border border-unique-gold/45 bg-[#0d1118] p-2 shadow-2xl shadow-black">
+        <div className="absolute left-0 right-0 top-[76px] z-[80] max-h-80 overflow-y-auto rounded-md border border-unique-gold/45 bg-unique-ink p-2 shadow-2xl shadow-black">
           {supportCategories.map((item) => (
             <button
               key={item.id}
@@ -1330,22 +1805,308 @@ function supportPriorityLabel(priority: SupportTicket["priority"]) {
   return "Normal";
 }
 
-function MenuSettings() {
+function MenuSettings({
+  theme,
+  onThemeChange,
+  onThemePreset
+}: {
+  theme: ThemeSettings;
+  onThemeChange: (colors: Record<ThemeColorKey, string>) => void;
+  onThemePreset: (preset: (typeof themePresets)[number]) => void;
+}) {
+  const [themeCode, setThemeCode] = useState("");
+  const [themeCodeMessage, setThemeCodeMessage] = useState("");
+  const [selectedColorKey, setSelectedColorKey] = useState<ThemeColorKey>("gold");
+  const selectedField = themeColorFields.find((field) => field.key === selectedColorKey) ?? themeColorFields[0];
+
+  function updateColor(key: ThemeColorKey, value: string) {
+    onThemeChange({ ...theme.colors, [key]: value });
+  }
+
+  function exportThemeCode() {
+    const code = encodeThemeCode(theme.colors);
+    setThemeCode(code);
+    setThemeCodeMessage("Theme-Code erstellt.");
+  }
+
+  function importThemeCode() {
+    const colors = decodeThemeCode(themeCode);
+    if (!colors) {
+      setThemeCodeMessage("Ungueltiger Theme-Code.");
+      return;
+    }
+    onThemeChange(colors);
+    setThemeCodeMessage("Theme wurde geladen.");
+  }
+
+  async function copyThemeCode() {
+    const code = themeCode.trim() || encodeThemeCode(theme.colors);
+    setThemeCode(code);
+
+    try {
+      await window.navigator.clipboard.writeText(code);
+      setThemeCodeMessage("Theme-Code kopiert.");
+      return;
+    } catch {}
+
+    try {
+      const node = document.createElement("textarea");
+      node.value = code;
+      node.style.position = "fixed";
+      node.style.left = "-9999px";
+      document.body.appendChild(node);
+      node.select();
+      document.execCommand("copy");
+      document.body.removeChild(node);
+      setThemeCodeMessage("Theme-Code kopiert.");
+    } catch {
+      setThemeCodeMessage("Kopieren nicht moeglich.");
+    }
+  }
+
   return (
-    <MenuPanel title="Einstellungen">
-      <div className="grid gap-3 md:grid-cols-2">
-        <MenuToggle label="HUD anzeigen" defaultChecked />
-        <MenuToggle label="Chat sichtbar" defaultChecked />
-        <MenuToggle label="Benachrichtigungen" defaultChecked />
-        <MenuToggle label="Minimaler Modus" />
+    <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
+      <MenuPanel title="Theme">
+        <div className="grid gap-4">
+          <div className="grid gap-2 md:grid-cols-3">
+            {themePresets.map((preset) => (
+              <button
+                key={preset.id}
+                type="button"
+                className={`rounded-md border px-4 py-3 text-left transition ${theme.preset === preset.id ? "border-unique-gold bg-unique-gold/12 text-unique-gold" : "border-white/10 bg-black/20 text-white/70 hover:border-unique-gold/45 hover:text-white"}`}
+                onClick={() => onThemePreset(preset)}
+              >
+                <span className="block text-sm font-black">{preset.label}</span>
+                <span className="mt-3 flex gap-1.5">
+                  {themeColorFields.slice(0, 5).map((field) => (
+                    <span key={field.key} className="h-5 w-5 rounded-sm border border-white/10" style={{ backgroundColor: preset.colors[field.key] }} />
+                  ))}
+                </span>
+              </button>
+            ))}
+          </div>
+
+          <div className="rounded-md border border-white/10 bg-black/20 p-4">
+            <div className="grid gap-4 md:grid-cols-[240px_minmax(0,1fr)]">
+              <ThemeCategoryCombobox value={selectedColorKey} onChange={setSelectedColorKey} />
+
+              <ThemeColorPicker
+                field={selectedField}
+                value={theme.colors[selectedField.key]}
+                onChange={(value) => updateColor(selectedField.key, value)}
+              />
+            </div>
+
+            <ThemePreview colors={theme.colors} />
+          </div>
+
+          <div className="rounded-md border border-white/10 bg-black/20 p-4">
+            <p className="text-xs font-black uppercase text-white/40">Theme-Code</p>
+            <textarea
+              className="mt-3 min-h-20 w-full resize-none rounded-md border border-white/10 bg-unique-ink p-3 font-mono text-xs leading-5 text-white outline-none focus:border-unique-gold"
+              value={themeCode}
+              onChange={(event) => setThemeCode(event.target.value)}
+              placeholder="Theme-Code einfuegen oder exportieren"
+            />
+            <div className="mt-3 flex flex-wrap gap-2">
+              <button type="button" className="rounded-md bg-unique-gold px-4 py-2 text-sm font-black text-unique-ink" onClick={exportThemeCode}>Code erstellen</button>
+              <button type="button" className="rounded-md border border-unique-teal/35 bg-unique-teal/10 px-4 py-2 text-sm font-black text-unique-teal" onClick={copyThemeCode}>Copy</button>
+              <button type="button" className="rounded-md border border-white/10 bg-white/5 px-4 py-2 text-sm font-black text-white" onClick={importThemeCode}>Code laden</button>
+            </div>
+            {themeCodeMessage ? <p className="mt-3 text-sm font-bold text-white/55">{themeCodeMessage}</p> : null}
+          </div>
+        </div>
+      </MenuPanel>
+
+      <MenuPanel title="Anzeige">
+        <div className="grid gap-3">
+          <MenuToggle label="HUD anzeigen" defaultChecked />
+          <MenuToggle label="Chat sichtbar" defaultChecked />
+          <MenuToggle label="Benachrichtigungen" defaultChecked />
+          <MenuToggle label="Minimaler Modus" />
+        </div>
+      </MenuPanel>
+    </div>
+  );
+}
+
+function ThemeCategoryCombobox({ value, onChange }: { value: ThemeColorKey; onChange: (value: ThemeColorKey) => void }) {
+  const [open, setOpen] = useState(false);
+  const selected = themeColorFields.find((field) => field.key === value) ?? themeColorFields[0];
+
+  return (
+    <div className="relative z-20">
+      <span className="text-xs font-black uppercase text-white/40">Kategorie</span>
+      <button
+        type="button"
+        className="mt-2 flex h-11 w-full items-center justify-between gap-3 rounded-md border border-white/10 bg-unique-ink px-3 text-left text-sm font-black text-white outline-none transition hover:border-unique-gold/60"
+        onClick={() => setOpen((current) => !current)}
+      >
+        <span>{selected.label}</span>
+        <ChevronDown className={`h-4 w-4 text-white/45 transition ${open ? "rotate-180" : ""}`} aria-hidden />
+      </button>
+
+      {open ? (
+        <div className="absolute left-0 right-0 top-[70px] z-30 rounded-md border border-unique-gold/45 bg-unique-ink p-1 shadow-2xl shadow-black">
+          {themeColorFields.map((field) => (
+            <button
+              key={field.key}
+              type="button"
+              className={`flex h-9 w-full items-center justify-between rounded px-3 text-left text-sm font-black transition ${field.key === value ? "bg-unique-gold text-unique-ink" : "text-white/65 hover:bg-white/10 hover:text-white"}`}
+              onClick={() => {
+                onChange(field.key);
+                setOpen(false);
+              }}
+            >
+              {field.label}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ThemeColorPicker({ field, value, onChange }: { field: { key: ThemeColorKey; label: string }; value: string; onChange: (value: string) => void }) {
+  const safeValue = normalizeHexColor(value, defaultTheme.colors[field.key]);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [paletteHue, setPaletteHue] = useState(210);
+  const paletteRef = useRef<HTMLDivElement | null>(null);
+  const hueRef = useRef<HTMLDivElement | null>(null);
+
+  function pickPaletteColor(event: ReactPointerEvent<HTMLDivElement>) {
+    const rect = paletteRef.current?.getBoundingClientRect();
+    if (!rect) {
+      return;
+    }
+
+    const x = Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width));
+    const y = Math.min(1, Math.max(0, (event.clientY - rect.top) / rect.height));
+    onChange(`#${hslToHex(paletteHue, x, 1 - y * 0.82)}`);
+  }
+
+  function pickHue(event: ReactPointerEvent<HTMLDivElement>) {
+    const rect = hueRef.current?.getBoundingClientRect();
+    if (!rect) {
+      return;
+    }
+
+    const x = Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width));
+    const hue = Math.round(x * 360);
+    setPaletteHue(hue);
+    onChange(`#${hslToHex(hue, 0.78, 0.55)}`);
+  }
+
+  return (
+    <div className="relative">
+      <div className="flex items-end justify-between gap-3">
+        <div>
+          <span className="text-xs font-black uppercase text-white/40">Farbe</span>
+          <p className="mt-2 text-sm font-black text-white">{field.label}</p>
+        </div>
+        <button
+          type="button"
+          className="h-11 w-14 rounded-md border border-white/15 shadow-inner shadow-black transition hover:scale-105 hover:border-unique-gold"
+          style={{ backgroundColor: safeValue }}
+          onClick={() => setPaletteOpen((current) => !current)}
+          aria-label={`${field.label} Palette oeffnen`}
+        />
       </div>
-    </MenuPanel>
+
+      {paletteOpen ? (
+        <div className="absolute right-0 top-14 z-40 w-[340px] rounded-md border border-unique-gold/45 bg-unique-ink p-3 shadow-2xl shadow-black">
+          <div
+            ref={paletteRef}
+            className="h-44 cursor-crosshair rounded border border-white/10"
+            style={{
+              background:
+                `linear-gradient(to top, #000, transparent), linear-gradient(to right, #fff, hsl(${paletteHue} 100% 50%))`
+            }}
+            onPointerDown={(event) => {
+              event.currentTarget.setPointerCapture(event.pointerId);
+              pickPaletteColor(event);
+            }}
+            onPointerMove={(event) => {
+              if (event.buttons === 1) {
+                pickPaletteColor(event);
+              }
+            }}
+          />
+          <div
+            ref={hueRef}
+            className="mt-3 h-7 cursor-ew-resize rounded border border-white/10"
+            style={{
+              background:
+                "linear-gradient(to right, #ff0000, #ffff00, #00ff00, #00ffff, #0000ff, #ff00ff, #ff0000)"
+            }}
+            onPointerDown={(event) => {
+              event.currentTarget.setPointerCapture(event.pointerId);
+              pickHue(event);
+            }}
+            onPointerMove={(event) => {
+              if (event.buttons === 1) {
+                pickHue(event);
+              }
+            }}
+          />
+          <div className="mt-3 flex items-center justify-between gap-3">
+            <span className="font-mono text-xs font-black text-white/55">{safeValue}</span>
+            <button
+              type="button"
+              className="rounded border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs font-black uppercase text-white/55 transition hover:border-white/25 hover:text-white"
+              onClick={() => setPaletteOpen(false)}
+            >
+              Fertig
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      <div className="mt-3 grid grid-cols-9 gap-1.5">
+        {customPickerColors.map((color, index) => (
+          <button
+            key={`${field.key}-${color}-${index}`}
+            type="button"
+            className={`h-7 rounded-sm border transition hover:scale-105 ${safeValue === color ? "border-unique-gold ring-2 ring-unique-gold/45" : "border-white/15 hover:border-white/60"}`}
+            style={{ backgroundColor: color }}
+            onClick={() => onChange(color)}
+            aria-label={`${field.label} ${color}`}
+          />
+        ))}
+      </div>
+
+      <div className="mt-3 grid gap-3 md:grid-cols-[88px_minmax(0,1fr)]">
+        <div className="flex h-11 items-center justify-center rounded-md border border-white/10 bg-unique-ink font-mono text-xs font-black text-white/65">
+          {safeValue}
+        </div>
+        <input
+          className="h-11 w-full rounded-md border border-white/10 bg-unique-ink px-3 font-mono text-sm text-white outline-none focus:border-unique-gold"
+          value={value}
+          maxLength={7}
+          onChange={(event) => onChange(event.target.value)}
+          onBlur={() => onChange(safeValue)}
+        />
+      </div>
+    </div>
+  );
+}
+
+function ThemePreview({ colors }: { colors: Record<ThemeColorKey, string> }) {
+  return (
+    <div className="mt-4 grid gap-2 rounded-md border border-white/10 bg-black/20 p-3">
+      <div className="h-10 rounded-md" style={{ background: `linear-gradient(90deg, ${colors.teal}, ${colors.gold})` }} />
+      <div className="grid grid-cols-4 gap-2">
+        {themeColorFields.map((field) => (
+          <span key={field.key} className="h-7 rounded-sm border border-white/10" style={{ backgroundColor: colors[field.key] }} title={field.label} />
+        ))}
+      </div>
+    </div>
   );
 }
 
 function MenuPanel({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <section className="rounded-md border border-white/10 bg-[#111722]/86 p-5 shadow-xl shadow-black/20">
+    <section className="rounded-md border border-white/10 bg-unique-panel/86 p-5 shadow-xl shadow-black/20">
       <h2 className="mb-4 text-lg font-black">{title}</h2>
       {children}
     </section>
@@ -1546,7 +2307,7 @@ function DeathScreen({ initialSeconds }: { initialSeconds: number }) {
 
   return (
     <section className="fixed inset-0 z-50 flex items-end justify-center bg-black/55 px-6 py-10 backdrop-blur-[1px]">
-      <div className="w-full max-w-3xl overflow-hidden rounded-lg border border-red-300/15 bg-[#07090d]/82 shadow-2xl shadow-black/60">
+      <div className="w-full max-w-3xl overflow-hidden rounded-lg border border-red-300/15 bg-unique-bg/82 shadow-2xl shadow-black/60">
         <div className="border-b border-white/10 bg-gradient-to-r from-red-950/35 via-black/20 to-transparent px-7 py-6">
           <p className="text-xs font-semibold uppercase tracking-[0.24em] text-red-200/80">Bewusstlos</p>
           <div className="mt-3 flex items-end justify-between gap-6">
@@ -1659,7 +2420,7 @@ function CharacterCreatorView({ draft, message, onClose }: { draft: CreatorStart
 
   return (
     <section className="relative flex min-h-screen items-center justify-start px-6 py-8">
-      <form className="grid max-h-[92vh] w-full max-w-[760px] animate-panel grid-cols-[180px_1fr] overflow-hidden rounded-lg border border-white/10 bg-[#111318]/60 shadow-2xl shadow-black/25 backdrop-blur-sm" onSubmit={submit}>
+      <form className="grid max-h-[92vh] w-full max-w-[760px] animate-panel grid-cols-[180px_1fr] overflow-hidden rounded-lg border border-white/10 bg-unique-ink/60 shadow-2xl shadow-black/25 backdrop-blur-sm" onSubmit={submit}>
         <aside className="border-r border-white/10 bg-black/10 p-4">
           <div className="mb-5 flex items-start justify-between gap-3">
             <div>
@@ -1702,7 +2463,7 @@ function CharacterCreatorView({ draft, message, onClose }: { draft: CreatorStart
             <button type="button" className="rounded-md border border-white/10 px-4 py-3 text-sm text-white/70 hover:text-white" onClick={() => setAppearance(defaultAppearance)}>
               Zuruecksetzen
             </button>
-            <button className="flex items-center justify-center gap-2 rounded-md bg-unique-gold px-5 py-3 text-sm font-semibold text-unique-ink transition hover:bg-[#ffd06b]">
+            <button className="flex items-center justify-center gap-2 rounded-md bg-unique-gold px-5 py-3 text-sm font-semibold text-unique-ink transition hover:bg-unique-gold/85">
               <Plus className="h-4 w-4" aria-hidden />
               Charakter erstellen
             </button>
@@ -1939,7 +2700,7 @@ function ChatHud({ messages, open, deadOnly, onClose }: { messages: ChatMessage[
       <div className="pointer-events-auto absolute left-7 top-8 w-[720px] max-w-[calc(100vw-56px)]">
         <div className="relative overflow-hidden border-y border-unique-gold/18 bg-black/58 shadow-[0_0_30px_rgba(0,0,0,.28)] backdrop-blur-[2px]">
           <div className="absolute inset-0 bg-gradient-to-r from-black/35 via-black/18 to-transparent" />
-          <div className="absolute right-0 top-0 h-full w-[3px] bg-unique-gold/65 shadow-[0_0_14px_rgba(241,184,75,.55)]" />
+          <div className="absolute right-0 top-0 h-full w-[3px] bg-unique-gold/65 shadow-[0_0_14px_rgb(var(--unique-gold-rgb)/.55)]" />
           <div className="absolute right-0 top-0 h-full w-px bg-white/10" />
 
           <div ref={scrollRef} onWheel={clearFade} className="unique-chat-scroll-left relative h-[260px] overflow-y-auto overflow-x-hidden py-3 pl-3 pr-4">
@@ -1962,7 +2723,7 @@ function ChatHud({ messages, open, deadOnly, onClose }: { messages: ChatMessage[
                   disabled={deadOnly && chatMode !== "ooc"}
                   className={`h-9 min-w-[74px] rounded px-5 text-sm font-black uppercase tracking-[0.08em] transition ${
                     mode === chatMode
-                      ? "bg-unique-gold text-unique-ink shadow-[0_0_18px_rgba(241,184,75,.35)]"
+                      ? "bg-unique-gold text-unique-ink shadow-[0_0_18px_rgb(var(--unique-gold-rgb)/.35)]"
                       : deadOnly && chatMode !== "ooc"
                         ? "cursor-not-allowed border border-white/10 bg-black/25 text-white/25"
                         : "border border-white/10 bg-black/40 text-white/75 hover:border-unique-gold/40 hover:bg-unique-gold/10"
@@ -1985,7 +2746,7 @@ function ChatHud({ messages, open, deadOnly, onClose }: { messages: ChatMessage[
               ) : null}
             </div>
 
-            <form className="mt-2 flex h-[46px] items-center border-y border-unique-gold/20 bg-black/42 shadow-[0_0_22px_rgba(241,184,75,.14)] backdrop-blur-[2px]" onSubmit={submit}>
+            <form className="mt-2 flex h-[46px] items-center border-y border-unique-gold/20 bg-black/42 shadow-[0_0_22px_rgb(var(--unique-gold-rgb)/.14)] backdrop-blur-[2px]" onSubmit={submit}>
               <div className="flex h-full w-12 items-center justify-center text-2xl font-black text-unique-gold">&gt;</div>
               <input
                 ref={inputRef}
@@ -2035,7 +2796,7 @@ function ChatHud({ messages, open, deadOnly, onClose }: { messages: ChatMessage[
               <div className="mr-2 rounded border border-unique-gold/25 bg-unique-gold/10 px-2 py-1 text-[11px] font-black uppercase tracking-[0.12em] text-unique-gold">
                 {chatModeLabels[mode]}
               </div>
-              <button type="button" onClick={submitInput} className="mr-2 h-8 rounded bg-unique-gold px-4 text-xs font-black uppercase tracking-[0.1em] text-unique-ink transition hover:bg-[#ffd06b]">Senden</button>
+              <button type="button" onClick={submitInput} className="mr-2 h-8 rounded bg-unique-gold px-4 text-xs font-black uppercase tracking-[0.1em] text-unique-ink transition hover:bg-unique-gold/85">Senden</button>
             </form>
           </>
         ) : null}
@@ -2087,9 +2848,12 @@ function ChatLine({ message }: { message: ChatMessage }) {
 }
 
 function AdminPanel({ data, result, onClose }: { data: AdminPanelPayload; result: { ok: boolean; message: string } | null; onClose: () => void }) {
-  const [tab, setTab] = useState<"admins" | "players" | "tickets" | "commands" | "permissions">("players");
+  const [tab, setTab] = useState<"admins" | "players" | "tickets" | "commands" | "permissions" | "logs">("players");
+  const [openPermissionCommand, setOpenPermissionCommand] = useState<string | null>(null);
   const onlineAdmins = data.admins.filter((admin) => admin.online);
   const offlineAdmins = data.admins.filter((admin) => !admin.online);
+  const commandLevels = new Map(data.commands.map((command) => [command.command, command.minLevel]));
+  const visibleCommandLevels = new Map(data.commands.filter((command) => command.minLevel <= data.currentAdminLevel).map((command) => [command.command, command.minLevel]));
   const commandHelp = [
     ["/admin", "Adminmodus aktivieren oder deaktivieren"],
     ["/dim [charId]", "Dimension anzeigen"],
@@ -2100,6 +2864,15 @@ function AdminPanel({ data, result, onClose }: { data: AdminPanelPayload; result
     ["/dl", "Fahrzeug-Debug mit IDs ein- oder ausblenden"],
     ["/delveh <id>", "Fahrzeug anhand der /dl-ID loeschen"],
     ["/getveh <id>", "Fahrzeug anhand der /dl-ID zu dir teleportieren"],
+    ["/amsg <charId> <nachricht>", "Admin-Screen an einen Spieler senden"],
+    ["/ban <charId> <dauer> <grund>", "Charakter bannen, Standarddauer in Tagen"],
+    ["/iban <charId> <grund>", "Account permanent bannen"],
+    ["/unban <charId>", "Aktiven Charakter-Bann aufheben"],
+    ["/uniban <charId>", "Permanenten Account-Bann aufheben"],
+    ["/jail <charId> <dauer> <grund>", "Spieler in Dimension 1 inhaftieren, Standarddauer in Minuten"],
+    ["/unjail <charId>", "Aktive Jail-Strafe aufheben"],
+    ["/warn <charId> <jaildauer> <grund>", "7 Tage gueltigen Warn vergeben und Spieler jailen"],
+    ["/unwarn <charId>", "Letzten aktiven Warn entfernen"],
     ["/tmute <charId> <dauer> <grund>", "Spieler vom Ticketsupport ausschliessen"],
     ["/tunmute <charId>", "Ticketsupport-Sperre aufheben"],
     ["/mute <charId> <dauer> <grund>", "Spieler vom Chat ausschliessen"],
@@ -2116,8 +2889,23 @@ function AdminPanel({ data, result, onClose }: { data: AdminPanelPayload; result
     ["/setbank [charId] <betrag>", "Bankguthaben setzen"],
     ["/adduniquecoins [charId] <betrag>", "Unique Coins hinzufuegen"],
     ["/setuniquecoins [charId] <betrag>", "Unique Coins setzen"],
-    ["/setadmin <charId> <0-10>", "Adminlevel setzen"]
+    ["/setadmin <charId> <0-10>", "Adminlevel setzen"],
+    ["permissions", "F3-Berechtigungstab verwalten"],
+    ["logs", "F3-Adminlogs einsehen"]
   ] as const;
+  const sortedCommandHelp = commandHelp
+    .map(([command, description]) => {
+      const key = command.replace(/^\//, "").split(/\s+/)[0].toLowerCase();
+      return { command, description, key, minLevel: commandLevels.get(key) ?? 1 };
+    })
+    .filter((entry) => visibleCommandLevels.has(entry.key))
+    .sort((a, b) => a.minLevel - b.minLevel || a.command.localeCompare(b.command));
+  const commandGroups = sortedCommandHelp.reduce((groups: Map<number, Array<(typeof sortedCommandHelp)[number]>>, entry) => {
+    const current = groups.get(entry.minLevel) ?? [];
+    current.push(entry);
+    groups.set(entry.minLevel, current);
+    return groups;
+  }, new Map<number, typeof sortedCommandHelp>());
 
   function close() {
     emitToClient("unique:cef:adminClose", {});
@@ -2125,14 +2913,14 @@ function AdminPanel({ data, result, onClose }: { data: AdminPanelPayload; result
   }
 
   return (
-    <section className="fixed inset-0 z-50 overflow-hidden bg-[#070a0f] text-white">
+    <section className="fixed inset-0 z-50 overflow-hidden bg-unique-bg text-white">
       <div className="absolute inset-0 app-grid opacity-35" />
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_14%_16%,rgba(29,183,166,0.18),transparent_30%),radial-gradient(circle_at_84%_20%,rgba(241,184,75,0.12),transparent_28%),linear-gradient(115deg,rgba(13,15,20,0.96),rgba(13,15,20,0.76)_48%,rgba(10,12,16,0.92))]" />
+      <div className="theme-admin-gradient absolute inset-0" />
       <div className="pointer-events-none absolute left-0 top-0 h-20 w-20 border-l-[6px] border-t-[6px] border-unique-gold/90" />
       <div className="pointer-events-none absolute bottom-0 right-0 h-28 w-28 border-b-[6px] border-r-[6px] border-unique-teal/80" />
       <div className="pointer-events-none absolute left-[7%] top-[31%] text-6xl font-light text-white/10">x</div>
       <div className="pointer-events-none absolute right-[8%] bottom-[20%] text-7xl font-light text-unique-gold/25">x</div>
-      <div className="relative mx-auto mt-6 grid h-[calc(100vh-3rem)] w-[calc(100vw-3rem)] max-w-[1720px] overflow-hidden rounded-md border border-white/10 bg-[#111318]/64 shadow-2xl shadow-black/50 backdrop-blur-sm md:grid-cols-[300px_1fr]">
+      <div className="relative mx-auto mt-6 grid h-[calc(100vh-3rem)] w-[calc(100vw-3rem)] max-w-[1720px] overflow-hidden rounded-md border border-white/10 bg-unique-ink/64 shadow-2xl shadow-black/50 backdrop-blur-sm md:grid-cols-[300px_1fr]">
         <aside className="border-r border-white/10 bg-black/20 p-5">
           <div className="flex items-start justify-between gap-3">
             <div>
@@ -2157,6 +2945,7 @@ function AdminPanel({ data, result, onClose }: { data: AdminPanelPayload; result
             <AdminTab active={tab === "tickets"} label="Tickets" onClick={() => setTab("tickets")} />
             <AdminTab active={tab === "admins"} label="Admins" onClick={() => setTab("admins")} />
             <AdminTab active={tab === "commands"} label="Befehle" onClick={() => setTab("commands")} />
+            {data.canViewLogs ? <AdminTab active={tab === "logs"} label="Logs" onClick={() => setTab("logs")} /> : null}
             {data.canManagePermissions ? <AdminTab active={tab === "permissions"} label="Berechtigungen" onClick={() => setTab("permissions")} /> : null}
           </nav>
         </aside>
@@ -2216,30 +3005,36 @@ function AdminPanel({ data, result, onClose }: { data: AdminPanelPayload; result
 
           {tab === "commands" ? (
             <AdminSection title="Befehle">
-              <div className="grid gap-2 xl:grid-cols-2">
-                {commandHelp.map(([command, description]) => (
-                  <AdminRow key={command} label={command} value={description} />
+              <div className="grid gap-4">
+                {Array.from(commandGroups.entries()).map(([level, commands]) => (
+                  <div key={level} className="rounded-md border border-white/10 bg-white/5 p-3">
+                    <h3 className="mb-3 text-sm font-black uppercase text-unique-gold">Admin Level {level}</h3>
+                    <div className="grid gap-2 xl:grid-cols-2">
+                      {commands.map(({ command, description }) => (
+                        <AdminRow key={command} label={command} value={description} />
+                      ))}
+                    </div>
+                  </div>
                 ))}
               </div>
             </AdminSection>
           ) : null}
 
+          {tab === "logs" && data.canViewLogs ? <AdminLogsSection logs={data.logs} /> : null}
+
           {tab === "permissions" && data.canManagePermissions ? (
             <AdminSection title="Berechtigungen">
               <div className="grid gap-2 xl:grid-cols-2">
-                {data.commands.map((command) => (
-                  <label key={command.command} className="flex items-center justify-between gap-3 rounded-md border border-white/10 bg-white/5 px-4 py-3">
+                {[...data.commands].sort((a, b) => a.minLevel - b.minLevel || a.command.localeCompare(b.command)).map((command) => (
+                  <div key={command.command} className="flex items-center justify-between gap-3 rounded-md border border-white/10 bg-white/5 px-4 py-3">
                     <span className="font-mono text-sm text-white">{command.command}</span>
-                    <select
-                      className="rounded-md border border-white/10 bg-[#111318] px-3 py-2 text-sm text-white outline-none"
+                    <AdminLevelCombobox
                       value={command.minLevel}
-                      onChange={(event) => emitToClient("unique:cef:setCommandPermission", { command: command.command, minLevel: Number(event.target.value) })}
-                    >
-                      {Array.from({ length: 10 }, (_, index) => index + 1).map((level) => (
-                        <option key={level} value={level}>Level {level}</option>
-                      ))}
-                    </select>
-                  </label>
+                      open={openPermissionCommand === command.command}
+                      onOpenChange={(open) => setOpenPermissionCommand(open ? command.command : null)}
+                      onChange={(level) => emitToClient("unique:cef:setCommandPermission", { command: command.command, minLevel: level })}
+                    />
+                  </div>
                 ))}
               </div>
             </AdminSection>
@@ -2247,6 +3042,139 @@ function AdminPanel({ data, result, onClose }: { data: AdminPanelPayload; result
         </div>
       </div>
     </section>
+  );
+}
+
+function AdminLogsSection({ logs }: { logs: AdminLogEntry[] }) {
+  const [idFilter, setIdFilter] = useState("");
+  const [interactionFilter, setInteractionFilter] = useState("");
+  const [fromFilter, setFromFilter] = useState({ date: "", time: "" });
+  const [toFilter, setToFilter] = useState({ date: "", time: "" });
+  const fromTime = parseAdminDateTimeFilter(fromFilter.date, fromFilter.time, false);
+  const toTime = parseAdminDateTimeFilter(toFilter.date, toFilter.time, true);
+  const normalizedInteraction = interactionFilter.trim().toLowerCase();
+  const normalizedId = idFilter.trim();
+  const filteredLogs = logs.filter((entry) => {
+    const created = new Date(entry.createdAt).getTime();
+    if (fromTime && created < fromTime) {
+      return false;
+    }
+    if (toTime && created > toTime) {
+      return false;
+    }
+    if (normalizedId) {
+      const haystack = [entry.adminCharacterId, entry.adminAccountId, entry.adminName, entry.rawArgs, entry.details].join(" ").toLowerCase();
+      if (!haystack.includes(normalizedId.toLowerCase())) {
+        return false;
+      }
+    }
+    if (normalizedInteraction) {
+      const haystack = [entry.command, entry.rawArgs, entry.details, entry.adminName].join(" ").toLowerCase();
+      if (!haystack.includes(normalizedInteraction)) {
+        return false;
+      }
+    }
+    return true;
+  });
+
+  return (
+    <AdminSection title="Admin Logs">
+      <div className="mb-4 grid gap-3 xl:grid-cols-4">
+        <label className="rounded-md border border-white/10 bg-white/5 p-3">
+          <span className="text-[11px] font-black uppercase text-white/35">ID / Admin / Spieler</span>
+          <input className="mt-2 h-10 w-full rounded-md border border-white/10 bg-unique-ink px-3 text-sm text-white outline-none focus:border-unique-gold" value={idFilter} onChange={(event) => setIdFilter(event.target.value)} placeholder="z.B. 2 oder Nate" />
+        </label>
+        <label className="rounded-md border border-white/10 bg-white/5 p-3">
+          <span className="text-[11px] font-black uppercase text-white/35">Interaktion</span>
+          <input className="mt-2 h-10 w-full rounded-md border border-white/10 bg-unique-ink px-3 text-sm text-white outline-none focus:border-unique-gold" value={interactionFilter} onChange={(event) => setInteractionFilter(event.target.value)} placeholder="mute, getveh, Grund..." />
+        </label>
+        <AdminDateTimeFilter label="Von" value={fromFilter} onChange={setFromFilter} />
+        <AdminDateTimeFilter label="Bis" value={toFilter} onChange={setToFilter} />
+      </div>
+      <div className="grid max-h-[calc(100vh-23rem)] gap-2 overflow-y-auto pr-1">
+        {filteredLogs.length ? filteredLogs.map((entry) => (
+          <div key={entry.id} className="rounded-md border border-white/10 bg-white/5 px-4 py-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="flex flex-wrap items-center gap-2 text-sm font-black text-white">
+                  <span className={entry.success ? "text-unique-teal" : "text-unique-danger"}>{entry.success ? "OK" : "FEHLER"}</span>
+                  <span className="font-mono text-unique-gold">/{entry.command}</span>
+                  <span className="truncate text-white/75">{entry.rawArgs}</span>
+                </p>
+                <p className="mt-1 text-xs text-white/45">{entry.adminName}{entry.details ? ` / ${entry.details}` : ""}</p>
+              </div>
+              <span className="shrink-0 text-xs font-bold uppercase text-white/35">{formatDateTime(entry.createdAt)}</span>
+            </div>
+          </div>
+        )) : <EmptyAdminText text="Keine Logs fuer diesen Filter." />}
+      </div>
+    </AdminSection>
+  );
+}
+
+function AdminDateTimeFilter({
+  label,
+  value,
+  onChange
+}: {
+  label: string;
+  value: { date: string; time: string };
+  onChange: (value: { date: string; time: string }) => void;
+}) {
+  return (
+    <label className="rounded-md border border-white/10 bg-white/5 p-3">
+      <span className="text-[11px] font-black uppercase text-white/35">{label}</span>
+      <div className="mt-2 grid grid-cols-[1fr_86px] gap-2">
+        <input
+          className="h-10 w-full rounded-md border border-white/10 bg-unique-ink px-3 text-sm text-white outline-none focus:border-unique-gold"
+          value={value.date}
+          inputMode="numeric"
+          onChange={(event) => onChange({ ...value, date: event.target.value.replace(/[^\d.]/g, "").slice(0, 10) })}
+          placeholder="TT.MM.JJJJ"
+        />
+        <input
+          className="h-10 w-full rounded-md border border-white/10 bg-unique-ink px-3 text-sm text-white outline-none focus:border-unique-gold"
+          value={value.time}
+          inputMode="numeric"
+          onChange={(event) => onChange({ ...value, time: event.target.value.replace(/[^\d:]/g, "").slice(0, 5) })}
+          placeholder="HH:MM"
+        />
+      </div>
+    </label>
+  );
+}
+
+function AdminLevelCombobox({ value, open, onOpenChange, onChange }: { value: number; open: boolean; onOpenChange: (open: boolean) => void; onChange: (level: number) => void }) {
+  const levels = Array.from({ length: 10 }, (_, index) => index + 1);
+
+  return (
+    <div className={`relative w-36 ${open ? "z-[1000]" : "z-40"}`}>
+      <button
+        type="button"
+        className="flex h-10 w-full items-center justify-between gap-2 rounded-md border border-white/10 bg-unique-ink px-3 text-left text-sm font-black text-white outline-none transition hover:border-unique-gold"
+        onClick={() => onOpenChange(!open)}
+      >
+        Level {value}
+        <ChevronDown className={`h-4 w-4 text-white/55 transition ${open ? "rotate-180" : ""}`} aria-hidden />
+      </button>
+      {open ? (
+        <div className="absolute right-0 top-12 z-[1001] grid w-full gap-1 rounded-md border border-unique-gold/45 bg-unique-ink p-2 shadow-2xl shadow-black">
+          {levels.map((level) => (
+            <button
+              key={level}
+              type="button"
+              className={`rounded-md px-3 py-2 text-left text-sm font-black transition ${level === value ? "bg-unique-gold text-unique-ink" : "text-white/75 hover:bg-white/10 hover:text-white"}`}
+              onClick={() => {
+                onChange(level);
+                onOpenChange(false);
+              }}
+            >
+              Level {level}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -2378,7 +3306,7 @@ function AdminTicketShortcutButton({ icon, label, disabled = false, onClick }: {
   return (
     <button
       type="button"
-      className="flex h-10 items-center justify-start gap-2 rounded-md border border-white/10 bg-[#111318] px-3 text-sm font-black text-white transition hover:border-unique-gold hover:text-unique-gold disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-white/10 disabled:hover:text-white"
+      className="flex h-10 items-center justify-start gap-2 rounded-md border border-white/10 bg-unique-ink px-3 text-sm font-black text-white transition hover:border-unique-gold hover:text-unique-gold disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-white/10 disabled:hover:text-white"
       disabled={disabled}
       onClick={onClick}
     >
@@ -2403,11 +3331,11 @@ function AdminTicketCombobox({
   const selected = options.find((option) => option.value === value) ?? options[0];
 
   return (
-    <div className="relative z-30 rounded-md border border-white/10 bg-white/5 p-3">
+    <div className={`relative rounded-md border border-white/10 bg-white/5 p-3 ${open ? "z-[1200]" : "z-30"}`}>
       <span className="text-[11px] font-black uppercase text-white/35">{label}</span>
       <button
         type="button"
-        className="mt-2 flex h-10 w-full items-center justify-between gap-2 rounded-md border border-white/10 bg-[#111318] px-3 text-left text-sm font-bold text-white outline-none transition hover:border-unique-gold"
+        className="mt-2 flex h-10 w-full items-center justify-between gap-2 rounded-md border border-white/10 bg-unique-ink px-3 text-left text-sm font-bold text-white outline-none transition hover:border-unique-gold"
         onClick={() => setOpen((current) => !current)}
       >
         <span className="flex min-w-0 items-center gap-2">
@@ -2417,7 +3345,7 @@ function AdminTicketCombobox({
         <ChevronDown className={`h-4 w-4 shrink-0 text-white/55 transition ${open ? "rotate-180" : ""}`} aria-hidden />
       </button>
       {open ? (
-        <div className="absolute left-3 right-3 top-[78px] z-[90] max-h-72 overflow-y-auto rounded-md border border-unique-gold/45 bg-[#0d1118] p-2 shadow-2xl shadow-black">
+        <div className="absolute left-3 right-3 top-[78px] z-[1201] max-h-72 overflow-y-auto rounded-md border border-unique-gold/45 bg-unique-ink p-2 shadow-2xl shadow-black">
           {options.map((option) => (
             <button
               key={option.value}
@@ -2691,6 +3619,67 @@ function formatDateTime(value: string) {
   return `${formatDate(date)} ${formatClock(date)}`;
 }
 
+function formatRemainingUntil(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "-";
+  }
+
+  const totalSeconds = Math.max(0, Math.ceil((date.getTime() - Date.now()) / 1000));
+  const days = Math.floor(totalSeconds / 86400);
+  const hours = Math.floor((totalSeconds % 86400) / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (days > 0) {
+    return `${days} Tag${days === 1 ? "" : "e"}${hours ? ` ${hours} Std.` : ""}`;
+  }
+  if (hours > 0) {
+    return `${hours} Std.${minutes ? ` ${minutes} Min.` : ""}`;
+  }
+  if (minutes > 0) {
+    return `${minutes} Min.${seconds ? ` ${seconds} Sek.` : ""}`;
+  }
+  return `${seconds} Sek.`;
+}
+
+function formatAdminJailTime(totalSeconds: number) {
+  const safeSeconds = Math.max(0, Math.trunc(totalSeconds));
+  const hours = Math.floor(safeSeconds / 3600);
+  const minutes = Math.floor((safeSeconds % 3600) / 60);
+  const seconds = safeSeconds % 60;
+  if (hours > 0) {
+    return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  }
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+function parseAdminDateTimeFilter(dateValue: string, timeValue: string, endOfDay: boolean) {
+  const dateMatch = dateValue.trim().match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
+  if (!dateMatch) {
+    return null;
+  }
+
+  const [, dayText, monthText, yearText] = dateMatch;
+  const timeMatch = timeValue.trim().match(/^(\d{2}):(\d{2})$/);
+  const day = Number(dayText);
+  const month = Number(monthText) - 1;
+  const year = Number(yearText);
+  const hours = timeMatch ? Number(timeMatch[1]) : endOfDay ? 23 : 0;
+  const minutes = timeMatch ? Number(timeMatch[2]) : endOfDay ? 59 : 0;
+  const date = new Date(year, month, day, hours, minutes, endOfDay ? 59 : 0, endOfDay ? 999 : 0);
+  if (
+    Number.isNaN(date.getTime())
+    || date.getFullYear() !== year
+    || date.getMonth() !== month
+    || date.getDate() !== day
+    || hours > 23
+    || minutes > 59
+  ) {
+    return null;
+  }
+  return date.getTime();
+}
+
 function playPenaltyNoticeSound() {
   try {
     const AudioContextClass = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
@@ -2717,3 +3706,6 @@ function playPenaltyNoticeSound() {
 function getNextLevelExperience(level: number) {
   return Math.max(320, level * 320);
 }
+
+
+

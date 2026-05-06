@@ -141,7 +141,7 @@ export async function handlePlayerSupportTicketAction(player: RageMpPlayer, payl
 
 export async function handleAdminSupportTicketAction(player: RageMpPlayer, payloadJson: string) {
   const session = getSession(player);
-  if (!session?.character || session.account.adminLevel <= 0 || !session.adminMode) {
+  if (!session?.character || session.character.adminLevel <= 0 || !session.adminMode) {
     return sendSupportTicketResult(player, false, "Aktiviere zuerst den Adminmodus.");
   }
 
@@ -193,11 +193,12 @@ export async function handleAdminSupportTicketAction(player: RageMpPlayer, paylo
     await updateSupportTicket({ ticketId, category, priority });
     await addSystemTicketMessage(ticketId, `Ticket wurde als ${supportCategoryLabels[category]} / ${supportPriorityLabels[priority]} kategorisiert.`);
   } else if (action === "request_help") {
-    const targetLevel = Math.min(10, Math.max(session.account.adminLevel + 1, Math.trunc(Number(payload.level) || session.account.adminLevel + 1)));
+    const currentLevel = session.character.adminLevel;
+    const targetLevel = Math.min(10, Math.max(currentLevel + 1, Math.trunc(Number(payload.level) || currentLevel + 1)));
     await updateSupportTicket({ ticketId, priority: "high", escalatedToLevel: targetLevel });
     await addSystemTicketMessage(ticketId, `${adminName} bittet Admins ab Level ${targetLevel} um Hilfe.`);
     forEachOnlineAdmin((target, targetSession) => {
-      if (targetSession.account.adminLevel >= targetLevel) {
+      if ((targetSession.character?.adminLevel ?? 0) >= targetLevel) {
         target.call("unique:client:chatPush", [JSON.stringify({ tone: "admin", author: "SUPPORT", text: `Hilfe angefragt fuer Ticket #${ticketId} ab Level ${targetLevel}.` })]);
       }
     });
@@ -256,11 +257,11 @@ export async function handleAdminSupportTicketAction(player: RageMpPlayer, paylo
 
 export async function listAdminSupportTicketsForPlayer(player: RageMpPlayer) {
   const session = getSession(player);
-  if (!session || session.account.adminLevel <= 0 || !session.adminMode) {
+  if (!session?.character || session.character.adminLevel <= 0 || !session.adminMode) {
     return [];
   }
 
-  return (await listOpenSupportTicketsForAdmin(session.account.adminLevel)).map(serializeTicket);
+  return (await listOpenSupportTicketsForAdmin(session.character.adminLevel)).map(serializeTicket);
 }
 
 export async function closeSupportTicketsForDisconnect(player: RageMpPlayer) {
@@ -342,7 +343,7 @@ async function refreshTicketOwner(ticketId: number) {
 }
 
 async function refreshAdminPanels() {
-  const admins = listSessions().filter(({ session }) => session.account.adminLevel > 0 && session.adminMode);
+  const admins = listSessions().filter(({ session }) => (session.character?.adminLevel ?? 0) > 0 && session.adminMode);
   await Promise.all(admins.map(async ({ playerId }) => {
     const player = listOnlinePlayers().find((onlinePlayer) => onlinePlayer.id === playerId);
     if (player) {
@@ -353,7 +354,7 @@ async function refreshAdminPanels() {
 
 function forEachOnlineAdmin(action: (player: RageMpPlayer, session: NonNullable<ReturnType<typeof getSession>>) => void) {
   listSessions()
-    .filter(({ session }) => session.account.adminLevel > 0 && session.adminMode)
+    .filter(({ session }) => (session.character?.adminLevel ?? 0) > 0 && session.adminMode)
     .forEach(({ playerId, session }) => {
       const target = listOnlinePlayers().find((onlinePlayer) => onlinePlayer.id === playerId);
       if (target) {

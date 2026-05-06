@@ -13,6 +13,8 @@ import {
   type CharacterRecord,
   type CharacterAppearance
 } from "../db/characters";
+import { findActiveCharacterBan, findActiveJail } from "../db/punishments";
+import { clearAdminJailStatus, movePlayerToJailCell, prisonReleasePosition, sendJailStatusFromPunishment, sendPunishmentScreen } from "./adminScreens";
 import { broadcastHudData } from "./hud";
 import { getSession, setSession } from "./session";
 
@@ -125,6 +127,12 @@ export async function selectRoleplayCharacter(player: RageMpPlayer, payloadJson:
     return sendCharacterError(player, "Dieser Charakter gehoert nicht zu deinem Account.");
   }
 
+  const characterBan = await findActiveCharacterBan(character.id);
+  if (characterBan) {
+    sendPunishmentScreen(player, characterBan);
+    return sendCharacterError(player, "Dieser Charakter ist aktuell gebannt.");
+  }
+
   setSession(player, { ...session, character, isDead: character.isDead });
   if (character.isDead) {
     return enterWorldDead(player, character);
@@ -161,6 +169,7 @@ export async function chooseRoleplaySpawn(player: RageMpPlayer, payloadJson: str
   const aliveCharacter = await setCharacterDead(character.id, false);
   const selectedCharacter = aliveCharacter ?? { ...character, isDead: false };
   setSession(player, { ...session, character: selectedCharacter, isDead: false, onlineSince: Date.now() });
+  syncPlayerCharacterIdentity(player, selectedCharacter);
   await logCharacterSpawn(character.id, spawnType, spawn);
 
   player.dimension = 0;
@@ -170,10 +179,18 @@ export async function chooseRoleplaySpawn(player: RageMpPlayer, payloadJson: str
   player.armour = 0;
   player.call("unique:client:enterWorld", [
     JSON.stringify({
-      character: selectedCharacter
+      character: selectedCharacter,
+      uiTheme: session.account.uiTheme ?? null
     })
   ]);
   void broadcastHudData();
+  const jail = await findActiveJail(selectedCharacter.id);
+  if (jail) {
+    movePlayerToJailCell(player);
+    sendPunishmentScreen(player, jail);
+    sendJailStatusFromPunishment(player, jail);
+    scheduleJailRelease(player, selectedCharacter.id, jail.expiresAt);
+  }
   player.call("unique:client:chatPush", [
     JSON.stringify({
       tone: "info",
@@ -209,6 +226,7 @@ export async function respawnRoleplayCharacter(player: RageMpPlayer) {
   const updatedCharacter = await setCharacterDead(session.character.id, false);
   const character = updatedCharacter ?? { ...session.character, position: spawn, isDead: false };
   setSession(player, { ...session, character, isDead: false });
+  syncPlayerCharacterIdentity(player, character);
   await logCharacterSpawn(character.id, "death", spawn);
 
   player.dimension = 0;
@@ -238,6 +256,7 @@ async function enterWorldDead(player: RageMpPlayer, character: CharacterRecord) 
   if (session) {
     setSession(player, { ...session, character, isDead: true, onlineSince: Date.now() });
   }
+  syncPlayerCharacterIdentity(player, character);
 
   const spawn = character.position ?? config.spawn;
   player.dimension = 0;
@@ -245,9 +264,45 @@ async function enterWorldDead(player: RageMpPlayer, character: CharacterRecord) 
   player.heading = spawn.heading;
   player.health = 1;
   player.armour = 0;
-  player.call("unique:client:enterWorld", [JSON.stringify({ character })]);
+  player.call("unique:client:enterWorld", [JSON.stringify({ character, uiTheme: session?.account.uiTheme ?? null })]);
+  const jail = await findActiveJail(character.id);
+  if (jail) {
+    movePlayerToJailCell(player);
+    sendPunishmentScreen(player, jail);
+    sendJailStatusFromPunishment(player, jail);
+    scheduleJailRelease(player, character.id, jail.expiresAt);
+  }
   player.call("unique:client:deathShow", [JSON.stringify({ seconds: 150 })]);
   void broadcastHudData();
+}
+
+function scheduleJailRelease(player: RageMpPlayer, characterId: number, expiresAt: Date) {
+  const delay = expiresAt.getTime() - Date.now();
+  if (delay <= 0 || delay > 2_147_483_647) {
+    return;
+  }
+
+  setTimeout(async () => {
+    const session = getSession(player);
+    if (session?.character?.id !== characterId) {
+      return;
+    }
+
+    const activeJail = await findActiveJail(characterId);
+    if (activeJail) {
+      return;
+    }
+
+    player.dimension = 0;
+    player.spawn(new mp.Vector3(prisonReleasePosition.x, prisonReleasePosition.y, prisonReleasePosition.z));
+    player.heading = prisonReleasePosition.heading;
+    clearAdminJailStatus(player);
+  }, delay);
+}
+
+function syncPlayerCharacterIdentity(player: RageMpPlayer, character: CharacterRecord) {
+  player.setVariable?.("unique:character:id", character.id);
+  player.setVariable?.("unique:character:name", `${character.firstName} ${character.lastName}`);
 }
 
 function buildSpawnOptions(lastSpawn: { x: number; y: number; z: number; heading: number } | null) {

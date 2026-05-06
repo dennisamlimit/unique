@@ -8,6 +8,7 @@ export interface AccountRecord {
   passwordHash: string;
   uniqueCoins: number;
   adminLevel: number;
+  uiTheme: string | null;
 }
 
 function mapAccount(row: any): AccountRecord {
@@ -18,7 +19,8 @@ function mapAccount(row: any): AccountRecord {
     email: row.email,
     passwordHash: row.password_hash,
     uniqueCoins: row.unique_coins,
-    adminLevel: row.admin_level ?? 0
+    adminLevel: row.admin_level ?? 0,
+    uiTheme: row.ui_theme ?? null
   };
 }
 
@@ -69,6 +71,14 @@ export async function setAccountAdminLevel(accountId: number, level: number) {
   const result = await pool.query("UPDATE accounts SET admin_level = $2, updated_at = NOW() WHERE id = $1 RETURNING *", [
     accountId,
     level
+  ]);
+  return result.rows[0] ? mapAccount(result.rows[0]) : null;
+}
+
+export async function setAccountUiTheme(accountId: number, uiTheme: string | null) {
+  const result = await pool.query("UPDATE accounts SET ui_theme = $2, updated_at = NOW() WHERE id = $1 RETURNING *", [
+    accountId,
+    uiTheme
   ]);
   return result.rows[0] ? mapAccount(result.rows[0]) : null;
 }

@@ -1,6 +1,8 @@
 let browser: RageMpBrowser | null = null;
 let authCamera: RageMpCamera | null = null;
 let pendingBootstrap: unknown = null;
+let currentWorldPayload: unknown = null;
+let pendingInventoryOpen = false;
 let browserReady = false;
 let appliedGender: string | null = null;
 let noClipCamera: RageMpCamera | null = null;
@@ -8,22 +10,27 @@ let noClipEnabled = false;
 let adminPanelOpen = false;
 let chatInputOpen = false;
 let mainMenuOpen = false;
+let inventoryOpen = false;
 let deathScreenOpen = false;
 let inWorld = false;
+let cefInputFocused = false;
 let lastHudLocationUpdate = 0;
 let lastHudLocationKey = "";
+let lastInventoryNearbyUpdate = 0;
 let vehicleOverlayBatch: RageMpEntityOverlayBatch | null = null;
 let vehicleOverlaySupported: boolean | null = null;
 let adminModeEnabled = false;
 let vehicleDebugEnabled = false;
 let spectateTargetRemoteId: number | null = null;
 
+const runSprintMultiplier = 1.18;
 const headOverlayIds = [0, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
 const propIds = [0, 1, 2, 6, 7];
 const keyCodes = {
   F3: 0x72,
   M: 0x4d,
   T: 0x54,
+  I: 0x49,
   X: 0x58,
   W: 0x57,
   A: 0x41,
@@ -32,18 +39,24 @@ const keyCodes = {
   Ctrl: 0x11,
   Shift: 0x10,
   Space: 0x20,
+  Escape: 0x1b,
   ArrowUp: 0x26,
   Q: 0x51,
   E: 0x45
 };
 
 mp.events.add("playerReady", () => {
+  resetNoClipState();
   mp.events.callRemote("unique:server:clientReady");
 });
 
 mp.events.add("unique:client:startAuth", (payloadJson: string) => {
+  resetNoClipState();
   adminModeEnabled = false;
   vehicleDebugEnabled = false;
+  inventoryOpen = false;
+  pendingInventoryOpen = false;
+  currentWorldPayload = null;
   pendingBootstrap = safeParse(payloadJson);
   showAuthExperience();
 });
@@ -82,12 +95,13 @@ mp.events.add("unique:client:hudData", (payloadJson: string) => {
 mp.events.add("unique:client:deathHide", () => {
   deathScreenOpen = false;
   mp.players.local.freezePosition(false);
-  mp.gui.cursor.show(adminPanelOpen || chatInputOpen || mainMenuOpen, adminPanelOpen || chatInputOpen || mainMenuOpen);
+  mp.gui.cursor.show(adminPanelOpen || chatInputOpen || mainMenuOpen || inventoryOpen, adminPanelOpen || chatInputOpen || mainMenuOpen || inventoryOpen);
   sendToUi("death:hide", {});
 });
 
 mp.events.add("unique:client:deathShow", (payloadJson: string) => {
   deathScreenOpen = true;
+  inventoryOpen = false;
   mp.players.local.freezePosition(true);
   mp.gui.cursor.show(true, true);
   sendToUi("death:show", safeParse(payloadJson));
@@ -96,6 +110,7 @@ mp.events.add("unique:client:deathShow", (payloadJson: string) => {
 mp.events.add("unique:client:openAdminPanel", () => {
   chatInputOpen = false;
   mainMenuOpen = false;
+  inventoryOpen = false;
   adminPanelOpen = true;
   mp.gui.cursor.show(true, true);
   sendToUi("admin:open", {});
@@ -103,7 +118,7 @@ mp.events.add("unique:client:openAdminPanel", () => {
 
 mp.events.add("unique:client:closeAdminPanel", () => {
   adminPanelOpen = false;
-  mp.gui.cursor.show(chatInputOpen || deathScreenOpen || mainMenuOpen, chatInputOpen || deathScreenOpen || mainMenuOpen);
+  mp.gui.cursor.show(chatInputOpen || deathScreenOpen || mainMenuOpen || inventoryOpen, chatInputOpen || deathScreenOpen || mainMenuOpen || inventoryOpen);
   sendToUi("admin:close", {});
 });
 
@@ -114,6 +129,7 @@ mp.events.add("unique:client:adminPanelData", (payloadJson: string) => {
 mp.events.add("unique:client:openMainMenu", () => {
   chatInputOpen = false;
   adminPanelOpen = false;
+  inventoryOpen = false;
   mainMenuOpen = true;
   mp.gui.cursor.show(true, true);
   sendToUi("menu:open", {});
@@ -133,6 +149,14 @@ mp.events.add("unique:client:supportMuteNotice", (payloadJson: string) => {
 
 mp.events.add("unique:client:chatMuteNotice", (payloadJson: string) => {
   sendToUi("chat:muteNotice", safeParse(payloadJson));
+});
+
+mp.events.add("unique:client:adminScreen", (payloadJson: string) => {
+  sendToUi("admin:screen", safeParse(payloadJson));
+});
+
+mp.events.add("unique:client:adminJailStatus", (payloadJson: string) => {
+  sendToUi("admin:jailStatus", safeParse(payloadJson));
 });
 
 mp.events.add("unique:client:spectatePlayer", (payloadJson: string) => {
@@ -171,7 +195,11 @@ mp.events.add("unique:client:creatorStarted", (payloadJson: string) => {
 
 mp.events.add("unique:client:enterWorld", (payloadJson: string) => {
   const payload = safeParse(payloadJson);
+  resetNoClipState();
   inWorld = true;
+  currentWorldPayload = payload;
+  pendingBootstrap = null;
+  inventoryOpen = false;
   sendToUi("world:enter", payload);
   closeAuthExperience(false);
 
@@ -186,6 +214,19 @@ mp.events.add("unique:cef:ready", () => {
   browserReady = true;
   if (pendingBootstrap) {
     sendToUi("auth:bootstrap", pendingBootstrap);
+    return;
+  }
+
+  if (inWorld && currentWorldPayload) {
+    sendToUi("world:enter", currentWorldPayload);
+  }
+
+  if (pendingInventoryOpen) {
+    pendingInventoryOpen = false;
+    inventoryOpen = true;
+    mp.gui.cursor.show(true, true);
+    sendToUi("inventory:open", {});
+    sendInventoryNearbyPlayers(true);
   }
 });
 
@@ -225,7 +266,7 @@ mp.events.add("unique:cef:deathRespawn", () => {
 mp.events.add("unique:cef:chatSubmit", (payloadJson: string) => {
   const payload = safeParse(payloadJson);
   chatInputOpen = false;
-  mp.gui.cursor.show(adminPanelOpen || deathScreenOpen || mainMenuOpen, adminPanelOpen || deathScreenOpen || mainMenuOpen);
+  mp.gui.cursor.show(adminPanelOpen || deathScreenOpen || mainMenuOpen || inventoryOpen, adminPanelOpen || deathScreenOpen || mainMenuOpen || inventoryOpen);
 
   if (isObject(payload) && typeof payload.text === "string" && payload.text.trim().startsWith("/")) {
     mp.events.callRemote("unique:server:chatCommand", JSON.stringify({ command: payload.text.trim() }));
@@ -237,17 +278,46 @@ mp.events.add("unique:cef:chatSubmit", (payloadJson: string) => {
 
 mp.events.add("unique:cef:chatClose", () => {
   chatInputOpen = false;
-  mp.gui.cursor.show(adminPanelOpen || deathScreenOpen || mainMenuOpen, adminPanelOpen || deathScreenOpen || mainMenuOpen);
+  mp.gui.cursor.show(adminPanelOpen || deathScreenOpen || mainMenuOpen || inventoryOpen, adminPanelOpen || deathScreenOpen || mainMenuOpen || inventoryOpen);
 });
 
 mp.events.add("unique:cef:adminClose", () => {
   adminPanelOpen = false;
-  mp.gui.cursor.show(chatInputOpen || deathScreenOpen || mainMenuOpen, chatInputOpen || deathScreenOpen || mainMenuOpen);
+  mp.gui.cursor.show(chatInputOpen || deathScreenOpen || mainMenuOpen || inventoryOpen, chatInputOpen || deathScreenOpen || mainMenuOpen || inventoryOpen);
 });
 
 mp.events.add("unique:cef:mainMenuClose", () => {
   mainMenuOpen = false;
-  mp.gui.cursor.show(chatInputOpen || deathScreenOpen || adminPanelOpen, chatInputOpen || deathScreenOpen || adminPanelOpen);
+  cefInputFocused = false;
+  mp.gui.cursor.show(chatInputOpen || deathScreenOpen || adminPanelOpen || inventoryOpen, chatInputOpen || deathScreenOpen || adminPanelOpen || inventoryOpen);
+});
+
+mp.events.add("unique:cef:inventoryClose", () => {
+  inventoryOpen = false;
+  pendingInventoryOpen = false;
+  mp.gui.cursor.show(chatInputOpen || deathScreenOpen || adminPanelOpen || mainMenuOpen, chatInputOpen || deathScreenOpen || adminPanelOpen || mainMenuOpen);
+  sendToUi("inventory:close", {});
+});
+
+mp.events.add("unique:cef:inventoryGive", (payloadJson: string) => {
+  const payload = safeParse(payloadJson);
+  const targetRemoteId = isObject(payload) ? Math.trunc(Number(payload.targetRemoteId)) : -1;
+  const itemName = isObject(payload) && typeof payload.itemName === "string" ? payload.itemName : "Item";
+  const target = findRemotePlayer(targetRemoteId);
+
+  if (!target || !isNearbyInventoryPlayer(target)) {
+    mp.game.graphics.notify("Spieler ist nicht mehr in der Naehe");
+    sendInventoryNearbyPlayers(true);
+    return;
+  }
+
+  mp.events.callRemote("unique:server:inventoryGive", payloadJson);
+  mp.game.graphics.notify(`${itemName} zum Geben ausgewaehlt`);
+});
+
+mp.events.add("unique:cef:uiFocus", (payloadJson: string) => {
+  const payload = safeParse(payloadJson);
+  cefInputFocused = Boolean(isObject(payload) && payload.focused);
 });
 
 mp.events.add("unique:cef:supportTicketCreate", (payloadJson: string) => {
@@ -268,6 +338,10 @@ mp.events.add("unique:cef:replySupportTicket", (payloadJson: string) => {
 
 mp.events.add("unique:cef:setCommandPermission", (payloadJson: string) => {
   mp.events.callRemote("unique:server:setCommandPermission", payloadJson);
+});
+
+mp.events.add("unique:cef:saveUiTheme", (payloadJson: string) => {
+  mp.events.callRemote("unique:server:saveUiTheme", payloadJson);
 });
 
 mp.events.add("unique:cef:previewAppearance", (payloadJson: string) => {
@@ -326,7 +400,7 @@ function closeAuthExperience(destroyBrowser = true) {
 }
 
 mp.keys.bind(keyCodes.T, true, () => {
-  if (!browser || chatInputOpen || adminPanelOpen || mainMenuOpen) {
+  if (!browser || chatInputOpen || adminPanelOpen || mainMenuOpen || inventoryOpen) {
     return;
   }
   chatInputOpen = true;
@@ -338,18 +412,21 @@ mp.keys.bind(keyCodes.T, true, () => {
 });
 
 mp.keys.bind(keyCodes.F3, true, () => {
-  if (!browser || chatInputOpen || deathScreenOpen || mainMenuOpen) {
+  if (!browser || chatInputOpen || deathScreenOpen || mainMenuOpen || inventoryOpen) {
     return;
   }
   mp.events.callRemote("unique:server:requestAdminPanel");
 });
 
 mp.keys.bind(keyCodes.M, true, () => {
-  if (!browser || chatInputOpen || adminPanelOpen || deathScreenOpen) {
+  if (!browser || chatInputOpen || adminPanelOpen || deathScreenOpen || inventoryOpen) {
     return;
   }
 
   if (mainMenuOpen) {
+    if (cefInputFocused) {
+      return;
+    }
     mainMenuOpen = false;
     mp.gui.cursor.show(false, false);
     sendToUi("menu:close", {});
@@ -361,19 +438,59 @@ mp.keys.bind(keyCodes.M, true, () => {
   sendToUi("menu:open", {});
 });
 
+mp.keys.bind(keyCodes.I, true, () => {
+  if (chatInputOpen || adminPanelOpen || deathScreenOpen || mainMenuOpen || !inWorld) {
+    return;
+  }
+
+  if (!browser) {
+    browser = mp.browsers.new("package://unique_cef/index.html");
+    browserReady = false;
+    pendingInventoryOpen = true;
+    inventoryOpen = true;
+    mp.gui.cursor.show(true, true);
+    return;
+  }
+
+  if (!browserReady) {
+    pendingInventoryOpen = true;
+    inventoryOpen = true;
+    mp.gui.cursor.show(true, true);
+    return;
+  }
+
+  inventoryOpen = !inventoryOpen;
+  mp.gui.cursor.show(inventoryOpen, inventoryOpen);
+  sendToUi(inventoryOpen ? "inventory:open" : "inventory:close", {});
+  if (inventoryOpen) {
+    sendInventoryNearbyPlayers(true);
+  }
+});
+
+mp.keys.bind(keyCodes.Escape, true, () => {
+  if (!inventoryOpen) {
+    return;
+  }
+
+  inventoryOpen = false;
+  pendingInventoryOpen = false;
+  mp.gui.cursor.show(false, false);
+  sendToUi("inventory:close", {});
+});
+
 mp.keys.bind(keyCodes.X, true, () => {
   if (mp.keys.isDown(keyCodes.Ctrl) && noClipEnabled) {
     dropNoClipToGround();
     return;
   }
 
-  if (!chatInputOpen && !adminPanelOpen && !deathScreenOpen && !mainMenuOpen) {
+  if (!chatInputOpen && !adminPanelOpen && !deathScreenOpen && !mainMenuOpen && !inventoryOpen) {
     mp.events.callRemote("unique:server:requestNoClip");
   }
 });
 
 mp.keys.bind(keyCodes.ArrowUp, true, () => {
-  if (chatInputOpen || adminPanelOpen || deathScreenOpen || mainMenuOpen) {
+  if (chatInputOpen || adminPanelOpen || deathScreenOpen || mainMenuOpen || inventoryOpen) {
     return;
   }
 
@@ -388,8 +505,10 @@ mp.keys.bind(keyCodes.ArrowUp, true, () => {
 
 mp.events.add("render", () => {
   suppressDefaultHudControls();
+  applyRunSprintMultiplier();
   updateNoClip();
   updateHudLocation();
+  updateInventoryNearbyPlayers();
   updateVehicleFocusHint();
   updateVehicleDebugOverlay();
 });
@@ -545,6 +664,15 @@ function suppressDefaultHudControls() {
   mp.game.controls.disableControlAction(0, 165, true);
 }
 
+function applyRunSprintMultiplier() {
+  if (!inWorld || noClipEnabled || deathScreenOpen) {
+    return;
+  }
+
+  const playerId = mp.game.player.playerId?.() ?? 0;
+  mp.game.player.setRunSprintMultiplierFor?.(playerId, runSprintMultiplier);
+}
+
 function toggleNoClip() {
   if (noClipEnabled) {
     stopNoClip();
@@ -590,6 +718,28 @@ function stopNoClip(positionOverride?: RageMpVector3) {
   player.setCollision?.(true, false);
   noClipEnabled = false;
   mp.game.graphics.notify("NoClip deaktiviert");
+}
+
+function resetNoClipState() {
+  const player = mp.players.local;
+
+  try {
+    noClipCamera?.destroy();
+  } catch {}
+
+  noClipCamera = null;
+  noClipEnabled = false;
+
+  try {
+    mp.game.cam.renderScriptCams(false, false, 0, true, false);
+  } catch {}
+
+  try {
+    player.freezePosition(false);
+  } catch {}
+  player.setInvincible?.(false);
+  player.setVisible?.(true, false);
+  player.setCollision?.(true, false);
 }
 
 function toggleSpectateTarget(payload: unknown) {
@@ -1036,8 +1186,70 @@ function getDistance(a: RageMpVector3, b: RageMpVector3) {
   return Math.sqrt(dx * dx + dy * dy + dz * dz);
 }
 
+function updateInventoryNearbyPlayers() {
+  if (!inventoryOpen) {
+    return;
+  }
+
+  const now = Date.now();
+  if (now - lastInventoryNearbyUpdate < 850) {
+    return;
+  }
+
+  sendInventoryNearbyPlayers(false);
+}
+
+function sendInventoryNearbyPlayers(force: boolean) {
+  if (!inventoryOpen && !force) {
+    return;
+  }
+
+  lastInventoryNearbyUpdate = Date.now();
+  sendToUi("inventory:nearbyPlayers", { players: getNearbyInventoryPlayers() });
+}
+
+function getNearbyInventoryPlayers() {
+  const localPosition = mp.players.local.position;
+  const players = mp.players.toArray?.() ?? [];
+
+  return players
+    .filter(isNearbyInventoryPlayer)
+    .map((player) => {
+      const remoteId = Number.isInteger(player.remoteId) ? Number(player.remoteId) : -1;
+      return {
+        remoteId,
+        name: getRemotePlayerName(player, remoteId),
+        distance: getDistance(localPosition, player.position)
+      };
+    })
+    .filter((player) => player.remoteId >= 0)
+    .sort((a, b) => a.distance - b.distance)
+    .slice(0, 5);
+}
+
+function isNearbyInventoryPlayer(player: RageMpRemotePlayer) {
+  if (!player?.position || !Number.isInteger(player.remoteId)) {
+    return false;
+  }
+
+  return getDistance(mp.players.local.position, player.position) <= 3.0;
+}
+
+function getRemotePlayerName(player: RageMpRemotePlayer, remoteId: number) {
+  const syncedName = player.getVariable?.("unique:character:name");
+  if (typeof syncedName === "string" && syncedName.trim()) {
+    return syncedName.trim();
+  }
+
+  if (typeof player.name === "string" && player.name.trim()) {
+    return player.name.trim();
+  }
+
+  return `Spieler #${remoteId}`;
+}
+
 function updateNoClip() {
-  if (!noClipEnabled || !noClipCamera || chatInputOpen || adminPanelOpen) {
+  if (!noClipEnabled || !noClipCamera || chatInputOpen || adminPanelOpen || inventoryOpen) {
     return;
   }
 

@@ -2,7 +2,7 @@ import { config } from "./config";
 import { findActiveChatMute } from "./db/chat";
 import { assertDatabaseConnection } from "./db/pool";
 import { canUseNoClip, handleAdminCommand, sendAdminPanelData, teleportAdminToWaypoint, updateAdminCommandPermission } from "./features/admin";
-import { loginAccount, registerAccount, sendAuthBootstrap } from "./features/auth";
+import { loginAccount, registerAccount, saveUiTheme, sendAuthBootstrap } from "./features/auth";
 import {
   beginRoleplayCharacterCreation,
   cancelRoleplayCharacterCreation,
@@ -153,6 +153,14 @@ mp.events.add("unique:server:replySupportTicket", async (player: RageMpPlayer, p
   await safe(player, () => handlePlayerSupportTicketAction(player, payloadJson));
 });
 
+mp.events.add("unique:server:saveUiTheme", async (player: RageMpPlayer, payloadJson: string) => {
+  await safe(player, () => saveUiTheme(player, payloadJson));
+});
+
+mp.events.add("unique:server:inventoryGive", async (player: RageMpPlayer, payloadJson: string) => {
+  await safe(player, async () => handleInventoryGive(player, payloadJson));
+});
+
 mp.events.add("unique:server:deathStarted", async (player: RageMpPlayer) => {
   await safe(player, () => markRoleplayCharacterDead(player));
 });
@@ -190,7 +198,7 @@ mp.events.addCommand("pos", (player: RageMpPlayer) => {
   player.outputChatBox(`Position: ${position.x.toFixed(2)}, ${position.y.toFixed(2)}, ${position.z.toFixed(2)}`);
 });
 
-["admin", "heal", "armor", "revive", "setadmin", "addcash", "setcash", "addbank", "setbank", "adduniquecoins", "setuniquecoins", "dim", "setdim", "msg", "veh", "dl", "delveh", "getveh", "tmute", "tunmute", "mute", "unmute"].forEach((command) => {
+["admin", "heal", "armor", "revive", "setadmin", "addcash", "setcash", "addbank", "setbank", "adduniquecoins", "setuniquecoins", "dim", "setdim", "msg", "veh", "dl", "delveh", "getveh", "amsg", "ban", "iban", "uniban", "jail", "unjail", "warn", "unwarn", "unban", "tmute", "tunmute", "mute", "unmute"].forEach((command) => {
   mp.events.addCommand(command, (player: RageMpPlayer, ...args: string[]) => {
     safe(player, async () => {
       await handleAdminCommand(player, command, args);
@@ -304,6 +312,26 @@ function normalizeChatMode(value: unknown): "ic" | "ooc" | "me" | "do" | "try" {
 
 function sendSystemChat(player: RageMpPlayer, text: string) {
   player.call("unique:client:chatPush", [JSON.stringify({ tone: "info", author: "SYSTEM", text })]);
+}
+
+async function handleInventoryGive(player: RageMpPlayer, payloadJson: string) {
+  const payload = parsePayload(payloadJson);
+  const targetRemoteId = Math.trunc(Number(payload.targetRemoteId));
+  const itemName = String(payload.itemName ?? "Item").trim().slice(0, 48) || "Item";
+  const target = listOnlinePlayers().find((onlinePlayer) => onlinePlayer.id === targetRemoteId);
+
+  if (!target || target === player) {
+    sendSystemChat(player, "Dieser Spieler ist nicht mehr in deiner Naehe.");
+    return;
+  }
+
+  if (target.dimension !== player.dimension || !target.position || !player.position || getDistance(player.position, target.position) > 4.0) {
+    sendSystemChat(player, "Dieser Spieler ist nicht mehr in deiner Naehe.");
+    return;
+  }
+
+  sendSystemChat(player, `${itemName} wurde fuer ${getChatAuthor(target)} ausgewaehlt.`);
+  sendSystemChat(target, `${getChatAuthor(player)} moechte dir ${itemName} geben.`);
 }
 
 function getDistance(a: { x: number; y: number; z: number }, b: { x: number; y: number; z: number }) {
