@@ -157,6 +157,27 @@ mp.events.add("unique:server:saveUiTheme", async (player: RageMpPlayer, payloadJ
   await safe(player, () => saveUiTheme(player, payloadJson));
 });
 
+mp.events.add("unique:server:vehicleEntered", async (player: RageMpPlayer, payloadJson: string) => {
+  await safe(player, async () => {
+    const vehicle = getVehicleFromPayload(payloadJson);
+    if (!vehicle) {
+      return;
+    }
+
+    ensureVehicleVariables(vehicle);
+    vehicle.setVariable?.("unique:vehicle:engineOn", false);
+    sendVehicleState(player, vehicle);
+  });
+});
+
+mp.events.add("unique:server:vehicleControl", async (player: RageMpPlayer, payloadJson: string) => {
+  await safe(player, async () => handleVehicleAction(player, payloadJson, false));
+});
+
+mp.events.add("unique:server:vehicleInteraction", async (player: RageMpPlayer, payloadJson: string) => {
+  await safe(player, async () => handleVehicleAction(player, payloadJson, true));
+});
+
 mp.events.add("unique:server:inventoryGive", async (player: RageMpPlayer, payloadJson: string) => {
   await safe(player, async () => handleInventoryGive(player, payloadJson));
 });
@@ -252,6 +273,125 @@ function handleRoleplayChatCommand(player: RageMpPlayer, command: string, args: 
   }
 
   return false;
+}
+
+async function handleVehicleAction(player: RageMpPlayer, payloadJson: string, fromInteraction: boolean) {
+  const payload = parsePayload(payloadJson);
+  const actionId = String(payload.actionId ?? "").trim().toLowerCase();
+  const vehicle = getVehicleFromPayload(payloadJson) ?? player.vehicle ?? null;
+  if (!vehicle || !actionId) {
+    return;
+  }
+
+  ensureVehicleVariables(vehicle);
+  if (fromInteraction && !isNearVehicle(player, vehicle, 3.0)) {
+    sendSystemChat(player, "Du bist zu weit vom Fahrzeug entfernt.");
+    return;
+  }
+
+  if (actionId === "lock" || actionId === "doors") {
+    const locked = !readVehicleBoolean(vehicle, "unique:vehicle:locked");
+    vehicle.setVariable?.("unique:vehicle:locked", locked);
+    sendSystemChat(player, locked ? "Fahrzeug abgeschlossen." : "Fahrzeug aufgeschlossen.");
+    sendVehicleState(player, vehicle);
+    return;
+  }
+
+  if (actionId === "engine") {
+    if (!player.vehicle || player.vehicle !== vehicle) {
+      sendSystemChat(player, "Du musst im Fahrzeug sitzen.");
+      return;
+    }
+    const engineOn = !readVehicleBoolean(vehicle, "unique:vehicle:engineOn");
+    vehicle.setVariable?.("unique:vehicle:engineOn", engineOn);
+    sendSystemChat(player, engineOn ? "Motor gestartet." : "Motor ausgeschaltet.");
+    sendVehicleState(player, vehicle);
+    return;
+  }
+
+  if (actionId === "trunk") {
+    const open = !readVehicleBoolean(vehicle, "unique:vehicle:trunkOpen");
+    vehicle.setVariable?.("unique:vehicle:trunkOpen", open);
+    sendSystemChat(player, open ? "Kofferraum geoeffnet." : "Kofferraum geschlossen.");
+    sendVehicleState(player, vehicle);
+    return;
+  }
+
+  if (actionId === "hood") {
+    const open = !readVehicleBoolean(vehicle, "unique:vehicle:hoodOpen");
+    vehicle.setVariable?.("unique:vehicle:hoodOpen", open);
+    sendSystemChat(player, open ? "Motorhaube geoeffnet." : "Motorhaube geschlossen.");
+    sendVehicleState(player, vehicle);
+    return;
+  }
+
+  if (actionId === "glovebox") {
+    sendSystemChat(player, "Handschuhfach ist vorbereitet.");
+    return;
+  }
+
+  if (actionId === "keys") {
+    sendSystemChat(player, "Schluesselverwaltung ist vorbereitet.");
+    return;
+  }
+
+  if (actionId === "search") {
+    sendSystemChat(player, "Fahrzeugdurchsuchung ist vorbereitet.");
+    return;
+  }
+
+  if (actionId === "repair") {
+    sendSystemChat(player, "Reparaturkit ist noch nicht implementiert.");
+  }
+}
+
+function getVehicleFromPayload(payloadJson: string) {
+  const payload = parsePayload(payloadJson);
+  const targetId = Number(payload.targetId);
+  if (!Number.isInteger(targetId) || targetId < 0) {
+    return null;
+  }
+  return (mp as unknown as { vehicles: { at?: (id: number) => RageMpVehicle | undefined } }).vehicles.at?.(targetId) ?? null;
+}
+
+function ensureVehicleVariables(vehicle: RageMpVehicle) {
+  if (typeof vehicle.getVariable?.("unique:vehicle:locked") !== "boolean") {
+    vehicle.setVariable?.("unique:vehicle:locked", false);
+  }
+  if (typeof vehicle.getVariable?.("unique:vehicle:engineOn") !== "boolean") {
+    vehicle.setVariable?.("unique:vehicle:engineOn", false);
+  }
+  if (typeof vehicle.getVariable?.("unique:vehicle:trunkOpen") !== "boolean") {
+    vehicle.setVariable?.("unique:vehicle:trunkOpen", false);
+  }
+  if (typeof vehicle.getVariable?.("unique:vehicle:hoodOpen") !== "boolean") {
+    vehicle.setVariable?.("unique:vehicle:hoodOpen", false);
+  }
+  if (typeof vehicle.getVariable?.("unique:vehicle:hasKey") !== "boolean") {
+    vehicle.setVariable?.("unique:vehicle:hasKey", true);
+  }
+  if (!Number.isFinite(Number(vehicle.getVariable?.("unique:vehicle:fuel")))) {
+    vehicle.setVariable?.("unique:vehicle:fuel", 100);
+  }
+}
+
+function sendVehicleState(player: RageMpPlayer, vehicle: RageMpVehicle) {
+  player.call("unique:client:vehicleState", [JSON.stringify({ targetId: getVehicleId(vehicle) })]);
+}
+
+function readVehicleBoolean(vehicle: RageMpVehicle, key: string) {
+  return Boolean(vehicle.getVariable?.(key));
+}
+
+function isNearVehicle(player: RageMpPlayer, vehicle: RageMpVehicle, maxDistance: number) {
+  if (!player.position || !vehicle.position) {
+    return false;
+  }
+  return getDistance(player.position, vehicle.position) <= maxDistance;
+}
+
+function getVehicleId(vehicle: RageMpVehicle) {
+  return Number.isInteger(vehicle.id) ? Number(vehicle.id) : -1;
 }
 
 function sendRoleplayMessage(player: RageMpPlayer, mode: "ic" | "ooc" | "me" | "do" | "try", rawMessage: string) {

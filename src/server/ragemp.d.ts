@@ -23,6 +23,7 @@ interface RageMpPlayer {
   spawn(position: RageMpVector3): void;
   setVariable?(key: string, value: unknown): void;
   putIntoVehicle?(vehicle: RageMpVehicle, seat: number): void;
+  vehicle?: RageMpVehicle | null;
 }
 
 interface RageMpVehicle {
@@ -30,6 +31,7 @@ interface RageMpVehicle {
   dimension: number;
   position?: RageMpVector3;
   heading?: number;
+  getVariable?(key: string): unknown;
   setVariable?(key: string, value: unknown): void;
   destroy?(): void;
 }

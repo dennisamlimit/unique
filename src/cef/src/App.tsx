@@ -4,18 +4,23 @@ import {
   Banknote,
   Ban,
   BarChart3,
+  Boxes,
   Briefcase,
   Brush,
   Bug,
   CalendarDays,
+  CarFront,
   CheckCircle2,
   ChevronDown,
+  Clock,
   ClipboardList,
+  DoorOpen,
   Eye,
   Flag,
   Heart,
   HelpCircle,
   Home,
+  KeyRound,
   LayoutDashboard,
   Lock,
   LogIn,
@@ -27,6 +32,7 @@ import {
   Phone,
   Plus,
   Scissors,
+  Search,
   Send,
   ShieldCheck,
   Shirt,
@@ -374,6 +380,7 @@ export function App() {
   const [deathScreen, setDeathScreen] = useState<DeathScreenPayload | null>(null);
   const [deathScreenKey, setDeathScreenKey] = useState(0);
   const [hudData, setHudData] = useState<HudDataPayload | null>(null);
+  const [vehicleHud, setVehicleHud] = useState<VehicleHudPayload>({ visible: false });
   const [hudLocation, setHudLocation] = useState<HudLocationPayload>({
     street: "Unbekannte Strasse",
     crossing: "",
@@ -390,6 +397,8 @@ export function App() {
   const [adminOpen, setAdminOpen] = useState(false);
   const [inventoryOpen, setInventoryOpen] = useState(false);
   const [inventoryNearbyPlayers, setInventoryNearbyPlayers] = useState<NearbyInventoryPlayer[]>([]);
+  const [interactionHintTarget, setInteractionHintTarget] = useState<VehicleInteractionTarget | null>(null);
+  const [vehicleInteractionTarget, setVehicleInteractionTarget] = useState<VehicleInteractionTarget | null>(null);
   const adminScreenTimer = useRef<number | null>(null);
   const [adminData, setAdminData] = useState<AdminPanelPayload>({
     admins: [],
@@ -499,6 +508,11 @@ export function App() {
           return;
         }
 
+        if (event.type === "vehicle:hud") {
+          setVehicleHud(event.payload);
+          return;
+        }
+
         if (event.type === "chat:push") {
           setChatMessages((current) => [...current, event.payload].slice(-120));
           return;
@@ -507,6 +521,8 @@ export function App() {
         if (event.type === "chat:open") {
           setDeadChatOnly(Boolean(event.payload.dead));
           setInventoryOpen(false);
+          setInteractionHintTarget(null);
+          setVehicleInteractionTarget(null);
           setChatOpen(true);
           return;
         }
@@ -515,6 +531,8 @@ export function App() {
           setChatOpen(false);
           setAdminOpen(false);
           setInventoryOpen(false);
+          setInteractionHintTarget(null);
+          setVehicleInteractionTarget(null);
           setSupportTicketResult(null);
           setMainMenuOpen(true);
           emitToClient("unique:cef:requestSupportTickets", {});
@@ -575,6 +593,8 @@ export function App() {
           setAdminOpen(false);
           setMainMenuOpen(false);
           setInventoryOpen(false);
+          setInteractionHintTarget(null);
+          setVehicleInteractionTarget(null);
           return;
         }
 
@@ -589,6 +609,8 @@ export function App() {
           setDeadChatOnly(false);
           setMainMenuOpen(false);
           setInventoryOpen(false);
+          setInteractionHintTarget(null);
+          setVehicleInteractionTarget(null);
           setAdminOpen(true);
           return;
         }
@@ -603,6 +625,8 @@ export function App() {
           setDeadChatOnly(false);
           setMainMenuOpen(false);
           setAdminOpen(false);
+          setInteractionHintTarget(null);
+          setVehicleInteractionTarget(null);
           setInventoryOpen(true);
           return;
         }
@@ -617,6 +641,28 @@ export function App() {
           return;
         }
 
+        if (event.type === "interaction:hint") {
+          setInteractionHintTarget(event.payload.visible && event.payload.target ? event.payload.target : null);
+          return;
+        }
+
+        if (event.type === "interaction:open") {
+          setChatOpen(false);
+          setDeadChatOnly(false);
+          setMainMenuOpen(false);
+          setAdminOpen(false);
+          setInventoryOpen(false);
+          setInteractionHintTarget(null);
+          setVehicleInteractionTarget(event.payload);
+          playInteractionOpenSound();
+          return;
+        }
+
+        if (event.type === "interaction:close") {
+          setVehicleInteractionTarget(null);
+          return;
+        }
+
         if (event.type === "admin:data") {
           setAdminData(event.payload);
         }
@@ -624,6 +670,9 @@ export function App() {
     };
 
     const preventCopy = (event: Event) => {
+      if (event.target instanceof Element && event.target.closest("input, textarea, [contenteditable='true']")) {
+        return;
+      }
       if (event.type === "dragstart" && event.target instanceof Element && event.target.closest("[data-inventory-draggable]")) {
         return;
       }
@@ -695,8 +744,15 @@ export function App() {
       {screen === "world" ? (
         <>
           <WorldHud data={hudData} location={hudLocation} />
+          {vehicleHud.visible ? <VehicleHud data={vehicleHud} /> : null}
+          {interactionHintTarget && !vehicleInteractionTarget && !chatOpen && !adminOpen && !mainMenuOpen && !inventoryOpen ? (
+            <VehicleInteractionHint target={interactionHintTarget} />
+          ) : null}
           {adminJailStatus ? <AdminJailOverlay status={adminJailStatus} onExpired={() => setAdminJailStatus(null)} /> : null}
           {!adminOpen && !mainMenuOpen && !inventoryOpen ? <ChatHud messages={chatMessages} open={chatOpen} deadOnly={deadChatOnly} onClose={() => setChatOpen(false)} /> : null}
+          {vehicleInteractionTarget ? (
+            <VehicleInteractionMenu target={vehicleInteractionTarget} onClose={() => setVehicleInteractionTarget(null)} />
+          ) : null}
           {mainMenuOpen ? (
             <MainMenu
               character={currentCharacter}
@@ -832,6 +888,270 @@ function AdminJailOverlay({ status, onExpired }: { status: AdminJailStatusPayloa
       </div>
     </div>
   );
+}
+
+type VehicleInteractionAction = {
+  id: VehicleInteractionActionId;
+  label: string;
+  icon: React.ReactNode;
+  disabled?: (target: VehicleInteractionTarget) => boolean;
+};
+
+const vehicleInteractionActions: VehicleInteractionAction[] = [
+  { id: "lock", label: "Tuerschloss", icon: <Lock className="h-6 w-6" aria-hidden /> },
+  { id: "engine", label: "Motor", icon: <KeyRound className="h-6 w-6" aria-hidden /> },
+  { id: "doors", label: "Tueren", icon: <DoorOpen className="h-6 w-6" aria-hidden /> },
+  { id: "trunk", label: "Kofferraum", icon: <Boxes className="h-6 w-6" aria-hidden />, disabled: (target) => Boolean(target.meta?.locked) },
+  { id: "hood", label: "Motorhaube", icon: <CarFront className="h-6 w-6" aria-hidden /> },
+  { id: "glovebox", label: "Handschuhfach", icon: <Package className="h-6 w-6" aria-hidden /> },
+  { id: "passengers", label: "Insassen", icon: <Users className="h-6 w-6" aria-hidden /> },
+  { id: "keys", label: "Schluessel", icon: <KeyRound className="h-6 w-6" aria-hidden /> },
+  { id: "search", label: "Durchsuchen", icon: <Search className="h-6 w-6" aria-hidden /> },
+  { id: "repair", label: "Reparieren", icon: <Wrench className="h-6 w-6" aria-hidden />, disabled: (target) => !target.meta?.repairReady }
+];
+
+const vehicleInteractionRows = [3, 4, 3];
+
+function VehicleInteractionHint({ target }: { target: VehicleInteractionTarget }) {
+  const fallbackScreen = useMemo(() => ({ x: 50, y: 50 }), []);
+  const [displayScreen, setDisplayScreen] = useState(() => target.screen ?? fallbackScreen);
+  const targetScreenRef = useRef(target.screen ?? fallbackScreen);
+
+  useEffect(() => {
+    targetScreenRef.current = target.screen ?? fallbackScreen;
+    if (!target.screen) {
+      setDisplayScreen(fallbackScreen);
+    }
+  }, [fallbackScreen, target.screen]);
+
+  useEffect(() => {
+    let frame = 0;
+    const tick = () => {
+      setDisplayScreen((current) => {
+        const nextTarget = targetScreenRef.current;
+        const dx = nextTarget.x - current.x;
+        const dy = nextTarget.y - current.y;
+        if (Math.abs(dx) < 0.025 && Math.abs(dy) < 0.025) {
+          return current.x === nextTarget.x && current.y === nextTarget.y ? current : nextTarget;
+        }
+        return {
+          x: current.x + dx * 0.46,
+          y: current.y + dy * 0.46
+        };
+      });
+      frame = window.requestAnimationFrame(tick);
+    };
+
+    frame = window.requestAnimationFrame(tick);
+    return () => window.cancelAnimationFrame(frame);
+  }, []);
+
+  return (
+    <div className="pointer-events-none fixed inset-0 z-[32] text-white">
+      <div
+        className="absolute flex flex-col items-center"
+        style={{ left: `${displayScreen.x}%`, top: `${displayScreen.y}%`, transform: "translate(-50%, -50%)" }}
+      >
+        <div className="relative grid h-12 w-12 place-items-center rounded-full border border-unique-gold/75 bg-unique-ink/34 shadow-[0_0_18px_rgb(var(--unique-gold-rgb)/0.20)] backdrop-blur-[2px]">
+          <div className="absolute inset-1 rounded-full border border-unique-teal/35" />
+          <span className="text-lg font-black leading-none text-unique-gold">G</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function VehicleInteractionMenu({ target, onClose }: { target: VehicleInteractionTarget; onClose: () => void }) {
+  const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
+  const rows = useMemo(() => buildVehicleInteractionRows(vehicleInteractionActions, vehicleInteractionRows), []);
+
+  useEffect(() => {
+    setSelectedIndex(null);
+  }, [target.id]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" || event.key.toLowerCase() === "g") {
+        event.preventDefault();
+        close();
+        return;
+      }
+
+      if (event.key === "ArrowDown" || event.key === "ArrowRight") {
+        event.preventDefault();
+        setSelectedIndex((current) => (current === null ? 0 : (current + 1) % vehicleInteractionActions.length));
+        return;
+      }
+
+      if (event.key === "ArrowUp" || event.key === "ArrowLeft") {
+        event.preventDefault();
+        setSelectedIndex((current) => (current === null ? vehicleInteractionActions.length - 1 : (current - 1 + vehicleInteractionActions.length) % vehicleInteractionActions.length));
+        return;
+      }
+
+      if (event.key === "Enter" && selectedIndex !== null) {
+        event.preventDefault();
+        select(vehicleInteractionActions[selectedIndex]);
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [selectedIndex, target]);
+
+  function close() {
+    emitToClient("unique:cef:vehicleInteractionClose", {});
+    onClose();
+  }
+
+  function select(action: VehicleInteractionAction) {
+    if (action.disabled?.(target)) {
+      return;
+    }
+
+    emitToClient("unique:cef:vehicleInteractionSelect", {
+      actionId: action.id,
+      targetId: target.id,
+      targetType: target.type
+    });
+    onClose();
+  }
+
+  return (
+    <section className="fixed inset-0 z-[80] overflow-hidden bg-black/18 text-white">
+      <div className="pointer-events-none absolute inset-0 backdrop-blur-[1px]" />
+      <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(115deg,rgb(var(--unique-bg-rgb)/0.92),rgb(var(--unique-ink-rgb)/0.72)_52%,rgb(var(--unique-deep-rgb)/0.92))]" />
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_48%,rgb(var(--unique-teal-rgb)/0.14),transparent_34%)]" />
+
+      <div className="interaction-enter relative flex h-full w-full items-center justify-center px-4">
+        <button
+          type="button"
+          className="absolute right-5 top-5 grid h-10 w-10 place-items-center rounded-md border border-white/10 bg-black/28 text-white/65 transition hover:border-unique-gold/50 hover:text-white"
+          onClick={close}
+        >
+          <X className="h-4 w-4" aria-hidden />
+        </button>
+
+        <header className="absolute left-1/2 top-[15%] -translate-x-1/2 text-center">
+          <CarFront className="mx-auto mb-2 h-6 w-6 text-unique-gold" aria-hidden />
+          <h2 className="max-w-[80vw] truncate text-2xl font-semibold text-white drop-shadow">{target.name || "Fahrzeug"}</h2>
+          <p className="mt-1 text-xs font-black uppercase text-white/45">
+            {target.subtitle || "Fahrzeuginteraktion"} {Number.isFinite(target.distance) ? `/ ${target.distance.toFixed(1)} m` : ""}
+          </p>
+        </header>
+
+        <div className="relative flex flex-col items-center pt-16">
+          <div className="pointer-events-none absolute left-1/2 top-1/2 h-[320px] w-[500px] max-w-[90vw] -translate-x-1/2 -translate-y-1/2 rounded-full bg-unique-teal/10 blur-2xl" />
+          {rows.map((row, rowIndex) => {
+            const previousItems = rows.slice(0, rowIndex).reduce((sum, current) => sum + current.length, 0);
+            return (
+              <div key={`vehicle-row-${rowIndex}`} className="relative -mt-3 flex items-center justify-center first:mt-0">
+                {row.map((action, index) => {
+                  const globalIndex = previousItems + index;
+                  return (
+                    <VehicleHexAction
+                      key={action.id}
+                      action={action}
+                      target={target}
+                      selected={globalIndex === selectedIndex}
+                      disabled={Boolean(action.disabled?.(target))}
+                      onHover={() => setSelectedIndex(globalIndex)}
+                      onLeave={() => setSelectedIndex(null)}
+                      onClick={() => select(action)}
+                    />
+                  );
+                })}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function VehicleHexAction({
+  action,
+  target,
+  selected,
+  disabled,
+  onHover,
+  onLeave,
+  onClick
+}: {
+  action: VehicleInteractionAction;
+  target: VehicleInteractionTarget;
+  selected: boolean;
+  disabled: boolean;
+  onHover: () => void;
+  onLeave: () => void;
+  onClick: () => void;
+}) {
+  const hexClip = "polygon(50% 0%, 94% 25%, 94% 75%, 50% 100%, 6% 75%, 6% 25%)";
+
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      className="group relative mx-px my-[-4px] flex h-[124px] w-[124px] items-center justify-center transition-transform duration-100 hover:z-20 hover:scale-[1.02] active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-45"
+      onMouseEnter={onHover}
+      onMouseLeave={onLeave}
+      onClick={onClick}
+    >
+      <div
+        className={`absolute inset-0 transition-colors duration-100 ${selected ? "bg-unique-gold/80 shadow-[0_0_18px_rgb(var(--unique-gold-rgb)/0.18)]" : "bg-unique-line/90 group-hover:bg-unique-teal/65"}`}
+        style={{ clipPath: hexClip }}
+      />
+      <div
+        className={`absolute inset-[2px] transition-colors duration-100 ${selected ? "bg-unique-ink" : "bg-unique-panel group-hover:bg-unique-ink"}`}
+        style={{ clipPath: hexClip }}
+      />
+      <div
+        className="absolute inset-[8px] bg-[radial-gradient(circle_at_top,rgb(var(--unique-teal-rgb)/0.20),transparent_68%)] opacity-75 transition group-hover:bg-[radial-gradient(circle_at_top,rgb(var(--unique-gold-rgb)/0.18),transparent_68%)]"
+        style={{ clipPath: hexClip }}
+      />
+      <div className="pointer-events-none relative z-10 flex flex-col items-center justify-center px-3 text-center">
+        <span className={selected ? "text-unique-gold" : "text-unique-teal group-hover:text-unique-gold"}>{action.icon}</span>
+        <span className="mt-2 max-w-[98px] text-[10px] font-black uppercase leading-[1.08] text-white/95">{getVehicleActionLabel(action, target)}</span>
+        {disabled ? <span className="mt-1 text-[9px] font-black uppercase text-white/35">Gesperrt</span> : null}
+      </div>
+    </button>
+  );
+}
+
+function getVehicleActionLabel(action: VehicleInteractionAction, target: VehicleInteractionTarget) {
+  if (action.id === "lock" || action.id === "doors") {
+    return target.meta?.locked ? "Aufschliessen" : "Abschliessen";
+  }
+  if (action.id === "engine") {
+    return target.meta?.engineOn ? "Motor aus" : "Motor an";
+  }
+  if (action.id === "trunk") {
+    return target.meta?.trunkOpen ? "Kofferraum zu" : "Kofferraum";
+  }
+  if (action.id === "hood") {
+    return target.meta?.hoodOpen ? "Haube zu" : "Motorhaube";
+  }
+  return action.label;
+}
+
+function buildVehicleInteractionRows(actions: VehicleInteractionAction[], rowCounts: number[]) {
+  const rows: VehicleInteractionAction[][] = [];
+  let cursor = 0;
+
+  rowCounts.forEach((count) => {
+    const row = actions.slice(cursor, cursor + count);
+    if (row.length) {
+      rows.push(row);
+    }
+    cursor += count;
+  });
+
+  if (cursor < actions.length) {
+    rows.push(actions.slice(cursor));
+  }
+
+  return rows;
 }
 
 function getAdminScreenIcon(type: AdminScreenNoticePayload["type"]) {
@@ -1311,7 +1631,7 @@ function MainMenu({
   const onlineSeconds = hudData?.onlineSeconds ?? 0;
 
   const tabs: Array<{ id: MainMenuTab; label: string; icon: React.ReactNode }> = [
-    { id: "dashboard", label: "Dashboard", icon: <LayoutDashboard className="h-5 w-5" aria-hidden /> },
+    { id: "dashboard", label: "M-Menue", icon: <LayoutDashboard className="h-5 w-5" aria-hidden /> },
     { id: "stats", label: "Statistik", icon: <BarChart3 className="h-5 w-5" aria-hidden /> },
     { id: "shop", label: "Shop", icon: <ShoppingBag className="h-5 w-5" aria-hidden /> },
     { id: "battlepass", label: "Battlepass", icon: <Trophy className="h-5 w-5" aria-hidden /> },
@@ -1355,85 +1675,448 @@ function MainMenu({
     emitToClient("unique:cef:supportTicketCreate", { category: ticketCategory, message });
   }
 
+  const level = Math.max(1, Number(character?.level ?? 1));
+  const cash = hudData?.cash ?? character?.cash ?? 0;
+  const bank = hudData?.bankBalance ?? character?.bankBalance ?? 0;
+  const organization = character?.organization || "Zivilist";
+  const rank = character?.organizationRank || "Kein Rang";
+  const ticketCount = supportTickets.length;
+  const premiumTier = "Kein Premium";
+  const submitReply = (ticketId: number) => {
+    const reply = ticketReply.trim();
+    if (reply.length < 2) {
+      setLocalTicketMessage({ ok: false, message: "Antwort ist zu kurz." });
+      return;
+    }
+    setLocalTicketMessage(null);
+    emitToClient("unique:cef:replySupportTicket", { ticketId, message: reply });
+    setTicketReply("");
+  };
+
+  const fullscreenContent = tab === "support" ? (
+    <MenuSupport
+      category={ticketCategory}
+      message={ticketMessage}
+      tickets={supportTickets}
+      selectedTicketId={selectedTicketId}
+      pending={ticketPending}
+      result={localTicketMessage}
+      onCategory={setTicketCategory}
+      onMessage={setTicketMessage}
+      reply={ticketReply}
+      onReply={setTicketReply}
+      onSelectedTicket={setSelectedTicketId}
+      onSubmitReply={submitReply}
+      onSubmit={submitTicket}
+    />
+  ) : tab === "settings" ? (
+    <MenuSettings theme={theme} onThemeChange={onThemeChange} onThemePreset={onThemePreset} />
+  ) : tab === "tasks" ? (
+    <MenuTasks />
+  ) : tab === "finance" ? (
+    <MenuFinance character={character} hudData={hudData} uniqueCoins={coins} />
+  ) : tab === "faction" ? (
+    <MenuFaction character={character} />
+  ) : tab === "property" ? (
+    <MenuPlaceholder icon={<Home className="h-7 w-7" />} title="Besitz" items={["Immobilien", "Fahrzeuge", "Lager", "Schluessel"]} />
+  ) : tab === "events" ? (
+    <MenuPlaceholder icon={<CalendarDays className="h-7 w-7" />} title="Events" items={["Aktive Events", "Anmeldungen", "Belohnungen", "Historie"]} />
+  ) : tab === "battlepass" ? (
+    <MenuBattlepass />
+  ) : null;
+
   return (
-    <section className="fixed inset-0 z-50 overflow-hidden bg-unique-bg text-white">
-      <div className="absolute inset-0 app-grid opacity-20" />
-      <div className="theme-menu-gradient absolute inset-0" />
-      <div className="relative grid h-full grid-cols-[260px_minmax(0,1fr)]">
-        <aside className="flex min-h-0 flex-col border-r border-white/10 bg-black/28 px-4 py-5">
-          <div className="flex items-start justify-between gap-3 px-2">
-            <div>
-              <p className="text-2xl font-black leading-none">Unique<span className="text-unique-gold">RP</span></p>
-              <p className="mt-2 text-xs font-bold uppercase text-white/45">M Menu</p>
-            </div>
-            <button type="button" className="grid h-9 w-9 place-items-center rounded-md border border-white/10 bg-white/5 text-white/65 transition hover:text-white" onClick={close}>
-              <X className="h-4 w-4" aria-hidden />
+    <section className="fixed inset-0 z-50 overflow-hidden bg-unique-bg font-sans text-white">
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_18%_18%,rgb(var(--unique-teal-rgb)/0.16),transparent_28%),radial-gradient(circle_at_75%_80%,rgb(var(--unique-gold-rgb)/0.12),transparent_32%),linear-gradient(115deg,rgb(var(--unique-bg-rgb)),rgb(var(--unique-deep-rgb))_48%,rgb(var(--unique-ink-rgb)))]" />
+      <div className="absolute inset-0 opacity-25 bg-[linear-gradient(rgba(255,255,255,0.045)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.03)_1px,transparent_1px)] bg-[size:32px_32px]" />
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,transparent_0%,rgba(0,0,0,0.36)_100%)]" />
+      {tab === "dashboard" ? (
+        <button type="button" className="absolute right-8 top-7 z-[65] border border-black/70 bg-black/24 px-4 py-3 text-[10px] font-black uppercase tracking-[1px] text-white/48 transition-colors hover:border-unique-danger/50 hover:text-red-200" onClick={close}>
+          Schliessen ESC
+        </button>
+      ) : null}
+
+      {tab === "shop" ? <MenuShopWindow coins={coins} premiumTier={premiumTier} onClose={() => setTab("dashboard")} /> : null}
+      {tab === "stats" ? <MenuCharacterWindow character={character} hudData={hudData} uniqueCoins={coins} onlineSeconds={onlineSeconds} onClose={() => setTab("dashboard")} /> : null}
+
+      {tab === "support" && fullscreenContent ? <MenuFullscreenPage eyebrow="Admin Kontakt" title="Ticketsupport" icon={<Ticket className="h-4 w-4" aria-hidden />} onClose={() => setTab("dashboard")}>{fullscreenContent}</MenuFullscreenPage> : null}
+      {tab === "settings" && fullscreenContent ? <MenuFullscreenPage eyebrow="Sicherheit" title="Einstellungen" icon={<ShieldCheck className="h-4 w-4" aria-hidden />} onClose={() => setTab("dashboard")}>{fullscreenContent}</MenuFullscreenPage> : null}
+      {tab !== "dashboard" && tab !== "shop" && tab !== "stats" && tab !== "support" && tab !== "settings" && fullscreenContent ? <MenuFullscreenPage eyebrow="Unique Roleplay" title={characterName} icon={<LayoutDashboard className="h-4 w-4" aria-hidden />} onClose={() => setTab("dashboard")}>{fullscreenContent}</MenuFullscreenPage> : null}
+
+      <main className="absolute left-1/2 top-1/2 h-[660px] w-[1176px] -translate-x-1/2 -translate-y-1/2">
+        <MenuPremiumPanel tier={premiumTier} />
+        <MenuDailyPanel level={level} onlineSeconds={onlineSeconds} />
+        <MenuCharacterTile characterName={characterName} characterId={characterId} level={level} onClick={() => setTab("stats")} />
+        <MenuShopTile coins={coins} onClick={() => setTab("shop")} />
+
+        <MenuPreviewTile id="achievements" title="Erfolge" subtitle={`Level ${level}\n${formatNumber(character?.experience ?? 0)} XP`} x={156} y={294} w={240} h={240} accent="gold" icon={<Star className="h-5 w-5" />} onClick={() => setTab("battlepass")} />
+        <MenuPreviewTile id="organization" title="Organisation" subtitle={`${organization}\n${rank}`} x={416} y={180} w={240} h={354} accent="blue" icon={<Briefcase className="h-5 w-5" />} onClick={() => setTab("faction")} />
+        <MenuPreviewTile id="work" title="Arbeit" subtitle={organization === "Zivilist" ? "Kein Job aktiv" : rank} x={676} y={180} w={240} h={166} accent="green" icon={<CalendarDays className="h-5 w-5" />} onClick={() => setTab("tasks")} />
+        <MenuPreviewTile id="business" title="Finanzen" subtitle={`Cash ${formatMoney(cash)}\nBank ${formatMoney(bank)}`} x={936} y={180} w={240} h={166} accent="gold" icon={<BarChart3 className="h-5 w-5" />} onClick={() => setTab("finance")} />
+        <MenuPreviewTile id="family" title="Familie" subtitle={character?.maritalStatus === "married" ? "Verheiratet" : "Single"} x={676} y={366} w={240} h={168} accent="pink" icon={<Users className="h-5 w-5" />} onClick={() => setTab("events")} />
+        <MenuPreviewTile id="inventory" title="Inventar" subtitle="Mit I oeffnen" x={936} y={366} w={240} h={254} accent="teal" icon={<Package className="h-5 w-5" />} onClick={() => setTab("property")} />
+        <MenuPreviewTile id="admin" title="Admin Kontakt" subtitle={ticketCount ? `${ticketCount} offene Tickets` : "Ticket erstellen"} x={156} y={568} w={360} h={50} accent="muted" icon={<Ticket className="h-5 w-5" />} compact onClick={() => setTab("support")} />
+        <MenuPreviewTile id="settings" title="Sicherheit & Einstellungen" subtitle="ThemeEditor" x={536} y={568} w={380} h={50} accent="muted" icon={<ShieldCheck className="h-5 w-5" />} compact onClick={() => setTab("settings")} />
+        <MenuPreviewTile id="earn" title="Geld verdienen" subtitle={`Online heute ${formatOnlineDuration(onlineSeconds)}\nCoins ${formatNumber(coins)}`} x={676} y={0} w={500} h={140} accent="teal" icon={<Sparkles className="h-5 w-5" />} onClick={() => setTab("tasks")} />
+      </main>
+    </section>
+  );
+}
+
+type MenuPreviewAccent = "teal" | "gold" | "blue" | "green" | "pink" | "muted";
+type MenuShopItemKind = "clothes" | "vehicle" | "generic";
+type MenuShopConfirmAction = {
+  itemKind: MenuShopItemKind;
+  title: string;
+  subtitle: string;
+  price?: number;
+  productId?: string;
+};
+
+function UniqueIconSvg({ size = 20, strokeWidth = 2, className = "", children }: { size?: number; strokeWidth?: number; className?: string; children: React.ReactNode }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden="true">
+      {children}
+    </svg>
+  );
+}
+
+function UniqueCashIcon(props: { size?: number; strokeWidth?: number; className?: string }) { return <UniqueIconSvg {...props}><rect x="3" y="6" width="18" height="12" rx="2" /><circle cx="12" cy="12" r="3" /><path d="M6 9h.01" /><path d="M18 15h.01" /></UniqueIconSvg>; }
+function UniqueBankIcon(props: { size?: number; strokeWidth?: number; className?: string }) { return <UniqueIconSvg {...props}><path d="M3 10h18" /><path d="M5 10v9" /><path d="M9 10v9" /><path d="M15 10v9" /><path d="M19 10v9" /><path d="M3 19h18" /><path d="m12 3 9 5H3z" /></UniqueIconSvg>; }
+function UniqueUserIcon(props: { size?: number; strokeWidth?: number; className?: string }) { return <UniqueIconSvg {...props}><path d="M20 21a8 8 0 0 0-16 0" /><circle cx="12" cy="7" r="4" /></UniqueIconSvg>; }
+function UniqueMapPinIcon(props: { size?: number; strokeWidth?: number; className?: string }) { return <UniqueIconSvg {...props}><path d="M20 10c0 5-8 12-8 12S4 15 4 10a8 8 0 1 1 16 0Z" /><circle cx="12" cy="10" r="3" /></UniqueIconSvg>; }
+function UniqueMicIcon(props: { size?: number; strokeWidth?: number; className?: string }) { return <UniqueIconSvg {...props}><rect x="9" y="2" width="6" height="12" rx="3" /><path d="M5 10a7 7 0 0 0 14 0" /><path d="M12 17v5" /><path d="M8 22h8" /></UniqueIconSvg>; }
+function UniqueMicOffIcon(props: { size?: number; strokeWidth?: number; className?: string }) { return <UniqueIconSvg {...props}><rect x="9" y="2" width="6" height="12" rx="3" /><path d="M5 10a7 7 0 0 0 14 0" /><path d="M12 17v5" /><path d="M8 22h8" /><path d="M4 4 20 20" /></UniqueIconSvg>; }
+function UniqueMenuIcon(props: { size?: number; strokeWidth?: number; className?: string }) { return <UniqueIconSvg {...props}><path d="M4 6h16" /><path d="M4 12h16" /><path d="M4 18h16" /></UniqueIconSvg>; }
+function UniqueClockIcon(props: { size?: number; strokeWidth?: number; className?: string }) { return <UniqueIconSvg {...props}><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></UniqueIconSvg>; }
+function UniqueShieldIcon(props: { size?: number; strokeWidth?: number; className?: string }) { return <UniqueIconSvg {...props}><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z" /></UniqueIconSvg>; }
+function UniqueCoinIcon(props: { size?: number; strokeWidth?: number; className?: string }) { return <UniqueIconSvg {...props}><circle cx="12" cy="12" r="9" /><path d="M12 7v10" /><path d="M8.5 9.5A4 4 0 0 1 12 8a4 4 0 0 1 0 8 4 4 0 0 1-3.5-1.5" /></UniqueIconSvg>; }
+function UniqueCrownIcon(props: { size?: number; strokeWidth?: number; className?: string }) { return <UniqueIconSvg {...props}><path d="m3 8 4 3 5-7 5 7 4-3-2 10H5z" /><path d="M5 21h14" /></UniqueIconSvg>; }
+
+function menuPreviewAccentClass(accent: MenuPreviewAccent) {
+  const classes: Record<MenuPreviewAccent, string> = {
+    teal: "border-unique-teal/45 text-unique-teal hover:border-unique-teal/75",
+    gold: "border-unique-gold/55 text-unique-gold hover:border-unique-gold/80",
+    blue: "border-sky-500/45 text-sky-300 hover:border-sky-400/75",
+    green: "border-emerald-400/45 text-emerald-300 hover:border-emerald-300/75",
+    pink: "border-unique-danger/45 text-red-200 hover:border-unique-danger/75",
+    muted: "border-white/12 text-white/58 hover:border-white/26"
+  };
+  return classes[accent];
+}
+
+function MenuPreviewTile({
+  title,
+  subtitle,
+  x,
+  y,
+  w,
+  h,
+  accent,
+  icon,
+  compact = false,
+  onClick
+}: {
+  id: string;
+  title: string;
+  subtitle?: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  accent: MenuPreviewAccent;
+  icon: React.ReactNode;
+  compact?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`group absolute overflow-hidden border bg-black/30 text-left transition-[background-color,border-color,transform] duration-150 hover:-translate-y-[1px] hover:bg-white/[0.055] active:scale-[0.99] ${menuPreviewAccentClass(accent)}`}
+      style={{ left: x, top: y, width: w, height: h }}
+    >
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_80%_15%,rgba(255,255,255,0.08),transparent_28%),linear-gradient(135deg,rgba(255,255,255,0.035),transparent_48%,rgba(0,0,0,0.18))]" />
+      <div className="pointer-events-none absolute inset-0 opacity-[0.1] bg-[linear-gradient(rgba(255,255,255,0.42)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.34)_1px,transparent_1px)] bg-[size:28px_28px]" />
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-current opacity-40 transition-opacity duration-150 group-hover:opacity-75" />
+      {compact ? (
+        <div className="relative z-10 flex h-full items-center gap-4 px-6">
+          <div className="shrink-0 text-current transition-transform duration-150 group-hover:scale-105">{icon}</div>
+          <div className="min-w-0">
+            <h3 className="truncate text-[15px] font-black uppercase leading-none tracking-[0.8px] text-white/92">{title}</h3>
+            {subtitle ? <p className="mt-1 truncate text-[9px] font-bold uppercase tracking-[0.7px] text-white/36">{subtitle}</p> : null}
+          </div>
+        </div>
+      ) : (
+        <div className="relative z-10 flex h-full flex-col justify-between p-6">
+          <div className="flex items-center gap-3 text-current transition-transform duration-150 group-hover:translate-x-[2px]">{icon}</div>
+          <div>
+            <h3 className="whitespace-pre-line text-[17px] font-black uppercase leading-[1.08] tracking-[0.8px] text-white/92">{title}</h3>
+            {subtitle ? <p className="mt-2 max-w-[250px] whitespace-pre-line text-[10px] font-bold uppercase leading-[1.35] tracking-[0.7px] text-white/42">{subtitle}</p> : null}
+          </div>
+        </div>
+      )}
+    </button>
+  );
+}
+
+function MenuPremiumPanel({ tier }: { tier: string }) {
+  return (
+    <div className="absolute left-0 top-0 h-[156px] w-[128px] overflow-hidden border border-unique-gold/45 bg-black/34 text-center text-unique-gold transition-colors duration-150 hover:border-unique-gold/75">
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_10%,rgb(var(--unique-gold-rgb)/0.18),transparent_38%),linear-gradient(180deg,rgba(255,255,255,0.04),rgb(var(--unique-gold-rgb)/0.08))]" />
+      <div className="relative flex h-full flex-col items-center justify-center px-4">
+        <div className="flex h-11 w-11 items-center justify-center border border-unique-gold/35 bg-black/20"><Trophy className="h-5 w-5" aria-hidden /></div>
+        <div className="mt-6 text-[14px] font-black uppercase leading-[1.05] tracking-[0.8px] text-white/92">Premium<br />Status</div>
+        <div className="mt-3 border border-white/8 bg-black/18 px-3 py-1 text-[9px] font-black uppercase tracking-[1px] text-white/50">{tier}</div>
+      </div>
+    </div>
+  );
+}
+
+function MenuDailyPanel({ level, onlineSeconds }: { level: number; onlineSeconds: number }) {
+  return (
+    <div className="absolute left-0 top-[180px] h-[388px] w-[128px] overflow-hidden border border-unique-teal/55 bg-black/30 text-center text-unique-teal transition-colors duration-150 hover:border-unique-teal/85">
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_60%_20%,rgb(var(--unique-teal-rgb)/0.28),transparent_32%),linear-gradient(180deg,rgb(var(--unique-teal-rgb)/0.14),rgba(0,0,0,0.2))]" />
+      <div className="relative flex h-full flex-col items-center px-4 pt-[70px]">
+        <div className="flex h-10 w-10 items-center justify-center border border-unique-gold/30 bg-black/20 text-unique-gold"><ClipboardList className="h-4 w-4" aria-hidden /></div>
+        <div className="mt-7 text-[14px] font-black uppercase leading-[1.05] tracking-[0.7px] text-white/90">Taegliche<br />Aufgaben</div>
+        <div className="mt-5 text-[9px] font-black uppercase tracking-[1px] text-white/34">Level {level}</div>
+        <div className="mt-2 text-[9px] font-black uppercase tracking-[1px] text-white/34">{formatOnlineDuration(onlineSeconds)}</div>
+        <div className="mt-auto mb-[66px] flex gap-3 text-white/18"><Star className="h-3.5 w-3.5" /><Star className="h-3.5 w-3.5" /><Star className="h-3.5 w-3.5" /></div>
+      </div>
+    </div>
+  );
+}
+
+function MenuCharacterTile({ characterName, characterId, level, onClick }: { characterName: string; characterId: number; level: number; onClick: () => void }) {
+  return (
+    <button type="button" onClick={onClick} className="group absolute left-[156px] top-0 h-[140px] w-[500px] overflow-hidden border border-emerald-400/18 bg-gradient-to-r from-emerald-950/70 via-black/32 to-transparent text-left transition-[border-color,transform] duration-150 hover:-translate-y-[1px] hover:border-emerald-300/45 active:scale-[0.99]">
+      <div className="pointer-events-none absolute inset-0 opacity-[0.08] bg-[linear-gradient(rgba(255,255,255,0.45)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.35)_1px,transparent_1px)] bg-[size:28px_28px]" />
+      <div className="absolute left-[122px] top-8 max-w-[340px] truncate text-[24px] font-light uppercase tracking-[1px] text-white/92">{characterName}</div>
+      <div className="absolute left-[146px] top-[82px] flex items-center gap-2 text-[9px] font-black uppercase tracking-[0.6px] text-white/58"><BarChart3 className="h-3.5 w-3.5" aria-hidden /> ID {characterId || "0000"} / Level {level}</div>
+    </button>
+  );
+}
+
+function MenuShopTile({ coins, onClick }: { coins: number; onClick: () => void }) {
+  return (
+    <button type="button" onClick={onClick} className="group absolute left-[156px] top-[180px] h-[98px] w-[240px] overflow-hidden border border-unique-teal/45 bg-black/36 text-left text-unique-teal transition-[border-color,background-color,transform] duration-150 hover:-translate-y-[1px] hover:border-unique-teal/75 hover:bg-white/[0.055] active:scale-[0.99]">
+      <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(135deg,rgba(255,255,255,0.035),transparent_48%,rgba(0,0,0,0.18))]" />
+      <BadgeCent className="absolute right-4 top-4 h-12 w-12 rotate-[-16deg] text-unique-gold opacity-75 transition-transform duration-150 group-hover:translate-x-1" aria-hidden />
+      <div className="relative z-10 flex h-full flex-col justify-between p-5">
+        <div className="flex items-center gap-2"><ShoppingBag className="h-4.5 w-4.5" aria-hidden /><div className="text-[17px] font-black uppercase tracking-[0.8px] text-white/92">Shop</div></div>
+        <div className="flex items-center gap-2 text-[10px] font-black uppercase text-unique-gold"><BadgeCent className="h-3.5 w-3.5" aria-hidden /> {formatNumber(coins)} Unique Coins</div>
+      </div>
+    </button>
+  );
+}
+
+function MenuFullscreenPage({ eyebrow, title, icon, onClose, children }: { eyebrow: string; title: string; icon: React.ReactNode; onClose: () => void; children: React.ReactNode }) {
+  return (
+    <div className="absolute inset-0 z-[60] overflow-y-auto bg-unique-bg/98 text-white">
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_18%_18%,rgb(var(--unique-teal-rgb)/0.14),transparent_30%),linear-gradient(115deg,rgb(var(--unique-bg-rgb)),rgb(var(--unique-panel-rgb))_48%,rgb(var(--unique-ink-rgb)))]" />
+      <div className="absolute inset-0 opacity-[0.14] bg-[linear-gradient(rgba(255,255,255,0.35)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.25)_1px,transparent_1px)] bg-[size:36px_36px]" />
+      <header className="relative mx-10 mt-10 flex items-center justify-between border-b border-white/8 pb-6">
+        <div>
+          <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[2.4px] text-unique-teal">{icon}{eyebrow}</div>
+          <h2 className="mt-2 text-[42px] font-light uppercase tracking-[1.4px] text-white/92">{title}</h2>
+        </div>
+        <button type="button" onClick={onClose} className="border border-white/10 bg-black/24 px-4 py-3 text-[10px] font-black uppercase tracking-[1px] text-white/48 transition-colors hover:border-unique-danger/50 hover:text-red-200">Schliessen ESC</button>
+      </header>
+      <main className="relative mx-10 mt-8 pb-10">{children}</main>
+    </div>
+  );
+}
+
+function MenuShopWindow({ coins, premiumTier, onClose }: { coins: number; premiumTier: string; onClose: () => void }) {
+  const [category, setCategory] = useState("premium");
+  const [confirmAction, setConfirmAction] = useState<MenuShopConfirmAction | null>(null);
+  const [selectedProduct, setSelectedProduct] = useState<string | null>(null);
+  const [localCoins, setLocalCoins] = useState(coins);
+  const [localPremiumTier, setLocalPremiumTier] = useState(premiumTier);
+  const categories = [
+    { id: "premium", label: "Premium", icon: <Trophy className="h-4 w-4" aria-hidden /> },
+    { id: "kleidung", label: "Kleidung", icon: <Shirt className="h-4 w-4" aria-hidden /> },
+    { id: "fahrzeuge", label: "Fahrzeuge", icon: <CarFront className="h-4 w-4" aria-hidden /> },
+    { id: "container", label: "Container", icon: <Package className="h-4 w-4" aria-hidden /> },
+    { id: "geld", label: "Geld", icon: <BadgeCent className="h-4 w-4" aria-hidden /> },
+    { id: "sonstiges", label: "Sonstiges", icon: <Star className="h-4 w-4" aria-hidden /> }
+  ];
+  const currentCategory = categories.find((item) => item.id === category) ?? categories[0];
+  const products = category === "premium"
+    ? [
+        { id: "premium", title: "Premium", price: 10, description: "Basis Premium Status" },
+        { id: "premiumPlus", title: "Premium+", price: 30, description: "Erweiterter Premium Status" }
+      ]
+    : Array.from({ length: 12 }).map((_, index) => ({
+        id: `${category}-${index}`,
+        title: category === "fahrzeuge" ? "Fahrzeug vorbereitet" : category === "kleidung" ? "Kleidung vorbereitet" : category === "container" ? "Container vorbereitet" : category === "geld" ? "Geldpaket vorbereitet" : "Item vorbereitet",
+        price: [15, 25, 40, 65, 100, 280][index % 6],
+        description: "Shop-Backend vorbereitet"
+      }));
+  const shownCoins = Math.max(0, localCoins);
+
+  function openConfirm(product: { id: string; title: string; price: number; description: string }) {
+    const itemKind: MenuShopItemKind = category === "kleidung" ? "clothes" : category === "fahrzeuge" ? "vehicle" : "generic";
+    setConfirmAction({
+      itemKind,
+      title: category === "kleidung" ? "Kleidung verwalten" : category === "fahrzeuge" ? "Fahrzeug verwalten" : `${product.title} kaufen?`,
+      subtitle: category === "kleidung" ? `${product.title}\n\nAnprobieren oder kaufen?` : category === "fahrzeuge" ? `${product.title}\n\nProbefahrt oder kaufen?` : product.description,
+      price: product.price,
+      productId: product.id
+    });
+  }
+
+  function previewAction() {
+    setConfirmAction(null);
+  }
+
+  function buyAction() {
+    if (!confirmAction) {
+      return;
+    }
+    if (typeof confirmAction.price === "number" && localCoins >= confirmAction.price) {
+      setLocalCoins((current) => Math.max(0, current - confirmAction.price!));
+      if (confirmAction.productId) {
+        setSelectedProduct(confirmAction.productId);
+        if (confirmAction.productId === "premium") {
+          setLocalPremiumTier("Premium");
+        }
+        if (confirmAction.productId === "premiumPlus") {
+          setLocalPremiumTier("Premium+");
+        }
+      }
+    }
+    setConfirmAction(null);
+  }
+
+  return (
+    <div className="absolute inset-0 z-[60] overflow-hidden bg-unique-bg/98 text-white">
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_24%_28%,rgb(var(--unique-teal-rgb)/0.13),transparent_26%),radial-gradient(circle_at_78%_60%,rgb(var(--unique-gold-rgb)/0.12),transparent_30%),linear-gradient(115deg,rgb(var(--unique-bg-rgb)),rgb(var(--unique-panel-rgb))_48%,rgb(var(--unique-ink-rgb)))]" />
+      <div className="absolute inset-0 opacity-[0.12] bg-[linear-gradient(rgba(255,255,255,0.35)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.25)_1px,transparent_1px)] bg-[size:36px_36px]" />
+      <aside className="absolute bottom-10 left-10 top-10 w-[260px] border-r border-white/8 pr-5">
+        <div className="mb-6 border-b border-white/8 pb-5">
+          <div className="flex items-center justify-between">
+            <div className="text-[10px] font-black uppercase tracking-[2px] text-unique-teal">Unique Shop</div>
+            <button type="button" onClick={onClose} className="border border-white/10 bg-black/24 px-3 py-2 text-[10px] font-black uppercase tracking-[1px] text-white/48 transition-colors hover:border-unique-danger/50 hover:text-red-200">ESC</button>
+          </div>
+          <div className="mt-4 flex items-center gap-2 text-unique-gold"><UniqueCoinIcon size={21} /><span className="text-[26px] font-black">{formatNumber(shownCoins)}</span><span className="text-[11px] font-bold text-white/40">UC</span></div>
+          <div className="mt-3 border border-white/8 bg-black/22 px-4 py-3 text-[10px] font-black uppercase tracking-[1px] text-white/45">Premium: {localPremiumTier}</div>
+        </div>
+        <div className="space-y-2">
+          {categories.map((item) => (
+            <button key={item.id} type="button" onClick={() => setCategory(item.id)} className={`flex h-[52px] w-full items-center gap-4 border px-4 text-left transition-[background-color,border-color,transform] duration-150 hover:translate-x-1 ${category === item.id ? "border-unique-gold/55 bg-unique-gold/10 text-unique-gold" : "border-white/6 bg-white/[0.025] text-white/44 hover:border-unique-teal/38 hover:text-white/72"}`}>
+              {item.icon}<span className="text-[12px] font-black uppercase tracking-[1.2px]">{item.label}</span>
             </button>
+          ))}
+        </div>
+      </aside>
+      <main className="absolute bottom-10 left-[330px] right-10 top-10 overflow-hidden">
+        <div className="mb-6 flex items-end justify-between">
+          <div>
+            <div className="text-[10px] font-black uppercase tracking-[2px] text-unique-teal">Kategorie</div>
+            <h2 className="mt-1 text-[38px] font-black uppercase tracking-[1.4px] text-white/92">{currentCategory.label}</h2>
           </div>
-
-          <div className="mt-5 rounded-md border border-white/10 bg-white/5 p-3">
-            <p className="truncate text-sm font-black">{characterName}</p>
-            <p className="mt-1 text-xs text-white/45">ID {characterId || "0000"}</p>
+          <div className="border border-white/8 bg-black/22 px-5 py-3 text-right">
+            <div className="text-[10px] font-black uppercase tracking-[1.5px] text-white/32">Premium Status</div>
+            <div className="mt-1 text-[15px] font-black uppercase text-white/82">{localPremiumTier}</div>
           </div>
-
-          <nav className="mt-4 grid min-h-0 flex-1 content-start gap-1 overflow-y-auto pr-1">
-            {tabs.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                className={`flex h-11 items-center gap-3 rounded-md px-3 text-left text-sm font-bold transition ${
-                  tab === item.id ? "bg-unique-gold text-unique-ink" : "text-white/65 hover:bg-white/8 hover:text-white"
-                }`}
-                onClick={() => setTab(item.id)}
-              >
-                {item.icon}
-                <span className="truncate">{item.label}</span>
+        </div>
+        <div className="h-[calc(100%-88px)] overflow-y-auto pr-2">
+          <div className={category === "premium" ? "grid grid-cols-3 gap-5 pb-10" : "grid grid-cols-4 gap-5 pb-10"}>
+            {products.map((product, index) => (
+              <button key={product.id} type="button" onClick={() => openConfirm(product)} className={`group relative overflow-hidden border p-6 text-left transition-[border-color,background-color,transform] duration-150 hover:-translate-y-[2px] active:scale-[0.99] ${selectedProduct === product.id ? "border-unique-gold/75 bg-unique-gold/10" : category === "premium" ? "h-[300px] border-white/10 bg-unique-panel/70 hover:border-unique-teal/55" : "h-[280px] border-white/8 bg-unique-panel/72 hover:border-unique-gold/48"}`}>
+                <div className="absolute right-[-28px] top-[-28px] h-44 w-44 rounded-full bg-unique-gold/12" />
+                {category === "premium" ? <Trophy className="h-9 w-9 text-unique-gold" aria-hidden /> : <div className={`absolute inset-x-6 top-9 h-[130px] ${index % 4 === 0 ? "bg-unique-gold" : index % 4 === 1 ? "bg-unique-teal" : index % 4 === 2 ? "bg-sky-500" : "bg-unique-danger"} opacity-80 transition-transform duration-150 group-hover:scale-[1.03]`} />}
+                <div className={category === "premium" ? "mt-12 text-[30px] font-black uppercase text-white/92" : "absolute bottom-0 left-0 right-0 h-[92px] bg-black/32 p-4"}>
+                  <div className={category === "premium" ? "" : "text-[15px] font-black uppercase leading-tight text-white/90"}>{product.title}</div>
+                  <div className="mt-3 text-[12px] font-bold uppercase tracking-[0.8px] text-white/42">{product.description}</div>
+                  <div className="mt-5 flex items-center gap-2 text-unique-gold"><UniqueCoinIcon size={16} /><span className="text-[20px] font-black">{product.price}</span></div>
+                </div>
               </button>
             ))}
-          </nav>
-        </aside>
-
-        <div className="relative min-h-0 overflow-y-auto px-7 py-6">
-          <MainMenuHeader tab={tabs.find((item) => item.id === tab) ?? tabs[0]} characterName={characterName} />
-          {tab === "dashboard" ? <MenuDashboard character={character} hudData={hudData} uniqueCoins={coins} onlineSeconds={onlineSeconds} onSupport={() => setTab("support")} /> : null}
-          {tab === "stats" ? <MenuStats character={character} hudData={hudData} uniqueCoins={coins} onlineSeconds={onlineSeconds} /> : null}
-          {tab === "shop" ? <MenuPlaceholder icon={<ShoppingBag className="h-7 w-7" />} title="Shop" items={["Unique Coins", "Premium Slot", "Kosmetik", "Fahrzeug Skins"]} /> : null}
-          {tab === "battlepass" ? <MenuBattlepass /> : null}
-          {tab === "tasks" ? <MenuTasks /> : null}
-          {tab === "property" ? <MenuPlaceholder icon={<Home className="h-7 w-7" />} title="Besitz" items={["Immobilien", "Fahrzeuge", "Lager", "Schluessel"]} /> : null}
-          {tab === "finance" ? <MenuFinance character={character} hudData={hudData} uniqueCoins={coins} /> : null}
-          {tab === "faction" ? <MenuFaction character={character} /> : null}
-          {tab === "events" ? <MenuPlaceholder icon={<CalendarDays className="h-7 w-7" />} title="Events" items={["Aktive Events", "Anmeldungen", "Belohnungen", "Historie"]} /> : null}
-          {tab === "support" ? (
-            <MenuSupport
-              category={ticketCategory}
-              message={ticketMessage}
-              tickets={supportTickets}
-              selectedTicketId={selectedTicketId}
-              pending={ticketPending}
-              result={localTicketMessage}
-              onCategory={setTicketCategory}
-              onMessage={setTicketMessage}
-              reply={ticketReply}
-              onReply={setTicketReply}
-              onSelectedTicket={setSelectedTicketId}
-              onSubmitReply={(ticketId) => {
-                const reply = ticketReply.trim();
-                if (reply.length < 2) {
-                  setLocalTicketMessage({ ok: false, message: "Antwort ist zu kurz." });
-                  return;
-                }
-                setLocalTicketMessage(null);
-                emitToClient("unique:cef:replySupportTicket", { ticketId, message: reply });
-                setTicketReply("");
-              }}
-              onSubmit={submitTicket}
-            />
-          ) : null}
-          {tab === "settings" ? <MenuSettings theme={theme} onThemeChange={onThemeChange} onThemePreset={onThemePreset} /> : null}
+          </div>
         </div>
+      </main>
+      {confirmAction ? <MenuShopConfirmPopup action={confirmAction} onCancel={() => setConfirmAction(null)} onPreview={previewAction} onBuy={buyAction} /> : null}
+    </div>
+  );
+}
+
+function MenuShopConfirmPopup({ action, onCancel, onPreview, onBuy }: { action: MenuShopConfirmAction; onCancel: () => void; onPreview: () => void; onBuy: () => void }) {
+  const isClothes = action.itemKind === "clothes";
+  const isVehicle = action.itemKind === "vehicle";
+
+  return (
+    <div className="absolute inset-0 z-[70] flex items-center justify-center bg-black/90">
+      <div className="w-[460px] border border-unique-gold/55 bg-[#05070b] p-6 shadow-[0_24px_80px_rgba(0,0,0,0.85)]">
+        <div className="flex items-center gap-3 text-unique-gold"><UniqueCrownIcon size={24} /><div className="text-[18px] font-black uppercase tracking-[1px] text-white/92">Aktion auswaehlen</div></div>
+        <div className="mt-6 text-[24px] font-black uppercase text-white/90">{action.title}</div>
+        <p className="mt-2 whitespace-pre-line text-[12px] font-bold uppercase leading-5 tracking-[0.7px] text-white/42">{action.subtitle}</p>
+        {typeof action.price === "number" ? <div className="mt-5 flex items-center gap-2 text-unique-gold"><UniqueCoinIcon size={19} /><span className="text-[22px] font-black">{action.price}</span><span className="text-[10px] font-black uppercase tracking-[1px] text-white/35">Unique Coins</span></div> : null}
+        {isClothes || isVehicle ? (
+          <div className="mt-7 grid grid-cols-3 gap-3">
+            <button type="button" onClick={onCancel} className="h-11 border border-black/80 bg-black/55 text-[11px] font-black uppercase tracking-[1px] text-white/70 transition-colors hover:border-white/24 hover:text-white/90">Abbrechen</button>
+            <button type="button" onClick={onPreview} className="h-11 border border-unique-teal/45 bg-unique-teal/10 text-[11px] font-black uppercase tracking-[1px] text-unique-teal transition-colors hover:bg-unique-teal/16">{isClothes ? "Anprobieren" : "Probefahrt"}</button>
+            <button type="button" onClick={onBuy} className="h-11 border border-unique-gold/50 bg-unique-gold/14 text-[11px] font-black uppercase tracking-[1px] text-unique-gold transition-colors hover:bg-unique-gold/20">Kaufen</button>
+          </div>
+        ) : (
+          <div className="mt-7 grid grid-cols-2 gap-3">
+            <button type="button" onClick={onCancel} className="h-11 border border-black/80 bg-black/55 text-[11px] font-black uppercase tracking-[1px] text-white/70 transition-colors hover:border-white/24 hover:text-white/90">Abbrechen</button>
+            <button type="button" onClick={onBuy} className="h-11 border border-unique-gold/50 bg-unique-gold/14 text-[11px] font-black uppercase tracking-[1px] text-unique-gold transition-colors hover:bg-unique-gold/20">Kaufen</button>
+          </div>
+        )}
       </div>
-    </section>
+    </div>
+  );
+}
+
+function MenuCharacterWindow({ character, hudData, uniqueCoins, onlineSeconds, onClose }: { character: CharacterInfo | null; hudData: HudDataPayload | null; uniqueCoins: number; onlineSeconds: number; onClose: () => void }) {
+  const characterName = character ? `${character.firstName} ${character.lastName}` : "Charakter";
+  const stats = [
+    { label: "Charakter-ID", value: String(hudData?.characterId ?? character?.id ?? 0) },
+    { label: "Level", value: String(character?.level ?? 1) },
+    { label: "Erfahrung", value: formatNumber(character?.experience ?? 0) },
+    { label: "Spielzeit", value: formatOnlineDuration(onlineSeconds) },
+    { label: "Job", value: character?.organization || "Zivilist" },
+    { label: "Rang", value: character?.organizationRank || "Kein Rang" },
+    { label: "Bargeld", value: formatMoney(hudData?.cash ?? character?.cash ?? 0) },
+    { label: "Bank", value: formatMoney(hudData?.bankBalance ?? character?.bankBalance ?? 0) },
+    { label: "Unique Coins", value: formatNumber(uniqueCoins) },
+    { label: "Status", value: "Aktiv" },
+    { label: "Familie", value: character?.maritalStatus === "married" ? "Verheiratet" : "Single" },
+    { label: "Geschlecht", value: character?.appearance?.gender === "female" ? "Weiblich" : "Maennlich" }
+  ];
+
+  return (
+    <div className="absolute inset-0 z-[60] overflow-hidden bg-unique-bg/98 text-white">
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_18%_18%,rgb(var(--unique-teal-rgb)/0.14),transparent_30%),linear-gradient(115deg,rgb(var(--unique-bg-rgb)),rgb(var(--unique-panel-rgb))_48%,rgb(var(--unique-ink-rgb)))]" />
+      <div className="absolute inset-0 opacity-[0.14] bg-[linear-gradient(rgba(255,255,255,0.35)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.25)_1px,transparent_1px)] bg-[size:36px_36px]" />
+      <header className="relative mx-10 mt-10 flex items-center justify-between border-b border-white/8 pb-6">
+        <div>
+          <div className="text-[10px] font-black uppercase tracking-[2.4px] text-unique-teal">Charakter</div>
+          <h2 className="mt-2 text-[42px] font-light uppercase tracking-[1.4px] text-white/92">{characterName}</h2>
+          <div className="mt-2 flex items-center gap-2 text-[11px] font-black uppercase tracking-[1px] text-white/42"><BarChart3 className="h-4 w-4" aria-hidden /> Charakter Statistiken</div>
+        </div>
+        <button type="button" onClick={onClose} className="border border-white/10 bg-black/24 px-4 py-3 text-[10px] font-black uppercase tracking-[1px] text-white/48 transition-colors hover:border-unique-danger/50 hover:text-red-200">Schliessen ESC</button>
+      </header>
+      <main className="relative mx-10 mt-8 grid grid-cols-[360px_1fr] gap-6">
+        <section className="h-[560px] border border-unique-teal/22 bg-unique-teal/10 p-6">
+          <div className="flex h-28 w-28 items-center justify-center rounded-full border border-white/10 bg-black/22 text-[34px] font-black text-white/70">{character?.level ?? 1}</div>
+          <div className="mt-7 text-[11px] font-black uppercase tracking-[1.8px] text-white/34">Charakterprofil</div>
+          <div className="mt-2 text-[24px] font-black uppercase text-white/90">{characterName}</div>
+          <p className="mt-4 text-[12px] font-bold uppercase leading-6 tracking-[0.8px] text-white/38">Aktuelle Charakterdaten aus deinem Ingame-Account.</p>
+        </section>
+        <section className="grid h-[560px] grid-cols-4 gap-4 overflow-y-auto pr-2">
+          {stats.map((stat) => (
+            <div key={stat.label} className="h-[128px] border border-white/8 bg-black/18 p-5 transition-colors duration-150 hover:border-unique-teal/35">
+              <div className="text-[9px] font-black uppercase tracking-[1.4px] text-white/32">{stat.label}</div>
+              <div className="mt-8 truncate text-[18px] font-black uppercase text-white/82">{stat.value}</div>
+            </div>
+          ))}
+        </section>
+      </main>
+    </div>
   );
 }
 
@@ -2153,67 +2836,280 @@ function MenuToggle({ label, defaultChecked = false }: { label: string; defaultC
   );
 }
 
+type VehicleControlState = "off" | "on" | "warn";
+
+function VehicleHudIcon({
+  size = 24,
+  strokeWidth = 2.4,
+  className = "",
+  children
+}: {
+  size?: number;
+  strokeWidth?: number;
+  className?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={strokeWidth}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      {children}
+    </svg>
+  );
+}
+
+function GaugeHudIcon(props: { size?: number; strokeWidth?: number; className?: string }) {
+  return (
+    <VehicleHudIcon {...props}>
+      <path d="M4 15a8 8 0 0 1 16 0" />
+      <path d="M7 19a9 9 0 1 1 10 0" />
+      <path d="M12 15l4-4" />
+      <path d="M12 15h.01" />
+    </VehicleHudIcon>
+  );
+}
+
+function EngineHudIcon(props: { size?: number; strokeWidth?: number; className?: string }) {
+  return (
+    <VehicleHudIcon {...props}>
+      <path d="M3 10h3l2-3h5v3h2l2 2h3v6h-3l-2 2H8l-2-3H3z" />
+      <path d="M9 7V4" />
+      <path d="M7 4h6" />
+      <path d="M20 13h2" />
+      <path d="M20 17h2" />
+    </VehicleHudIcon>
+  );
+}
+
+function FuelHudIcon(props: { size?: number; strokeWidth?: number; className?: string }) {
+  return (
+    <VehicleHudIcon {...props}>
+      <path d="M6 21V5a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v16" />
+      <path d="M5 21h12" />
+      <path d="M8 7h6" />
+      <path d="M16 8h2l3 3v7a2 2 0 0 0 2 2" />
+      <path d="M20 11h-2" />
+    </VehicleHudIcon>
+  );
+}
+
+function CarDoorHudIcon(props: { size?: number; strokeWidth?: number; className?: string }) {
+  return (
+    <VehicleHudIcon {...props}>
+      <path d="M5 20V7.5c0-.9.6-1.7 1.5-1.95L15 3l4 6v11" />
+      <path d="M7 9h9.5" />
+      <path d="M8 13h2" />
+      <path d="M19 20H5" />
+      <path d="M15 3v17" />
+    </VehicleHudIcon>
+  );
+}
+
+function clampHudValue(value: number, min = 0, max = 100) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function padHudSpeed(value: number) {
+  return String(Math.max(0, Math.round(value))).padStart(3, "0");
+}
+
+function getVehicleControlClasses(state: VehicleControlState) {
+  if (state === "on") {
+    return {
+      icon: "text-unique-gold drop-shadow-[0_0_7px_rgb(var(--unique-gold-rgb)/0.65)]",
+      key: "border-unique-gold text-unique-gold bg-unique-gold/14 shadow-[0_0_14px_rgb(var(--unique-gold-rgb)/0.25)]"
+    };
+  }
+
+  if (state === "warn") {
+    return {
+      icon: "text-unique-danger drop-shadow-[0_0_7px_rgb(var(--unique-danger-rgb)/0.52)]",
+      key: "border-unique-danger text-unique-danger bg-unique-danger/10 shadow-[0_0_14px_rgb(var(--unique-danger-rgb)/0.20)]"
+    };
+  }
+
+  return {
+    icon: "text-white/68",
+    key: "border-white/22 text-white/78 bg-black/12"
+  };
+}
+
+function VehicleControlButton({ icon, keyLabel, state }: { icon: React.ReactNode; keyLabel: string; state: VehicleControlState }) {
+  const classes = getVehicleControlClasses(state);
+
+  return (
+    <div className="flex w-[74px] flex-col items-center gap-[4px] outline-none">
+      <div className={classes.icon}>{icon}</div>
+      <div className={`flex h-[25px] min-w-[54px] items-center justify-center rounded-full border px-4 text-[13px] font-extrabold leading-none tracking-wide ${classes.key}`}>
+        {keyLabel}
+      </div>
+    </div>
+  );
+}
+
+function VehicleHud({ data }: { data: VehicleHudPayload }) {
+  const safeFuel = clampHudValue(Number(data.fuel ?? 0));
+  const safeMotorHealth = clampHudValue(Math.round(((data.motorHealth ?? 1000) / 1000) * 100));
+  const engineOn = Boolean(data.engineOn);
+  const isCruise = Boolean(data.cruise);
+  const doorsOpen = !data.locked;
+
+  const engineState: VehicleControlState = engineOn ? "on" : "warn";
+  const cruiseState: VehicleControlState = isCruise ? "on" : "off";
+  const doorState: VehicleControlState = doorsOpen ? "warn" : "off";
+  const speedValue = useMemo(() => engineOn ? Number(data.speed ?? 0) : 0, [data.speed, engineOn]);
+
+  return (
+    <section className="pointer-events-none fixed bottom-8 right-8 z-[28] h-[306px] w-[420px] select-none text-white">
+      <div className="relative h-[306px] w-[420px]">
+        <div className="absolute left-[85px] top-[7px] h-[224px] w-[250px] rounded-full bg-unique-gold/[0.02] blur-xl" />
+
+        <svg className="absolute left-[82px] top-[6px]" width="256" height="238" viewBox="0 0 256 238" aria-hidden="true">
+          <path d="M44 210 A106 106 0 1 1 212 210" fill="none" stroke="rgba(255,255,255,0.32)" strokeWidth="7" strokeLinecap="butt" />
+          <path d="M44 210 A106 106 0 1 1 212 210" fill="none" stroke="rgb(var(--unique-gold-rgb) / 0.24)" strokeWidth="3" strokeLinecap="butt" />
+        </svg>
+
+        <div className="absolute left-[58px] top-[64px] flex h-[160px] w-[42px] flex-col items-center">
+          <div className="mb-3 text-[16px] font-extrabold tracking-wide text-white/90 drop-shadow-[0_0_7px_rgba(255,255,255,0.18)]">{safeMotorHealth}%</div>
+          <div className="relative h-[112px] w-[12px] overflow-hidden rounded-[4px] bg-white/10 shadow-[0_0_0_2px_rgba(255,255,255,0.14),inset_0_0_10px_rgba(0,0,0,0.45)]">
+            <div className="absolute bottom-0 left-0 w-full rounded-[4px] bg-gradient-to-t from-white/82 to-white shadow-[0_0_12px_rgba(255,255,255,0.32)]" style={{ height: `${safeMotorHealth}%` }} />
+          </div>
+          <EngineHudIcon size={20} strokeWidth={2.5} className="mt-4 text-white/88" />
+        </div>
+
+        <div className="absolute right-[58px] top-[64px] flex h-[160px] w-[42px] flex-col items-center">
+          <div className="mb-3 text-[16px] font-extrabold tracking-wide text-unique-gold drop-shadow-[0_0_8px_rgb(var(--unique-gold-rgb)/0.32)]">{safeFuel}%</div>
+          <div className="relative h-[112px] w-[12px] overflow-hidden rounded-[4px] bg-white/10 shadow-[0_0_0_2px_rgba(255,255,255,0.14),inset_0_0_10px_rgba(0,0,0,0.45)]">
+            <div className="absolute bottom-0 left-0 w-full rounded-[4px] bg-gradient-to-t from-unique-teal to-unique-gold shadow-[0_0_14px_rgb(var(--unique-gold-rgb)/0.58)]" style={{ height: `${safeFuel}%` }} />
+          </div>
+          <FuelHudIcon size={20} strokeWidth={2.5} className="mt-4 text-unique-gold drop-shadow-[0_0_8px_rgb(var(--unique-gold-rgb)/0.28)]" />
+        </div>
+
+        <div className="absolute left-[130px] top-[94px] w-[160px] text-center">
+          <div className="text-[58px] font-extrabold leading-none tracking-[5px] text-white/70 tabular-nums drop-shadow-[0_0_16px_rgb(var(--unique-gold-rgb)/0.12)]">
+            {padHudSpeed(speedValue)}
+          </div>
+          <div className="mt-2 text-[18px] font-semibold leading-none tracking-[5px] text-white/42">KM/H</div>
+        </div>
+
+        <div className="absolute left-1/2 top-[242px] flex -translate-x-1/2 items-start gap-[6px]">
+          <VehicleControlButton icon={<GaugeHudIcon size={20} strokeWidth={2.15} />} keyLabel="X" state={cruiseState} />
+          <VehicleControlButton icon={<EngineHudIcon size={21} strokeWidth={2.15} />} keyLabel="STRG" state={engineState} />
+          <VehicleControlButton icon={<CarDoorHudIcon size={21} strokeWidth={2.15} />} keyLabel="L" state={doorState} />
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function WorldHud({ data, location }: { data: HudDataPayload | null; location: HudLocationPayload }) {
   const [now, setNow] = useState(() => new Date());
-  const previousMoney = useRef<{ cash: number | null; bank: number | null }>({ cash: null, bank: null });
-  const [moneyDelta, setMoneyDelta] = useState({ cash: 0, bank: 0 });
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(new Date()), 1000);
     return () => window.clearInterval(timer);
   }, []);
 
-  useEffect(() => {
-    if (!data) {
-      return;
-    }
-
-    const nextDelta = {
-      cash: previousMoney.current.cash === null ? 0 : data.cash - previousMoney.current.cash,
-      bank: previousMoney.current.bank === null ? 0 : data.bankBalance - previousMoney.current.bank
-    };
-    previousMoney.current = { cash: data.cash, bank: data.bankBalance };
-    setMoneyDelta(nextDelta);
-
-    if (nextDelta.cash !== 0 || nextDelta.bank !== 0) {
-      const timer = window.setTimeout(() => setMoneyDelta({ cash: 0, bank: 0 }), 1450);
-      return () => window.clearTimeout(timer);
-    }
-  }, [data?.cash, data?.bankBalance]);
-
   const playerCount = data?.playerCount ?? 0;
   const maxPlayers = Math.max(playerCount, data?.maxPlayers ?? 100);
   const tickets = Math.max(0, Number(data?.tickets ?? 0));
+  const streetName = location.street || "Unbekannte Strasse";
+  const zoneName = location.crossing ? `${location.crossing} / ${location.area}` : location.area || "Unbekannte Zone";
 
   return (
-    <section className="pointer-events-none fixed inset-0 z-20 text-white">
-      <div className="absolute right-6 top-5 flex w-[380px] flex-col items-end text-right drop-shadow-[0_2px_2px_rgba(0,0,0,.65)]">
-        <HudServerHeader characterId={data?.characterId ?? 0} online={playerCount} maxOnline={maxPlayers} />
+    <section className="pointer-events-none fixed inset-0 z-20 font-sans text-white">
+      <div className="absolute right-8 top-7 flex w-[380px] flex-col items-end gap-3">
+        <div className="flex items-center gap-3">
+          <div className="text-right">
+            <div className="text-[20px] font-black uppercase tracking-[2px] text-white/92">Unique Roleplay</div>
+            <div className="mt-1 text-[10px] font-black uppercase tracking-[1.7px] text-unique-gold">
+              ID: <span className="text-white">{data?.characterId ?? 0}</span> | Online: <span className="text-white">{playerCount}/{maxPlayers}</span>
+            </div>
+          </div>
+          <div className="flex h-11 w-11 items-center justify-center border border-black/70 bg-unique-gold/10 text-unique-gold"><UniqueUserIcon size={19} /></div>
+        </div>
 
-        <div className="mt-3 grid gap-1">
-          <HudMoneyLine icon={<BadgeCent className="h-6 w-6" aria-hidden />} value={formatHudMoney(data?.cash ?? 0)} delta={moneyDelta.cash} />
-          <HudMoneyLine icon={<Banknote className="h-5 w-5" aria-hidden />} value={formatHudMoney(data?.bankBalance ?? 0)} delta={moneyDelta.bank} muted />
+        <div className="flex flex-col items-end gap-2">
+          <HudMoneyPill icon={<UniqueCashIcon size={15} />} label="Bargeld" value={formatHudMoney(data?.cash ?? 0)} accent="teal" />
+          <HudMoneyPill icon={<UniqueBankIcon size={15} />} label="Bank" value={formatHudMoney(data?.bankBalance ?? 0)} accent="gold" />
         </div>
       </div>
 
-      <div className="absolute bottom-8 left-[330px] max-w-[360px] rounded-md border-l-2 border-unique-gold bg-black/48 px-4 py-3 shadow-[0_0_24px_rgba(0,0,0,.28)] backdrop-blur-[2px]">
-        <div className="flex items-center gap-2 text-[11px] font-black uppercase tracking-[0.18em] text-unique-gold">
-          <MapPin className="h-4 w-4" aria-hidden />
-          Standort
+      <div className="absolute bottom-[34px] left-[330px] flex flex-col gap-2">
+        <div className="ml-[2px] flex flex-col gap-2">
+          <HudKeyHint keyName="M" icon={<UniqueMenuIcon size={14} />} />
+          <HudKeyHint keyName="N" icon={<UniqueMicOffIcon size={14} />} />
         </div>
-        <p className="mt-2 truncate text-xl font-semibold text-white">{location.street}</p>
-        <p className="mt-1 truncate text-sm text-white/55">
-          {location.crossing ? `${location.crossing} / ${location.area}` : location.area}
-        </p>
+
+        <div className="min-w-[300px] max-w-[380px] overflow-hidden border border-black/70 bg-black/30 px-4 py-3 text-white">
+          <div className="flex items-center gap-3">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center border border-black/70 bg-unique-gold/10 text-unique-gold"><UniqueMapPinIcon size={17} /></div>
+            <div className="min-w-0">
+              <div className="truncate text-[13px] font-black uppercase tracking-[1px] text-white/88">{streetName}</div>
+              <div className="mt-1 truncate text-[10px] font-black uppercase tracking-[1.4px] text-unique-gold">{zoneName}</div>
+            </div>
+          </div>
+        </div>
       </div>
 
-      {data?.adminMode ? <AdminTicketCounter tickets={tickets} /> : null}
+      {data?.adminMode ? <HudAdminOverlay tickets={tickets} /> : null}
 
-      <div className="absolute bottom-8 right-8 text-right drop-shadow-[0_2px_2px_rgba(0,0,0,.7)]">
-        <p className="font-mono text-3xl font-black text-white">{formatClock(now)}</p>
-        <p className="mt-1 font-mono text-sm font-bold uppercase tracking-[0.16em] text-white/60">{formatDate(now)}</p>
+      <div className="absolute bottom-8 right-8 z-20 overflow-hidden border border-black/70 bg-black/30 px-4 py-3 text-white">
+        <div className="flex items-center gap-3">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center border border-black/70 bg-unique-gold/10 text-unique-gold"><UniqueClockIcon size={17} /></div>
+          <div className="text-right">
+            <div className="text-[18px] font-black tracking-[1px] text-white/92">{formatClock(now)}</div>
+            <div className="mt-1 text-[10px] font-black uppercase tracking-[1.8px] text-unique-gold">{formatDate(now)}</div>
+          </div>
+        </div>
       </div>
     </section>
+  );
+}
+
+function HudMoneyPill({ icon, label, value, accent = "gold" }: { icon: React.ReactNode; label: string; value: string; accent?: "gold" | "teal" }) {
+  const accentClass = accent === "teal" ? "text-unique-teal" : "text-unique-gold";
+
+  return (
+    <div className={`flex h-10 min-w-[158px] items-center gap-2 border border-black/70 bg-black/30 px-3 ${accentClass}`}>
+      <div>{icon}</div>
+      <div className="min-w-0">
+        <div className="text-[8px] font-black uppercase tracking-[1.4px] text-white/30">{label}</div>
+        <div className="truncate text-[12px] font-black uppercase tracking-[0.5px] text-white/84">{value}</div>
+      </div>
+    </div>
+  );
+}
+
+function HudKeyHint({ keyName, icon, active = false }: { keyName: string; icon: React.ReactNode; active?: boolean }) {
+  return (
+    <div className={`relative flex h-10 w-10 items-center justify-center overflow-visible border bg-black/30 shadow-[0_10px_24px_rgba(0,0,0,0.32)] ${active ? "border-black/70 text-emerald-300" : "border-black/70 text-white/70"}`}>
+      <div className="absolute -right-[5px] -top-[5px] flex h-4 min-w-[16px] items-center justify-center border border-black/70 bg-black/80 px-[3px] text-[7px] font-black uppercase tracking-[0.7px] text-unique-gold">
+        {keyName}
+      </div>
+      <span className={active ? "text-emerald-300" : "text-unique-gold"}>{icon}</span>
+    </div>
+  );
+}
+
+function HudAdminOverlay({ tickets }: { tickets: number }) {
+  const danger = tickets > 5;
+
+  return (
+    <div className="absolute bottom-8 left-1/2 flex -translate-x-1/2 flex-col items-center text-center">
+      <div className={danger ? "text-[24px] font-black text-red-400" : "text-[24px] font-black text-white/86"}>{tickets}</div>
+      <div className="text-[10px] font-black uppercase tracking-[1.8px] text-white/40">Tickets</div>
+      <div className="mt-2 flex items-center gap-2 border border-black/70 bg-black/30 px-4 py-2 text-unique-gold"><UniqueShieldIcon size={15} /><span className="text-[10px] font-black uppercase tracking-[1.5px]">Adminmodus</span></div>
+    </div>
   );
 }
 
@@ -2913,34 +3809,31 @@ function AdminPanel({ data, result, onClose }: { data: AdminPanelPayload; result
   }
 
   return (
-    <section className="fixed inset-0 z-50 overflow-hidden bg-unique-bg text-white">
-      <div className="absolute inset-0 app-grid opacity-35" />
-      <div className="theme-admin-gradient absolute inset-0" />
-      <div className="pointer-events-none absolute left-0 top-0 h-20 w-20 border-l-[6px] border-t-[6px] border-unique-gold/90" />
-      <div className="pointer-events-none absolute bottom-0 right-0 h-28 w-28 border-b-[6px] border-r-[6px] border-unique-teal/80" />
-      <div className="pointer-events-none absolute left-[7%] top-[31%] text-6xl font-light text-white/10">x</div>
-      <div className="pointer-events-none absolute right-[8%] bottom-[20%] text-7xl font-light text-unique-gold/25">x</div>
-      <div className="relative mx-auto mt-6 grid h-[calc(100vh-3rem)] w-[calc(100vw-3rem)] max-w-[1720px] overflow-hidden rounded-md border border-white/10 bg-unique-ink/64 shadow-2xl shadow-black/50 backdrop-blur-sm md:grid-cols-[300px_1fr]">
-        <aside className="border-r border-white/10 bg-black/20 p-5">
-          <div className="flex items-start justify-between gap-3">
+    <section className="unique-admin-panel fixed inset-0 z-50 flex items-center justify-center overflow-hidden bg-[rgba(4,3,8,0.78)] text-white">
+      <div className="relative flex h-full w-full overflow-hidden border border-black/80 bg-unique-ink/96 text-white shadow-[0_0_120px_rgba(0,0,0,0.65)]">
+        <div className="pointer-events-none absolute left-0 top-0 h-1 w-24 bg-unique-gold" />
+        <div className="pointer-events-none absolute bottom-0 right-0 h-1 w-28 bg-unique-teal" />
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_22%_12%,rgb(var(--unique-gold-rgb)/0.12),transparent_28%),radial-gradient(circle_at_80%_82%,rgb(var(--unique-teal-rgb)/0.09),transparent_28%)]" />
+        <aside className="relative flex w-[330px] flex-col border-r border-black/80 bg-[linear-gradient(180deg,rgb(var(--unique-panel-rgb)/0.96),rgb(var(--unique-ink-rgb)/0.98))] p-5">
+          <div className="mb-5 flex items-start justify-between">
             <div>
-              <p className="text-xs uppercase tracking-[0.22em] text-unique-gold">Administration</p>
-              <h2 className="mt-2 text-2xl font-black uppercase">F3 Dashboard</h2>
+              <div className="text-[10px] font-black uppercase tracking-[3.2px] text-unique-gold">Unique Administration</div>
+              <div className="mt-3 text-[30px] font-black uppercase leading-none text-white">Dashboard</div>
               <p className="mt-1 text-sm text-white/45">Level {data.currentAdminLevel} · {data.adminMode ? "Adminmodus aktiv" : "Adminmodus aus"}</p>
             </div>
-            <button className="rounded-md border border-white/10 p-2 text-white/65 hover:text-white" onClick={close}>
+            <button className="flex h-9 w-9 items-center justify-center border border-white/10 bg-black/18 text-white/45 transition-colors hover:border-unique-danger/45 hover:text-red-200" onClick={close}>
               <X className="h-4 w-4" aria-hidden />
             </button>
           </div>
 
-          <div className="mt-7 grid gap-3 text-sm text-white/70">
+          <div className="hidden">
             <AdminSummary icon={<Users className="h-4 w-4" />} label="Spieler online" value={String(data.players.length)} />
             <AdminSummary icon={<ShieldCheck className="h-4 w-4" />} label="Admins online" value={String(onlineAdmins.length)} />
             <AdminSummary icon={<Ticket className="h-4 w-4" />} label="Offene Tickets" value={String(data.tickets.length)} />
             <AdminSummary icon={<Terminal className="h-4 w-4" />} label="Befehle" value={String(data.commands.length)} />
           </div>
 
-          <nav className="mt-7 grid gap-2">
+          <nav className="mt-2 flex flex-col gap-2">
             <AdminTab active={tab === "players"} label="Online Spieler" onClick={() => setTab("players")} />
             <AdminTab active={tab === "tickets"} label="Tickets" onClick={() => setTab("tickets")} />
             <AdminTab active={tab === "admins"} label="Admins" onClick={() => setTab("admins")} />
@@ -2950,15 +3843,18 @@ function AdminPanel({ data, result, onClose }: { data: AdminPanelPayload; result
           </nav>
         </aside>
 
-        <div className="min-h-0 overflow-y-auto p-6">
+        <main className="relative flex-1 overflow-hidden bg-[linear-gradient(135deg,rgb(var(--unique-bg-rgb)),rgb(var(--unique-ink-rgb))_62%,rgb(var(--unique-panel-rgb)/0.74))] p-6">
+          <div className="absolute inset-0 opacity-[0.16] bg-[linear-gradient(rgba(0,0,0,0.85)_1px,transparent_1px),linear-gradient(90deg,rgba(0,0,0,0.85)_1px,transparent_1px)] bg-[size:44px_44px]" />
+          <div className="relative flex h-full min-h-0 flex-col overflow-hidden">
           {result ? (
-            <div className={`mb-4 rounded-md border px-4 py-3 text-sm font-black ${result.ok ? "border-unique-teal/35 bg-unique-teal/10 text-unique-teal" : "border-unique-danger/45 bg-unique-danger/10 text-red-100"}`}>
+            <div className={`mb-4 shrink-0 rounded-md border px-4 py-3 text-sm font-black ${result.ok ? "border-unique-teal/35 bg-unique-teal/10 text-unique-teal" : "border-unique-danger/45 bg-unique-danger/10 text-red-100"}`}>
               {result.message}
             </div>
           ) : null}
 
+          <div className="min-h-0 flex-1 overflow-hidden">
           {tab === "players" ? (
-            <div className="grid gap-4 xl:grid-cols-3">
+            <div className="grid h-full auto-rows-max gap-4 overflow-y-auto pr-2 xl:grid-cols-3">
               {data.players.length ? data.players.map((player) => (
                 <section key={player.id} className="rounded-md border border-white/10 bg-white/5 p-4 transition hover:border-unique-gold/35">
                   <div className="flex items-start justify-between gap-3">
@@ -2984,7 +3880,7 @@ function AdminPanel({ data, result, onClose }: { data: AdminPanelPayload; result
           {tab === "tickets" ? <AdminTicketsSection tickets={data.tickets} currentAdminLevel={data.currentAdminLevel} /> : null}
 
           {tab === "admins" ? (
-            <div className="grid gap-5 xl:grid-cols-2">
+            <div className="grid h-full auto-rows-max gap-5 overflow-y-auto pr-2 xl:grid-cols-2">
               <AdminSection title="Online Admins">
                 {onlineAdmins.length ? onlineAdmins.map((admin) => (
                   <AdminRow
@@ -3004,7 +3900,7 @@ function AdminPanel({ data, result, onClose }: { data: AdminPanelPayload; result
           ) : null}
 
           {tab === "commands" ? (
-            <AdminSection title="Befehle">
+            <AdminSection title="Befehle" className="h-full" bodyClassName="min-h-0 flex-1 overflow-y-auto p-4 pr-2">
               <div className="grid gap-4">
                 {Array.from(commandGroups.entries()).map(([level, commands]) => (
                   <div key={level} className="rounded-md border border-white/10 bg-white/5 p-3">
@@ -3023,7 +3919,7 @@ function AdminPanel({ data, result, onClose }: { data: AdminPanelPayload; result
           {tab === "logs" && data.canViewLogs ? <AdminLogsSection logs={data.logs} /> : null}
 
           {tab === "permissions" && data.canManagePermissions ? (
-            <AdminSection title="Berechtigungen">
+            <AdminSection title="Berechtigungen" className="h-full" bodyClassName="min-h-0 flex-1 overflow-y-auto p-4 pr-2">
               <div className="grid gap-2 xl:grid-cols-2">
                 {[...data.commands].sort((a, b) => a.minLevel - b.minLevel || a.command.localeCompare(b.command)).map((command) => (
                   <div key={command.command} className="flex items-center justify-between gap-3 rounded-md border border-white/10 bg-white/5 px-4 py-3">
@@ -3039,7 +3935,9 @@ function AdminPanel({ data, result, onClose }: { data: AdminPanelPayload; result
               </div>
             </AdminSection>
           ) : null}
-        </div>
+          </div>
+          </div>
+        </main>
       </div>
     </section>
   );
@@ -3053,7 +3951,7 @@ function AdminLogsSection({ logs }: { logs: AdminLogEntry[] }) {
   const fromTime = parseAdminDateTimeFilter(fromFilter.date, fromFilter.time, false);
   const toTime = parseAdminDateTimeFilter(toFilter.date, toFilter.time, true);
   const normalizedInteraction = interactionFilter.trim().toLowerCase();
-  const normalizedId = idFilter.trim();
+  const normalizedId = idFilter.trim().toLowerCase();
   const filteredLogs = logs.filter((entry) => {
     const created = new Date(entry.createdAt).getTime();
     if (fromTime && created < fromTime) {
@@ -3063,13 +3961,28 @@ function AdminLogsSection({ logs }: { logs: AdminLogEntry[] }) {
       return false;
     }
     if (normalizedId) {
-      const haystack = [entry.adminCharacterId, entry.adminAccountId, entry.adminName, entry.rawArgs, entry.details].join(" ").toLowerCase();
-      if (!haystack.includes(normalizedId.toLowerCase())) {
+      const haystack = [
+        entry.id,
+        entry.adminCharacterId,
+        entry.adminAccountId,
+        entry.adminName,
+        entry.command,
+        entry.rawArgs,
+        entry.details,
+        formatDateTime(entry.createdAt)
+      ].filter((value) => value !== null && value !== undefined).join(" ").toLowerCase();
+      if (!haystack.includes(normalizedId)) {
         return false;
       }
     }
     if (normalizedInteraction) {
-      const haystack = [entry.command, entry.rawArgs, entry.details, entry.adminName].join(" ").toLowerCase();
+      const haystack = [
+        entry.command,
+        entry.rawArgs,
+        entry.details,
+        entry.adminName,
+        entry.success ? "ok erfolgreich success" : "fehler error fehlgeschlagen"
+      ].filter((value) => value !== null && value !== undefined).join(" ").toLowerCase();
       if (!haystack.includes(normalizedInteraction)) {
         return false;
       }
@@ -3078,20 +3991,20 @@ function AdminLogsSection({ logs }: { logs: AdminLogEntry[] }) {
   });
 
   return (
-    <AdminSection title="Admin Logs">
-      <div className="mb-4 grid gap-3 xl:grid-cols-4">
+    <AdminSection title={`Admin Logs (${filteredLogs.length}/${logs.length})`} className="h-full" bodyClassName="flex min-h-0 flex-1 flex-col p-4">
+      <div className="mb-4 grid shrink-0 gap-3 xl:grid-cols-4">
         <label className="rounded-md border border-white/10 bg-white/5 p-3">
           <span className="text-[11px] font-black uppercase text-white/35">ID / Admin / Spieler</span>
-          <input className="mt-2 h-10 w-full rounded-md border border-white/10 bg-unique-ink px-3 text-sm text-white outline-none focus:border-unique-gold" value={idFilter} onChange={(event) => setIdFilter(event.target.value)} placeholder="z.B. 2 oder Nate" />
+          <input className="mt-2 h-10 w-full rounded-md border border-white/10 bg-unique-ink px-3 text-sm text-white outline-none focus:border-unique-gold" value={idFilter} onChange={(event) => setIdFilter(event.target.value)} onKeyDown={(event) => event.stopPropagation()} placeholder="z.B. 2 oder Nate" />
         </label>
         <label className="rounded-md border border-white/10 bg-white/5 p-3">
           <span className="text-[11px] font-black uppercase text-white/35">Interaktion</span>
-          <input className="mt-2 h-10 w-full rounded-md border border-white/10 bg-unique-ink px-3 text-sm text-white outline-none focus:border-unique-gold" value={interactionFilter} onChange={(event) => setInteractionFilter(event.target.value)} placeholder="mute, getveh, Grund..." />
+          <input className="mt-2 h-10 w-full rounded-md border border-white/10 bg-unique-ink px-3 text-sm text-white outline-none focus:border-unique-gold" value={interactionFilter} onChange={(event) => setInteractionFilter(event.target.value)} onKeyDown={(event) => event.stopPropagation()} placeholder="mute, getveh, Grund..." />
         </label>
         <AdminDateTimeFilter label="Von" value={fromFilter} onChange={setFromFilter} />
         <AdminDateTimeFilter label="Bis" value={toFilter} onChange={setToFilter} />
       </div>
-      <div className="grid max-h-[calc(100vh-23rem)] gap-2 overflow-y-auto pr-1">
+      <div className="grid min-h-0 flex-1 content-start gap-2 overflow-y-auto pr-1">
         {filteredLogs.length ? filteredLogs.map((entry) => (
           <div key={entry.id} className="rounded-md border border-white/10 bg-white/5 px-4 py-3">
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -3130,6 +4043,7 @@ function AdminDateTimeFilter({
           value={value.date}
           inputMode="numeric"
           onChange={(event) => onChange({ ...value, date: event.target.value.replace(/[^\d.]/g, "").slice(0, 10) })}
+          onKeyDown={(event) => event.stopPropagation()}
           placeholder="TT.MM.JJJJ"
         />
         <input
@@ -3137,6 +4051,7 @@ function AdminDateTimeFilter({
           value={value.time}
           inputMode="numeric"
           onChange={(event) => onChange({ ...value, time: event.target.value.replace(/[^\d:]/g, "").slice(0, 5) })}
+          onKeyDown={(event) => event.stopPropagation()}
           placeholder="HH:MM"
         />
       </div>
@@ -3182,9 +4097,10 @@ function AdminTab({ active, label, onClick }: { active: boolean; label: string; 
   return (
     <button
       type="button"
-      className={`rounded-md border px-4 py-3 text-left text-sm transition ${active ? "border-unique-gold/70 bg-unique-gold/15 text-unique-gold" : "border-white/10 bg-white/5 text-white/65 hover:text-white"}`}
+      className={`group relative h-12 overflow-hidden border px-4 text-left text-[12px] font-black uppercase tracking-[0.9px] transition-[border-color,background-color,transform] duration-150 hover:translate-x-1 ${active ? "border-unique-gold/50 bg-unique-gold/12 text-white" : "border-white/7 bg-unique-ink text-white/52 hover:border-unique-gold/35 hover:text-white/82"}`}
       onClick={onClick}
     >
+      {active ? <div className="absolute inset-y-0 left-0 w-[3px] bg-unique-gold" /> : null}
       {label}
     </button>
   );
@@ -3375,11 +4291,25 @@ function AdminInfoBox({ label, value }: { label: string; value: string }) {
   );
 }
 
-function AdminSection({ title, className = "", children }: { title: string; className?: string; children: React.ReactNode }) {
+function AdminSection({
+  title,
+  className = "",
+  bodyClassName = "p-4",
+  children
+}: {
+  title: string;
+  className?: string;
+  bodyClassName?: string;
+  children: React.ReactNode;
+}) {
   return (
-    <section className={`rounded-md border border-white/10 bg-black/20 p-4 ${className}`}>
-      <h3 className="mb-3 text-sm font-semibold uppercase tracking-[0.18em] text-unique-gold">{title}</h3>
+    <section className={`flex min-h-0 flex-col overflow-hidden border border-white/8 bg-unique-panel/92 ${className}`}>
+      <div className="shrink-0 border-b border-white/8 bg-unique-ink/68 px-5 py-4">
+        <h3 className="text-[11px] font-black uppercase tracking-[2px] text-unique-gold">{title}</h3>
+      </div>
+      <div className={bodyClassName}>
       {children}
+      </div>
     </section>
   );
 }
@@ -3395,7 +4325,7 @@ function AdminSummary({ icon, label, value }: { icon: React.ReactNode; label: st
 
 function AdminRow({ label, value }: { label: string; value: string }) {
   return (
-    <div className="mb-2 flex items-center justify-between gap-3 rounded-md border border-white/10 bg-white/5 px-3 py-2 text-sm">
+    <div className="mb-2 flex items-center justify-between gap-3 border border-white/8 bg-unique-ink/70 px-3 py-2 text-sm">
       <span className="text-white/80">{label}</span>
       <strong className="text-white">{value}</strong>
     </div>
@@ -3403,7 +4333,7 @@ function AdminRow({ label, value }: { label: string; value: string }) {
 }
 
 function EmptyAdminText({ text }: { text: string }) {
-  return <p className="rounded-md border border-white/10 bg-white/5 px-3 py-3 text-sm text-white/50">{text}</p>;
+  return <p className="border border-white/8 bg-unique-ink/70 px-3 py-3 text-sm text-white/50">{text}</p>;
 }
 
 function TextInput(props: {
@@ -3700,6 +4630,29 @@ function playPenaltyNoticeSound() {
     oscillator.start();
     oscillator.stop(context.currentTime + 0.3);
     window.setTimeout(() => context.close(), 420);
+  } catch {}
+}
+
+function playInteractionOpenSound() {
+  try {
+    const AudioContextClass = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!AudioContextClass) {
+      return;
+    }
+    const context = new AudioContextClass();
+    const oscillator = context.createOscillator();
+    const gain = context.createGain();
+    oscillator.type = "triangle";
+    oscillator.frequency.setValueAtTime(720, context.currentTime);
+    oscillator.frequency.exponentialRampToValueAtTime(980, context.currentTime + 0.055);
+    gain.gain.setValueAtTime(0.001, context.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.045, context.currentTime + 0.012);
+    gain.gain.exponentialRampToValueAtTime(0.001, context.currentTime + 0.09);
+    oscillator.connect(gain);
+    gain.connect(context.destination);
+    oscillator.start();
+    oscillator.stop(context.currentTime + 0.1);
+    window.setTimeout(() => context.close(), 160);
   } catch {}
 }
 

@@ -19,6 +19,7 @@ type UiMessage =
   | { type: "world:enter"; payload: { character: CharacterInfo; uiTheme?: string | null } }
   | { type: "hud:data"; payload: HudDataPayload }
   | { type: "hud:location"; payload: HudLocationPayload }
+  | { type: "vehicle:hud"; payload: VehicleHudPayload }
   | { type: "chat:push"; payload: ChatMessage }
   | { type: "chat:open"; payload: ChatOpenPayload }
   | { type: "menu:open"; payload: Record<string, never> }
@@ -36,6 +37,9 @@ type UiMessage =
   | { type: "inventory:open"; payload: Record<string, never> }
   | { type: "inventory:close"; payload: Record<string, never> }
   | { type: "inventory:nearbyPlayers"; payload: InventoryNearbyPlayersPayload }
+  | { type: "interaction:hint"; payload: { visible: boolean; target?: VehicleInteractionTarget } }
+  | { type: "interaction:open"; payload: VehicleInteractionTarget }
+  | { type: "interaction:close"; payload: Record<string, never> }
   | { type: "admin:data"; payload: AdminPanelPayload };
 
 interface AuthBootstrap {
@@ -125,6 +129,39 @@ interface ChatMessage {
 
 interface ChatOpenPayload {
   dead?: boolean;
+}
+
+type VehicleInteractionActionId = "lock" | "engine" | "doors" | "trunk" | "hood" | "glovebox" | "passengers" | "keys" | "search" | "repair";
+
+interface VehicleHudPayload {
+  visible: boolean;
+  speed?: number;
+  fuel?: number;
+  motorHealth?: number;
+  engineOn?: boolean;
+  cruise?: boolean;
+  locked?: boolean;
+}
+
+interface VehicleInteractionTarget {
+  id: number;
+  type: "vehicle";
+  name: string;
+  subtitle?: string;
+  distance: number;
+  screen?: {
+    x: number;
+    y: number;
+  } | null;
+  meta?: {
+    locked?: boolean;
+    engineOn?: boolean;
+    trunkOpen?: boolean;
+    hoodOpen?: boolean;
+    damaged?: boolean;
+    hasKey?: boolean;
+    repairReady?: boolean;
+  };
 }
 
 interface SupportMuteNoticePayload {

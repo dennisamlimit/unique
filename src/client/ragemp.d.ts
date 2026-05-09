@@ -17,6 +17,15 @@ interface RageMpVehicle {
   position: RageMpVector3;
   getHealth?(): number;
   getVariable?(key: string): unknown;
+  getSpeed?(): number;
+  setEngineOn?(toggle: boolean, instantly: boolean, otherwise: boolean): void;
+  setUndriveable?(toggle: boolean): void;
+  setDoorsLocked?(state: number): void;
+  setDoorOpen?(doorIndex: number, loose: boolean, instantly: boolean): void;
+  setDoorShut?(doorIndex: number, instantly: boolean): void;
+  isInAir?(): boolean;
+  isUpsideDown?(): boolean;
+  getRotation?(order: number): RageMpVector3;
 }
 
 interface RageMpRemotePlayer {
@@ -131,6 +140,7 @@ interface RageMpClient {
         textureName: null,
         drawOnEnts: boolean
       ): void;
+      world3dToScreen2d?(x: number, y: number, z: number): unknown;
       setEntityOverlayPassEnabled?(enabled: boolean): void;
       createEntityOverlayBatch?(params: Record<string, unknown>): RageMpEntityOverlayBatch | null;
     };

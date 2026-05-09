@@ -1,6 +1,6 @@
 import { config } from "../config";
 import { createAdminLog, getAdminCommandPermission, listAdminCommandPermissions, listAdminLogs, setAdminCommandPermission } from "../db/admin";
-import { setAccountUniqueCoins } from "../db/accounts";
+import { findAccountById, setAccountUniqueCoins } from "../db/accounts";
 import { clearChatMute, createChatMute } from "../db/chat";
 import { findCharacterById, listAdminCharacters, setCharacterAdminLevel, setCharacterBankBalance, setCharacterCash, setCharacterDead } from "../db/characters";
 import { countActiveWarns, createAdminPunishment, findActiveJail, liftActivePunishments, liftLatestActiveWarn } from "../db/punishments";
@@ -424,55 +424,58 @@ async function reviveCommand(player: RageMpPlayer, args: string[]) {
 }
 
 async function balanceCommand(player: RageMpPlayer, args: string[], wallet: "cash" | "bank", mode: "add" | "set") {
-  const parsed = parseTargetAmount(player, args);
+  const parsed = await parseCharacterAmountTarget(player, args);
   if (!parsed) {
     sendAdminFeedback(player, `Nutzung: /${mode}${wallet} [charId] <betrag>`);
     return true;
   }
 
-  const session = getSession(parsed.target);
-  if (!session?.character) {
-    sendAdminFeedback(player, "Zielspieler hat keinen aktiven Charakter.");
-    return true;
-  }
-
-  const current = wallet === "cash" ? session.character.cash : session.character.bankBalance;
+  const current = wallet === "cash" ? parsed.character.cash : parsed.character.bankBalance;
   const nextAmount = mode === "add" ? current + parsed.amount : parsed.amount;
   const updated = wallet === "cash"
-    ? await setCharacterCash(session.character.id, nextAmount)
-    : await setCharacterBankBalance(session.character.id, nextAmount);
+    ? await setCharacterCash(parsed.character.id, nextAmount)
+    : await setCharacterBankBalance(parsed.character.id, nextAmount);
 
   if (updated) {
-    setSession(parsed.target, { ...session, character: updated });
-    void sendHudData(parsed.target);
+    const onlinePlayer = parsed.player ?? findOnlineCharacter(updated.id);
+    const session = onlinePlayer ? getSession(onlinePlayer) : null;
+    if (onlinePlayer && session) {
+      setSession(onlinePlayer, { ...session, character: updated });
+      void sendHudData(onlinePlayer);
+      sendAdminFeedback(onlinePlayer, `${wallet === "cash" ? "Bargeld" : "Bank"} wurde ${mode === "add" ? "erhoeht" : "gesetzt"}: ${nextAmount}.`, player);
+    }
   }
 
-  sendAdminFeedback(player, `${wallet === "cash" ? "Bargeld" : "Bank"} fuer ${getDisplayName(parsed.target)}: ${nextAmount}.`);
-  sendAdminFeedback(parsed.target, `${wallet === "cash" ? "Bargeld" : "Bank"} wurde ${mode === "add" ? "erhoeht" : "gesetzt"}: ${nextAmount}.`, player);
+  sendAdminFeedback(player, `${wallet === "cash" ? "Bargeld" : "Bank"} fuer ${parsed.name}: ${nextAmount}.`);
   return true;
 }
 
 async function uniqueCoinsCommand(player: RageMpPlayer, args: string[], mode: "add" | "set") {
-  const parsed = parseTargetAmount(player, args);
+  const parsed = await parseCharacterAmountTarget(player, args);
   if (!parsed) {
     sendAdminFeedback(player, `Nutzung: /${mode}uniquecoins [charId] <betrag>`);
     return true;
   }
 
-  const session = getSession(parsed.target);
-  if (!session) {
-    sendAdminFeedback(player, "Zielspieler ist nicht eingeloggt.");
+  const onlinePlayer = parsed.player ?? findOnlineCharacter(parsed.character.id);
+  const onlineSession = onlinePlayer ? getSession(onlinePlayer) : null;
+  const account = onlineSession?.account ?? await findAccountById(parsed.character.accountId);
+  if (!account) {
+    sendAdminFeedback(player, "Account des Zielspielers wurde nicht gefunden.");
     return true;
   }
 
-  const nextAmount = mode === "add" ? session.account.uniqueCoins + parsed.amount : parsed.amount;
-  const updated = await setAccountUniqueCoins(session.account.id, nextAmount);
+  const nextAmount = mode === "add" ? account.uniqueCoins + parsed.amount : parsed.amount;
+  const updated = await setAccountUniqueCoins(account.id, nextAmount);
   if (updated) {
-    setSession(parsed.target, { ...session, account: updated });
+    if (onlinePlayer && onlineSession) {
+      setSession(onlinePlayer, { ...onlineSession, account: updated });
+      void sendHudData(onlinePlayer);
+      sendAdminFeedback(onlinePlayer, `Deine Unique Coins wurden ${mode === "add" ? "erhoeht" : "gesetzt"}: ${nextAmount}.`, player);
+    }
   }
 
-  sendAdminFeedback(player, `Unique Coins fuer ${getDisplayName(parsed.target)}: ${nextAmount}.`);
-  sendAdminFeedback(parsed.target, `Deine Unique Coins wurden ${mode === "add" ? "erhoeht" : "gesetzt"}: ${nextAmount}.`, player);
+  sendAdminFeedback(player, `Unique Coins fuer ${parsed.name}: ${nextAmount}.`);
   return true;
 }
 
@@ -567,11 +570,17 @@ function vehicleCommand(player: RageMpPlayer, args: string[]) {
       numberPlate: parsed.plate,
       color: [parsed.color, parsed.color],
       locked: false,
-      engine: true,
+      engine: false,
       dimension: player.dimension
     });
     vehicle.dimension = player.dimension;
     vehicle.setVariable?.("unique:vehicle:modelName", parsed.model);
+    vehicle.setVariable?.("unique:vehicle:locked", false);
+    vehicle.setVariable?.("unique:vehicle:engineOn", false);
+    vehicle.setVariable?.("unique:vehicle:trunkOpen", false);
+    vehicle.setVariable?.("unique:vehicle:hoodOpen", false);
+    vehicle.setVariable?.("unique:vehicle:hasKey", true);
+    vehicle.setVariable?.("unique:vehicle:fuel", 100);
 
     if (typeof player.putIntoVehicle === "function") {
       player.putIntoVehicle(vehicle, 0);
@@ -1204,6 +1213,43 @@ function parseTargetAmount(player: RageMpPlayer, args: string[]) {
   }
 
   return null;
+}
+
+async function parseCharacterAmountTarget(player: RageMpPlayer, args: string[]) {
+  let characterId: number;
+  let amount: number;
+
+  if (args.length === 1) {
+    const session = getSession(player);
+    if (!session?.character) {
+      return null;
+    }
+    characterId = session.character.id;
+    amount = Number(args[0]);
+  } else if (args.length >= 2) {
+    characterId = Number(args[0]);
+    amount = Number(args[1]);
+  } else {
+    return null;
+  }
+
+  if (!Number.isInteger(characterId) || characterId <= 0 || !Number.isFinite(amount)) {
+    return null;
+  }
+
+  const onlinePlayer = findOnlineCharacter(characterId);
+  const onlineSession = onlinePlayer ? getSession(onlinePlayer) : null;
+  const character = onlineSession?.character ?? await findCharacterById(characterId);
+  if (!character) {
+    return null;
+  }
+
+  return {
+    player: onlinePlayer,
+    character,
+    amount: Math.max(0, Math.trunc(amount)),
+    name: `${character.firstName} ${character.lastName} [${character.id}]`
+  };
 }
 
 function parseTargetDimension(player: RageMpPlayer, args: string[]) {

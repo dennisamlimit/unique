@@ -10,10 +10,11 @@ if (!target || !["server", "client"].includes(target)) {
 const isServer = target === "server";
 
 await build({
-  entryPoints: [isServer ? "src/server/index.ts" : "src/client/index.ts"],
+  absWorkingDir: process.cwd(),
+  entryPoints: [isServer ? "./src/server/index.ts" : "./src/client/index.ts"],
   outfile: isServer
-    ? "dist/server-files/packages/unique/index.js"
-    : "dist/server-files/client_packages/unique/index.js",
+    ? "./dist/server-files/packages/unique/index.js"
+    : "./dist/server-files/client_packages/unique/index.js",
   bundle: true,
   platform: isServer ? "node" : "browser",
   format: isServer ? "cjs" : "iife",

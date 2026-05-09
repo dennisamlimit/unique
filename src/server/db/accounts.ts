@@ -34,6 +34,11 @@ export async function findAccountByEmail(email: string) {
   return result.rows[0] ? mapAccount(result.rows[0]) : null;
 }
 
+export async function findAccountById(accountId: number) {
+  const result = await pool.query("SELECT * FROM accounts WHERE id = $1", [accountId]);
+  return result.rows[0] ? mapAccount(result.rows[0]) : null;
+}
+
 export async function listAdminAccounts() {
   const result = await pool.query(
     "SELECT * FROM accounts WHERE admin_level > 0 ORDER BY admin_level DESC, social_club_name ASC"

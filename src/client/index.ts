@@ -21,9 +21,24 @@ let vehicleOverlayBatch: RageMpEntityOverlayBatch | null = null;
 let vehicleOverlaySupported: boolean | null = null;
 let adminModeEnabled = false;
 let vehicleDebugEnabled = false;
+let focusedInteractionVehicle: RageMpVehicle | null = null;
+let focusedInteractionVehicleId: number | null = null;
+let interactionHintVisible = false;
+let lastInteractionHintUpdate = 0;
+let lastInteractionHintKey = "";
+let vehicleInteractionOpen = false;
+let currentVehicle: RageMpVehicle | null = null;
+let cruiseEnabled = false;
+let cruiseSpeedMps = 0;
+let cruiseLastSpeedMps = 0;
+let cruiseLastUpdate = 0;
+let lastVehicleHudUpdate = 0;
+let lastVehicleHudKey = "";
+let lastAppliedVehicleStateKey = "";
 let spectateTargetRemoteId: number | null = null;
 
 const runSprintMultiplier = 1.18;
+const vehicleInteractionMaxDistance = 2.5;
 const headOverlayIds = [0, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
 const propIds = [0, 1, 2, 6, 7];
 const keyCodes = {
@@ -31,6 +46,8 @@ const keyCodes = {
   M: 0x4d,
   T: 0x54,
   I: 0x49,
+  G: 0x47,
+  L: 0x4c,
   X: 0x58,
   W: 0x57,
   A: 0x41,
@@ -183,6 +200,15 @@ mp.events.add("unique:client:setVehicleDebug", (enabled: boolean) => {
   if (!vehicleDebugEnabled) {
     adminModeEnabled = false;
   }
+});
+
+mp.events.add("unique:client:vehicleState", (payloadJson: string) => {
+  const payload = safeParse(payloadJson);
+  const vehicle = getVehicleFromPayload(payload);
+  if (!vehicle) {
+    return;
+  }
+  applyVehicleState(vehicle);
 });
 
 mp.events.add("unique:client:creatorStarted", (payloadJson: string) => {
@@ -344,6 +370,20 @@ mp.events.add("unique:cef:saveUiTheme", (payloadJson: string) => {
   mp.events.callRemote("unique:server:saveUiTheme", payloadJson);
 });
 
+mp.events.add("unique:cef:vehicleInteractionClose", () => {
+  vehicleInteractionOpen = false;
+  mp.gui.cursor.show(false, false);
+  sendToUi("interaction:close", {});
+});
+
+mp.events.add("unique:cef:vehicleInteractionSelect", (payloadJson: string) => {
+  vehicleInteractionOpen = false;
+  mp.gui.cursor.show(false, false);
+  const payload = safeParse(payloadJson);
+  sendToUi("interaction:close", {});
+  mp.events.callRemote("unique:server:vehicleInteraction", JSON.stringify(payload));
+});
+
 mp.events.add("unique:cef:previewAppearance", (payloadJson: string) => {
   runSafely(() => {
     setTimeout(() => runSafely(() => applyAppearance(safeParse(payloadJson))), 250);
@@ -400,7 +440,7 @@ function closeAuthExperience(destroyBrowser = true) {
 }
 
 mp.keys.bind(keyCodes.T, true, () => {
-  if (!browser || chatInputOpen || adminPanelOpen || mainMenuOpen || inventoryOpen) {
+  if (!browser || chatInputOpen || adminPanelOpen || mainMenuOpen || inventoryOpen || vehicleInteractionOpen) {
     return;
   }
   chatInputOpen = true;
@@ -412,14 +452,14 @@ mp.keys.bind(keyCodes.T, true, () => {
 });
 
 mp.keys.bind(keyCodes.F3, true, () => {
-  if (!browser || chatInputOpen || deathScreenOpen || mainMenuOpen || inventoryOpen) {
+  if (!browser || chatInputOpen || deathScreenOpen || mainMenuOpen || inventoryOpen || vehicleInteractionOpen) {
     return;
   }
   mp.events.callRemote("unique:server:requestAdminPanel");
 });
 
 mp.keys.bind(keyCodes.M, true, () => {
-  if (!browser || chatInputOpen || adminPanelOpen || deathScreenOpen || inventoryOpen) {
+  if (!browser || chatInputOpen || adminPanelOpen || deathScreenOpen || inventoryOpen || vehicleInteractionOpen) {
     return;
   }
 
@@ -439,7 +479,7 @@ mp.keys.bind(keyCodes.M, true, () => {
 });
 
 mp.keys.bind(keyCodes.I, true, () => {
-  if (chatInputOpen || adminPanelOpen || deathScreenOpen || mainMenuOpen || !inWorld) {
+  if (chatInputOpen || adminPanelOpen || deathScreenOpen || mainMenuOpen || vehicleInteractionOpen || !inWorld) {
     return;
   }
 
@@ -467,7 +507,40 @@ mp.keys.bind(keyCodes.I, true, () => {
   }
 });
 
+mp.keys.bind(keyCodes.G, true, () => {
+  if (chatInputOpen || adminPanelOpen || deathScreenOpen || mainMenuOpen || inventoryOpen || vehicleInteractionOpen || !inWorld) {
+    return;
+  }
+
+  const vehicle = focusedInteractionVehicle ?? findVehicleInView();
+  if (!vehicle) {
+    return;
+  }
+
+  openVehicleInteraction(vehicle);
+});
+
+mp.keys.bind(keyCodes.L, true, () => {
+  if (chatInputOpen || adminPanelOpen || deathScreenOpen || mainMenuOpen || inventoryOpen || vehicleInteractionOpen || !inWorld) {
+    return;
+  }
+
+  const vehicle = mp.players.local.vehicle ?? focusedInteractionVehicle;
+  if (!vehicle) {
+    return;
+  }
+
+  mp.events.callRemote("unique:server:vehicleControl", JSON.stringify({ actionId: "lock", targetId: getVehicleRemoteId(vehicle) }));
+});
+
 mp.keys.bind(keyCodes.Escape, true, () => {
+  if (vehicleInteractionOpen) {
+    vehicleInteractionOpen = false;
+    mp.gui.cursor.show(false, false);
+    sendToUi("interaction:close", {});
+    return;
+  }
+
   if (!inventoryOpen) {
     return;
   }
@@ -484,13 +557,26 @@ mp.keys.bind(keyCodes.X, true, () => {
     return;
   }
 
-  if (!chatInputOpen && !adminPanelOpen && !deathScreenOpen && !mainMenuOpen && !inventoryOpen) {
+  if (mp.players.local.vehicle && !chatInputOpen && !adminPanelOpen && !deathScreenOpen && !mainMenuOpen && !inventoryOpen && !vehicleInteractionOpen) {
+    toggleCruiseControl(mp.players.local.vehicle);
+    return;
+  }
+
+  if (!chatInputOpen && !adminPanelOpen && !deathScreenOpen && !mainMenuOpen && !inventoryOpen && !vehicleInteractionOpen) {
     mp.events.callRemote("unique:server:requestNoClip");
   }
 });
 
+mp.keys.bind(keyCodes.Ctrl, true, () => {
+  if (chatInputOpen || adminPanelOpen || deathScreenOpen || mainMenuOpen || inventoryOpen || vehicleInteractionOpen || !inWorld || !mp.players.local.vehicle) {
+    return;
+  }
+
+  mp.events.callRemote("unique:server:vehicleControl", JSON.stringify({ actionId: "engine", targetId: getVehicleRemoteId(mp.players.local.vehicle) }));
+});
+
 mp.keys.bind(keyCodes.ArrowUp, true, () => {
-  if (chatInputOpen || adminPanelOpen || deathScreenOpen || mainMenuOpen || inventoryOpen) {
+  if (chatInputOpen || adminPanelOpen || deathScreenOpen || mainMenuOpen || inventoryOpen || vehicleInteractionOpen) {
     return;
   }
 
@@ -509,6 +595,7 @@ mp.events.add("render", () => {
   updateNoClip();
   updateHudLocation();
   updateInventoryNearbyPlayers();
+  updateVehicleRuntime();
   updateVehicleFocusHint();
   updateVehicleDebugOverlay();
 });
@@ -916,17 +1003,339 @@ function sanitizeGameLabel(value: unknown) {
 }
 
 function updateVehicleFocusHint() {
-  if (!adminModeEnabled || !inWorld || chatInputOpen || adminPanelOpen || deathScreenOpen || mainMenuOpen || mp.players.local.vehicle) {
+  if (!inWorld || chatInputOpen || adminPanelOpen || deathScreenOpen || mainMenuOpen || inventoryOpen || vehicleInteractionOpen || mp.players.local.vehicle) {
+    setFocusedInteractionVehicle(null);
     return;
   }
 
   const vehicle = findVehicleInView();
   if (!vehicle) {
+    setFocusedInteractionVehicle(null);
     return;
   }
 
+  setFocusedInteractionVehicle(vehicle);
   drawVehicleOutline(vehicle);
-  drawVehicleArrow(vehicle);
+  drawVehicleInteractionHint(vehicle);
+  if (adminModeEnabled) {
+    drawVehicleArrow(vehicle);
+  }
+}
+
+function updateVehicleRuntime() {
+  const vehicle = mp.players.local.vehicle ?? null;
+  if (vehicle !== currentVehicle) {
+    currentVehicle = vehicle;
+    cruiseEnabled = false;
+    cruiseSpeedMps = 0;
+    cruiseLastSpeedMps = 0;
+    cruiseLastUpdate = 0;
+    lastVehicleHudKey = "";
+    lastAppliedVehicleStateKey = "";
+
+    if (vehicle) {
+      mp.events.callRemote("unique:server:vehicleEntered", JSON.stringify({ targetId: getVehicleRemoteId(vehicle) }));
+      applyVehicleState(vehicle);
+    } else {
+      sendToUi("vehicle:hud", { visible: false });
+    }
+  }
+
+  if (!vehicle) {
+    return;
+  }
+
+  applyVehicleState(vehicle);
+  updateCruiseControl(vehicle);
+  sendVehicleHud(vehicle);
+}
+
+function toggleCruiseControl(vehicle: RageMpVehicle) {
+  const speed = getVehicleSpeedMps(vehicle);
+  if (speed < 4.2) {
+    cruiseEnabled = false;
+    cruiseSpeedMps = 0;
+    mp.game.graphics.notify("Tempomat erst ab 15 km/h verfuegbar");
+    return;
+  }
+
+  cruiseEnabled = !cruiseEnabled;
+  cruiseSpeedMps = cruiseEnabled ? speed : 0;
+  cruiseLastSpeedMps = speed;
+  cruiseLastUpdate = Date.now();
+  mp.game.graphics.notify(cruiseEnabled ? `Tempomat ${Math.round(speed * 3.6)} km/h` : "Tempomat aus");
+  sendVehicleHud(vehicle, true);
+}
+
+function updateCruiseControl(vehicle: RageMpVehicle) {
+  if (!cruiseEnabled) {
+    return;
+  }
+
+  const health = readVehicleHealth(vehicle);
+  const speed = getVehicleSpeedMps(vehicle);
+  const now = Date.now();
+  const seconds = Math.max(0.016, (now - (cruiseLastUpdate || now)) / 1000);
+  const deceleration = (cruiseLastSpeedMps - speed) / seconds;
+  const hardSpeedDrop = cruiseLastSpeedMps - speed > 3.0;
+  const heavyImpact = deceleration > 10.0 || hardSpeedDrop;
+  const noLongerDriving = health < 360 || speed < Math.max(2.0, cruiseSpeedMps * 0.45);
+
+  cruiseLastSpeedMps = speed;
+  cruiseLastUpdate = now;
+
+  if (heavyImpact || noLongerDriving || isVehicleAirborneOrUnstable(vehicle)) {
+    disableCruiseControl(vehicle);
+  }
+}
+
+function disableCruiseControl(vehicle?: RageMpVehicle | null) {
+  cruiseEnabled = false;
+  cruiseSpeedMps = 0;
+  cruiseLastSpeedMps = 0;
+  cruiseLastUpdate = 0;
+  mp.game.graphics.notify("Tempomat aus");
+  if (vehicle) {
+    sendVehicleHud(vehicle, true);
+  }
+}
+
+function sendVehicleHud(vehicle: RageMpVehicle, force = false) {
+  if (!browser || !browserReady) {
+    return;
+  }
+
+  const now = Date.now();
+  if (!force && now - lastVehicleHudUpdate < 150) {
+    return;
+  }
+
+  const speed = Math.round(getVehicleSpeedMps(vehicle) * 3.6);
+  const payload = {
+    visible: true,
+    speed,
+    fuel: readVehicleNumberVariable(vehicle, "unique:vehicle:fuel", 100),
+    motorHealth: readVehicleHealth(vehicle),
+    engineOn: readVehicleBooleanVariable(vehicle, "unique:vehicle:engineOn"),
+    cruise: cruiseEnabled,
+    locked: readVehicleBooleanVariable(vehicle, "unique:vehicle:locked")
+  };
+  const key = `${payload.speed}|${payload.fuel}|${payload.motorHealth}|${payload.engineOn}|${payload.cruise}|${payload.locked}`;
+  if (!force && key === lastVehicleHudKey) {
+    return;
+  }
+
+  lastVehicleHudUpdate = now;
+  lastVehicleHudKey = key;
+  sendToUi("vehicle:hud", payload);
+}
+
+function applyVehicleState(vehicle: RageMpVehicle) {
+  const engineOn = readVehicleBooleanVariable(vehicle, "unique:vehicle:engineOn");
+  const locked = readVehicleBooleanVariable(vehicle, "unique:vehicle:locked");
+  const trunkOpen = readVehicleBooleanVariable(vehicle, "unique:vehicle:trunkOpen");
+  const hoodOpen = readVehicleBooleanVariable(vehicle, "unique:vehicle:hoodOpen");
+  const stateKey = `${engineOn}|${locked}|${trunkOpen}|${hoodOpen}`;
+  if (stateKey === lastAppliedVehicleStateKey) {
+    return;
+  }
+
+  lastAppliedVehicleStateKey = stateKey;
+
+  try {
+    vehicle.setEngineOn?.(engineOn, true, true);
+    vehicle.setUndriveable?.(!engineOn);
+  } catch {}
+
+  try {
+    vehicle.setDoorsLocked?.(locked ? 2 : 1);
+  } catch {}
+
+  try {
+    if (trunkOpen) {
+      vehicle.setDoorOpen?.(5, false, false);
+    } else {
+      vehicle.setDoorShut?.(5, false);
+    }
+
+    if (hoodOpen) {
+      vehicle.setDoorOpen?.(4, false, false);
+    } else {
+      vehicle.setDoorShut?.(4, false);
+    }
+  } catch {}
+}
+
+function setFocusedInteractionVehicle(vehicle: RageMpVehicle | null) {
+  focusedInteractionVehicle = vehicle;
+  const vehicleId = vehicle && Number.isInteger(vehicle.remoteId) ? Number(vehicle.remoteId) : null;
+
+  if (!vehicle || vehicleId === null || getVehiclePlayerDistance(vehicle) > vehicleInteractionMaxDistance) {
+    focusedInteractionVehicleId = null;
+    lastInteractionHintKey = "";
+    if (interactionHintVisible) {
+      interactionHintVisible = false;
+      sendToUi("interaction:hint", { visible: false });
+    }
+    return;
+  }
+
+  focusedInteractionVehicleId = vehicleId;
+}
+
+function openVehicleInteraction(vehicle: RageMpVehicle) {
+  if (!browser || !browserReady) {
+    return;
+  }
+
+  if (getVehiclePlayerDistance(vehicle) > vehicleInteractionMaxDistance) {
+    setFocusedInteractionVehicle(null);
+    return;
+  }
+
+  vehicleInteractionOpen = true;
+  interactionHintVisible = false;
+  mp.gui.cursor.show(true, true);
+  sendToUi("interaction:hint", { visible: false });
+  sendToUi("interaction:open", buildVehicleInteractionTarget(vehicle));
+}
+
+function buildVehicleInteractionTarget(vehicle: RageMpVehicle) {
+  const vehicleId = Number.isInteger(vehicle.remoteId) ? Number(vehicle.remoteId) : -1;
+  const distance = getVehiclePlayerDistance(vehicle);
+
+  return {
+    id: vehicleId,
+    type: "vehicle",
+    name: getVehicleModelName(vehicle),
+    subtitle: "Fahrzeuginteraktion",
+    distance: Math.round(distance * 10) / 10,
+    meta: {
+      locked: readVehicleBooleanVariable(vehicle, "unique:vehicle:locked"),
+      engineOn: readVehicleBooleanVariable(vehicle, "unique:vehicle:engineOn"),
+      trunkOpen: readVehicleBooleanVariable(vehicle, "unique:vehicle:trunkOpen"),
+      hoodOpen: readVehicleBooleanVariable(vehicle, "unique:vehicle:hoodOpen"),
+      hasKey: readVehicleBooleanVariable(vehicle, "unique:vehicle:hasKey", true),
+      damaged: readVehicleHealth(vehicle) < 780,
+      repairReady: false
+    }
+  };
+}
+
+function getVehiclePlayerDistance(vehicle: RageMpVehicle) {
+  return vehicle.position ? getDistance(mp.players.local.position, vehicle.position) : Number.POSITIVE_INFINITY;
+}
+
+function getVehicleRemoteId(vehicle: RageMpVehicle | null) {
+  return vehicle && Number.isInteger(vehicle.remoteId) ? Number(vehicle.remoteId) : -1;
+}
+
+function getVehicleFromPayload(payload: unknown) {
+  const targetId = isObject(payload) ? Number(payload.targetId) : -1;
+  if (!Number.isInteger(targetId) || targetId < 0) {
+    return null;
+  }
+  try {
+    return mp.vehicles?.toArray?.().find((vehicle) => getVehicleRemoteId(vehicle) === targetId) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function getVehicleSpeedMps(vehicle: RageMpVehicle) {
+  try {
+    const speed = vehicle.getSpeed?.();
+    return Number.isFinite(speed) ? Math.max(0, Number(speed)) : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function isVehicleAirborneOrUnstable(vehicle: RageMpVehicle) {
+  try {
+    if (vehicle.isInAir?.()) {
+      return true;
+    }
+  } catch {}
+
+  try {
+    if (vehicle.isUpsideDown?.()) {
+      return true;
+    }
+  } catch {}
+
+  try {
+    const rotation = vehicle.getRotation?.(2);
+    if (rotation && (Math.abs(rotation.x) > 42 || Math.abs(rotation.y) > 42)) {
+      return true;
+    }
+  } catch {}
+
+  return false;
+}
+
+function readVehicleBooleanVariable(vehicle: RageMpVehicle, key: string, fallback = false) {
+  const value = vehicle.getVariable?.(key);
+  return typeof value === "boolean" ? value : fallback;
+}
+
+function readVehicleNumberVariable(vehicle: RageMpVehicle, key: string, fallback: number) {
+  const value = Number(vehicle.getVariable?.(key));
+  return Number.isFinite(value) ? value : fallback;
+}
+
+function getVehicleInteractionScreenPosition(vehicle: RageMpVehicle) {
+  const position = vehicle.position;
+  if (!position) {
+    return null;
+  }
+
+  try {
+    const projected = mp.game.graphics.world3dToScreen2d?.(position.x, position.y, position.z + 0.38);
+    const screen = readScreenProjection(projected);
+    if (screen) {
+      return screen;
+    }
+  } catch {}
+
+  return null;
+}
+
+function readScreenProjection(value: unknown) {
+  let x: unknown;
+  let y: unknown;
+
+  if (Array.isArray(value)) {
+    if (value.length >= 3 && value[0] === false) {
+      return null;
+    }
+    x = value.length >= 3 ? value[1] : value[0];
+    y = value.length >= 3 ? value[2] : value[1];
+  } else if (isObject(value)) {
+    x = value.x;
+    y = value.y;
+  }
+
+  const numberX = Number(x);
+  const numberY = Number(y);
+  if (!Number.isFinite(numberX) || !Number.isFinite(numberY)) {
+    return null;
+  }
+
+  const percentX = Math.abs(numberX) <= 1 ? numberX * 100 : numberX;
+  const percentY = Math.abs(numberY) <= 1 ? numberY * 100 : numberY;
+  if (percentX < -10 || percentX > 110 || percentY < -10 || percentY > 110) {
+    return null;
+  }
+
+  return {
+    x: clampNumber(percentX, 7, 93),
+    y: clampNumber(percentY, 12, 88)
+  };
+}
+
+function clampNumber(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, value));
 }
 
 function updateVehicleDebugOverlay() {
@@ -1005,6 +1414,10 @@ function findVehicleInView() {
   let bestScore = -999;
 
   getStreamedVehicles().forEach((vehicle) => {
+    if (getVehiclePlayerDistance(vehicle) > vehicleInteractionMaxDistance) {
+      return;
+    }
+
     const aim = getVehicleAimScore(vehicle, origin, direction);
     if (aim > bestScore) {
       bestScore = aim;
@@ -1154,6 +1567,25 @@ function drawVehicleArrow(vehicle: RageMpVehicle) {
       null,
       false
     );
+  } catch {}
+}
+
+function drawVehicleInteractionHint(vehicle: RageMpVehicle) {
+  const position = vehicle.position;
+  if (!position) {
+    return;
+  }
+
+  const drawPosition: [number, number, number] = [position.x, position.y, position.z + 0.38];
+
+  try {
+    mp.game.graphics.drawText("G", drawPosition, {
+      font: 4,
+      color: [255, 255, 255, 255],
+      scale: [0.42, 0.42],
+      outline: true,
+      centre: true
+    });
   } catch {}
 }
 
