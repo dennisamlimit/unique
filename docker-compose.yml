@@ -1,0 +1,62 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: unique-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: unique
+      POSTGRES_PASSWORD: unique
+      POSTGRES_DB: unique
+    ports:
+      - "5432:5432"
+    volumes:
+      - unique-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U unique -d unique"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  migrator:
+    build:
+      context: .
+      target: builder
+    container_name: unique-migrator
+    restart: "no"
+    environment:
+      DATABASE_URL: postgres://unique:unique@postgres:5432/unique
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["npm", "run", "db:migrate"]
+
+  ragemp:
+    build:
+      context: .
+      target: ragemp
+    container_name: unique-ragemp
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://unique:unique@postgres:5432/unique
+      UNIQUE_THIRD_CHARACTER_PRICE: "500"
+    ports:
+      - "22005:22005/udp"
+      - "22006:22006/tcp"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrator:
+        condition: service_completed_successfully
+
+  adminer:
+    image: adminer:4
+    container_name: unique-adminer
+    restart: unless-stopped
+    ports:
+      - "8081:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  unique-postgres-data:

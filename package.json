@@ -1,0 +1,37 @@
+{
+  "name": "unique-roleplay",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "npm run build:server && npm run build:client && npm run build:cef && npm run build:ragemp",
+    "build:server": "tsx scripts/build.ts server",
+    "build:client": "tsx scripts/build.ts client",
+    "build:cef": "vite build --config vite.config.ts",
+    "build:ragemp": "tsx scripts/copy-ragemp.ts",
+    "db:migrate": "tsx scripts/migrate.ts",
+    "dev:cef": "vite --config vite.config.ts --host 0.0.0.0",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "^5.0.4",
+    "bcryptjs": "^3.0.2",
+    "lucide-react": "^0.468.0",
+    "pg": "^8.13.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/pg": "^8.11.10",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "autoprefixer": "^10.4.20",
+    "esbuild": "^0.25.12",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.17",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.5"
+  }
+}
