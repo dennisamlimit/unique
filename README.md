@@ -6,9 +6,13 @@
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-4169e1?style=for-the-badge&logo=postgresql&logoColor=white)
 ![Docker](https://img.shields.io/badge/Docker-ready-2496ed?style=for-the-badge&logo=docker&logoColor=white)
 
-Unique Roleplay ist ein moderner Fresh-Start fuer einen RAGE:MP Roleplay-Server. Das Projekt verbindet einen TypeScript-basierten Server, ein TypeScript-Clientpackage, eine hochwertige React-CEF-Oberflaeche und eine lokale PostgreSQL-Datenbank mit reproduzierbarem Docker-Setup.
-
-Der Fokus liegt auf einem sauberen Grundgeruest fuer ein ernsthaftes GTA-V-Roleplay-Projekt: Accountbindung ueber Social Club, Charakterverwaltung, immersives UI, Admin- und Support-Werkzeuge, serverseitige Datenhaltung und ein Build-Prozess, der direkt RAGE:MP-kompatible Serverfiles erzeugt.
+> [!IMPORTANT]
+> Dieses Repository wurde aufgrund der angekuendigten Einstellung von RAGE:MP veroeffentlicht.  
+> Laut offizieller RAGE:MP-Ankuendigung wird die Plattform im Rahmen eines strukturierten Shutdowns auf Wunsch von Take-Two Interactive eingestellt, da FiveM kuenftig die offiziell autorisierte Plattform fuer GTA-V-Multiplayer-Modding ist.
+>
+> Unique Roleplay wird daher in diesem Zustand als Projektbasis, Referenz und Archiv veroeffentlicht. Das Repository zeigt den bisherigen technischen Stand des Servers, der Client-Scripts, der React-CEF-Oberflaechen und der Datenbankstruktur.
+>
+> Hinweis: Die enthaltenen UI-Entwuerfe und CEF-Oberflaechen wurden vorerst KI-gestuetzt erstellt und dienen als Prototypen beziehungsweise gestalterische Grundlage. Eine manuelle Ueberarbeitung, Optimierung und Vereinheitlichung der Oberflaechen war fuer die weitere Entwicklung vorgesehen.
 
 ## Inhalt
 
